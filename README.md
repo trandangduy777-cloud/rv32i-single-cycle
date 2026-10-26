@@ -26,6 +26,7 @@ Phần mở rộng M: `MUL MULH MULHSU MULHU DIV DIVU REM REMU`.
 
 ## Phần mở rộng M
 - Bộ nhân/chia lặp, mỗi chu kỳ xử lý 1 bit, một lệnh M mất 34 chu kỳ (1 nhận toán hạng, 32 lặp, 1 hoàn tất). Trong lúc đó lõi giữ nguyên PC (stall).
+- Bản pipeline dùng tham số `PREP = 1` của module `rv32m`: chu kỳ đầu chỉ chép toán hạng thô vào thanh ghi, chu kỳ sau mới đảo dấu từ chính các flop đó (mỗi lệnh M mất 35 chu kỳ). Lý do: toán hạng của lệnh M đã đi qua mux forwarding, nếu đảo dấu (bộ cộng 32 bit) ngay trước khi ghi thì đường `idex_fb_wb` → đảo dấu → thanh ghi nhân/chia trở thành đường tới hạn của RV32IM. Bản single-cycle giữ `PREP = 0`.
 - Chọn bộ lặp thay vì nhân/chia tổ hợp 32 bit để không kéo dài đường tới hạn của lõi.
 - Chia cho 0: thương toàn bit 1, dư bằng số bị chia. `INT_MIN / -1`: thương `INT_MIN`, dư 0, không trap (đúng đặc tả).
 - Tín hiệu `retire` báo lệnh đã hoàn tất, testbench in vết theo tín hiệu này.
@@ -39,6 +40,7 @@ Chung cho cả hai:
 - Forwarding từ EX/MEM và MEM/WB vào tầng EX, ưu tiên lệnh mới hơn. Thanh ghi đọc ở ID được bypass từ WB.
 - Các tín hiệu chọn forwarding được so sánh sẵn ở tầng ID và đăng ký vào ID/EX, nên tầng EX chỉ còn mux 3 đường (cắt phần so sánh số thanh ghi khỏi đường tới hạn).
 - Các trường dữ liệu của ID/EX (giá trị rs1, rs2, imm, pc, lệnh...) nạp lại mỗi chu kỳ, không bị `redirect` hay `stall` điều khiển enable, vì bong bóng đã được đánh dấu bằng `idex_valid` và các cờ điều khiển. Việc này giảm tải (fanout) của tín hiệu `redirect`, vốn nằm trên đường tới hạn.
+- Các trường dữ liệu của IF/ID (`ifid_pc`, `ifid_instr`) cũng không bị `redirect` điều khiển enable, chỉ bị giữ khi stall. Lệnh bị huỷ được đánh dấu bằng `ifid_valid = 0`. Việc này sinh ra từ phân tích đường tới hạn của RV32IM có dự đoán nhánh: đường `idex_fa_wb` → so sánh nhánh → `redirect` → enable của IF/ID trượt −1,64 ns ở 15 ns.
 - Load-use: dừng 1 chu kỳ rồi forward từ WB.
 - Dự đoán nhánh ở tầng ID (xem mục "Dự đoán nhánh và CPI" bên dưới): JAL nhảy ngay ở ID (mất 1 chu kỳ), nhánh có điều kiện dùng bảng đếm 2 bit 64 mục, đoán sai thì phát hiện ở EX và huỷ 2 lệnh. JALR vẫn quyết định ở EX (mất 2 chu kỳ).
 - Bộ nhớ lệnh và dữ liệu vẫn đọc tổ hợp ở ngoài lõi như bản single-cycle.
@@ -60,7 +62,7 @@ Bản đầy đủ:
 iverilog -g2012 -DPIPE_FULL -o sim_pipem.vvp rv32im_pipeline.v rv32i_core.v tb_rv32i_pipeline.v
 vvp sim_pipem.vvp +prog=prog.hex
 ```
-Kết quả đúng: `[TB] PASS sau 2385 chu ky`.
+Kết quả đúng: `[TB] PASS sau 2423 chu ky`.
 
 ## CSR và trap (chế độ Machine)
 - CSR: `mstatus` (MIE, MPIE; MPP cố định 11), `misa` (chỉ đọc giá trị RV32I), `mtvec` (chế độ trực tiếp), `mscratch`, `mepc`, `mcause`, `mtval`, `mhartid`.
@@ -199,6 +201,6 @@ Cần `gcc-riscv64-unknown-elf` và `iverilog`.
 ## Giới hạn
 - Chưa có ngắt, chưa có chế độ User
 - JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
-- Bộ nhân/chia lặp nên lệnh M chậm (34 chu kỳ); chưa có bộ nhân nhanh
+- Bộ nhân/chia lặp nên lệnh M chậm (34 chu kỳ ở single-cycle, 35 ở pipeline); chưa có bộ nhân nhanh
 - Mô hình tham chiếu và RTL do cùng một người viết; đã bổ sung riscv-tests (rv32ui, rv32um) nhưng chưa đối chiếu lock-step với Spike
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính

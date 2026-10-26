@@ -372,7 +372,10 @@ endmodule
 // Giao thuc: req = 1 suot thoi gian lenh M dang cho. Don vi nhan toan hang o chu ky dau (IDLE -> RUN),
 //   chay 32 chu ky, roi o trang thai FIN bao done = 1 trong 1 chu ky (core hoan tat lenh) va ve IDLE.
 // ------------------------------------------------------------
-module rv32m (
+// Tham so PREP: 0 = lay toan hang va dao dau trong cung 1 chu ky (bo don-cycle dung ban nay);
+//               1 = chu ky dau chi chep toan hang tho vao thanh ghi, chu ky sau moi dao dau (them 1 chu ky cho moi lenh M).
+//                   Pipeline dung PREP = 1: toan hang di qua mux forwarding nen khong duoc dat them bo cong dao dau phia sau.
+module rv32m #(parameter PREP = 0) (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        req,
@@ -382,7 +385,7 @@ module rv32m (
     output wire        done,
     output reg  [31:0] result
 );
-    localparam IDLE = 2'd0, RUN = 2'd1, FIN = 2'd2;
+    localparam IDLE = 2'd0, RUN = 2'd1, FIN = 2'd2, PRE = 2'd3;
 
     reg [1:0]  state;
     reg [4:0]  cnt;
@@ -391,12 +394,16 @@ module rv32m (
     reg [31:0] m;          // nhan: so bi nhan; chia: so chia
     reg        neg_res;    // dao dau ket qua nhan (MULH*) hoac thuong
     reg        neg_rem;    // dao dau du
+    reg        sa_r, sb_r; // dau toan hang, chot o chu ky dau (PREP = 1)
 
     // dau cua toan hang khi bat dau
     wire sa = (funct3 == 3'b001 | funct3 == 3'b010 | funct3 == 3'b100 | funct3 == 3'b110) & a[31];
     wire sb = (funct3 == 3'b001 | funct3 == 3'b100 | funct3 == 3'b110) & b[31];
     wire [31:0] ua = sa ? (~a + 32'd1) : a;
     wire [31:0] ub = sb ? (~b + 32'd1) : b;
+    // PREP = 1: dao dau tu thanh ghi (p[31:0] giu a tho, m giu b tho)
+    wire [31:0] ua_r = sa_r ? (~p[31:0] + 32'd1) : p[31:0];
+    wire [31:0] ub_r = sb_r ? (~m + 32'd1) : m;
 
     // buoc nhan: cong don roi dich phai
     wire [32:0] mul_sum  = {1'b0, p[63:32]} + (p[0] ? {1'b0, m} : 33'd0);
@@ -420,13 +427,20 @@ module rv32m (
             m     <= 32'd0;
             neg_res <= 1'b0;
             neg_rem <= 1'b0;
+            sa_r    <= 1'b0;
+            sb_r    <= 1'b0;
         end else begin
             case (state)
                 IDLE: if (req) begin
                     op  <= funct3;
                     cnt <= 5'd0;
-                    state <= RUN;
-                    if (funct3[2]) begin                 // chia
+                    state <= PREP ? PRE : RUN;
+                    if (PREP) begin                      // chep toan hang tho, chua dao dau
+                        p    <= {32'd0, a};
+                        m    <= b;
+                        sa_r <= sa;
+                        sb_r <= sb;
+                    end else if (funct3[2]) begin        // chia
                         p <= {32'd0, ua};
                         m <= ub;
                         neg_res <= (sa ^ sb) & (b != 32'd0);
@@ -437,6 +451,20 @@ module rv32m (
                         neg_res <= sa ^ sb;
                         neg_rem <= 1'b0;
                     end
+                end
+                PRE: begin                               // chi duoc vao khi PREP = 1
+                    if (op[2]) begin                     // chia
+                        p <= {32'd0, ua_r};
+                        m <= ub_r;
+                        neg_res <= (sa_r ^ sb_r) & (m != 32'd0);
+                        neg_rem <= sa_r;
+                    end else begin                       // nhan
+                        p <= {32'd0, ub_r};
+                        m <= ua_r;
+                        neg_res <= sa_r ^ sb_r;
+                        neg_rem <= 1'b0;
+                    end
+                    state <= RUN;
                 end
                 RUN: begin
                     p <= op[2] ? div_next : mul_next;

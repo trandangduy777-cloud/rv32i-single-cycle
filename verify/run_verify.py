@@ -39,7 +39,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
     cmd = ["iverilog", "-g2012", "-o", out_vvp, rtl, os.path.join(HERE, tb)]
     if full_pipe:                       # rv32im_pipeline can module rv32m trong rv32i_core.v
         cmd[2:2] = ["-DPIPE_FULL"]
-        cmd.append(os.path.join(HERE, "..", "rv32i_core.v"))
+        cmd.append(os.environ.get("RV32_CORE") or os.path.join(HERE, "..", "rv32i_core.v"))
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stderr)
@@ -232,6 +232,15 @@ PIPE_MUTATIONS = [
 ]
 
 
+# Loi chen vao module rv32m (nam trong rv32i_core.v) o che do PREP = 1 cua pipeline. Ten bat dau bang "M:".
+M_CORE_MUTATIONS = [
+    ("M: PREP, REM khong dao dau du", "neg_rem <= sa_r;", "neg_rem <= 1'b0;"),
+    ("M: PREP, DIV cho 0 sai dau", "neg_res <= (sa_r ^ sb_r) & (m != 32'd0);", "neg_res <= (sa_r ^ sb_r);"),
+    ("M: PREP, dao dau b theo dau a", "wire [31:0] ub_r = sb_r ? (~m + 32'd1) : m;", "wire [31:0] ub_r = sa_r ? (~m + 32'd1) : m;"),
+    ("M: PREP, MUL sai dau ket qua", "neg_res <= sa_r ^ sb_r;", "neg_res <= 1'b0;"),
+    ("M: PREP, khong chot dau a", "sa_r <= sa;", "sa_r <= 1'b0;"),
+]
+
 PIPEM_MUTATIONS = PIPE_MUTATIONS + [
     ("X: ID nhay som khi EX dang dong bang (lenh M)", "end else if (id_redirect & ~ex_stall) begin", "end else if (id_redirect) begin"),
     ("X: lenh trap van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall;"),
@@ -272,14 +281,28 @@ def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=F
     src = open(rtl).read()
     caught = skipped = 0
     muts = [m for m in (PIPEM_MUTATIONS if full_pipe else PIPE_MUTATIONS if pipe else MUTATIONS) if not only or only.lower() in m[0].lower()]
+    core_path = os.path.join(HERE, "..", "rv32i_core.v")
+    core_src = open(core_path).read()
+    if full_pipe and (not only or only.lower() in "m:"):
+        muts = muts + [m for m in M_CORE_MUTATIONS if not only or only.lower() in m[0].lower()]
     for name, old, new in muts:
-        if old not in src:
+        is_core = name.startswith("M:")
+        if old not in (core_src if is_core else src):
             print(f"  [BO QUA] {name}: khong tim thay doan can doi trong RTL (chuoi trong MUTATIONS can cap nhat theo RTL)")
             skipped += 1
             continue
         mpath = os.path.join(tmp, "mut.v")
-        open(mpath, "w").write(src.replace(old, new, 1))
-        cov, fails = run_suite(mpath, n, length, seed0, tmp, verbose=False, pipe=pipe, full_pipe=full_pipe)
+        if is_core:                                   # mutation trong rv32i_core.v: giu nguyen file pipeline
+            cpath = os.path.join(tmp, "core_mut.v")
+            open(cpath, "w").write(core_src.replace(old, new, 1))
+            open(mpath, "w").write(src)
+            os.environ["RV32_CORE"] = cpath
+        else:
+            open(mpath, "w").write(src.replace(old, new, 1))
+        try:
+            cov, fails = run_suite(mpath, n, length, seed0, tmp, verbose=False, pipe=pipe, full_pipe=full_pipe)
+        finally:
+            os.environ.pop("RV32_CORE", None)
         ok = len(fails) > 0
         caught += ok
         print(f"  [{'BAT DUOC' if ok else 'BO SOT  '}] {name} ({len(fails)}/{n + 1} chuong trinh loi)")

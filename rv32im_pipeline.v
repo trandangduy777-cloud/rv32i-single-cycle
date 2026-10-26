@@ -55,19 +55,22 @@ module rv32im_pipeline (
         if (!rst_n) begin
             pc         <= 32'd0;
             ifid_valid <= 1'b0;
-            ifid_pc    <= 32'd0;
-            ifid_instr <= NOP;
         end else if (redirect) begin
             pc         <= redirect_pc;
             ifid_valid <= 1'b0;                // huy lenh vua doc nham duong
-            ifid_instr <= NOP;
         end else if (id_redirect & ~ex_stall) begin   // nhay som o ID: huy lenh vua doc tuan tu o IF
             pc         <= id_target;
             ifid_valid <= 1'b0;
-            ifid_instr <= NOP;
         end else if (!(stall | ex_stall)) begin
             pc         <= pc + 32'd4;
             ifid_valid <= 1'b1;
+        end
+    end
+
+    // Truong du lieu cua IF/ID (pc, lenh) khong bi redirect dieu khien enable: lenh bi huy da duoc danh dau bang
+    // ifid_valid = 0. Nho vay tin hieu redirect (ket qua so sanh nhanh o EX) khong phai toi hang chuc flip-flop nay.
+    always @(posedge clk) begin
+        if (!(stall | ex_stall)) begin
             ifid_pc    <= pc;
             ifid_instr <= imem_data;
         end
@@ -294,7 +297,7 @@ module rv32im_pipeline (
     // nhan/chia
     wire        m_done;
     wire [31:0] m_result;
-    rv32m u_m (
+    rv32m #(.PREP(1)) u_m (
         .clk(clk), .rst_n(rst_n),
         .req(idex_mext), .funct3(idex_funct3),
         .a(op_a), .b(op_b),
