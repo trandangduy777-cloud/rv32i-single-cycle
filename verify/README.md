@@ -1,13 +1,14 @@
 # Kiểm chứng lõi RV32I
 
-So sánh từng lệnh của RTL với một mô hình tham chiếu viết độc lập bằng Python, trên hàng trăm chương trình ngẫu nhiên.
+So sánh từng lệnh của RTL với một mô hình tham chiếu viết độc lập bằng Python, trên hàng trăm chương trình ngẫu nhiên (có CSR, trap, lệnh bất hợp lệ).
 
 ## Thành phần
 | File | Nội dung |
 |---|---|
 | `rv32i_iss.py` | Mô hình tham chiếu (ISS), in vết mỗi lệnh |
-| `tb_trace.v` | Testbench in vết của RTL cùng định dạng (`+prog=`, `+dmem=`) |
-| `gen_prog.py` | Sinh chương trình ngẫu nhiên hợp lệ (nhánh chỉ nhảy tới, truy cập bộ nhớ căn chỉnh, khởi tạo đủ thanh ghi) |
+| `tb_trace_pipe.v` | Như trên nhưng đọc tầng WB của pipeline |
+| `tb_trace.v` | Testbench in vết của RTL cùng định dạng (`+prog=`, `+dmem=`), chỉ in khi lệnh hoàn tất (`retire`) |
+| `gen_prog.py` | Sinh chương trình ngẫu nhiên (nhánh chỉ nhảy tới, truy cập bộ nhớ căn chỉnh, khởi tạo đủ thanh ghi, có CSR/trap và bộ xử lý trap ở `0xC00`) |
 | `run_verify.py` | Chạy so sánh, đo độ phủ lệnh, kiểm tra bằng đột biến lỗi |
 
 ## Dùng
@@ -17,16 +18,32 @@ python3 run_verify.py                  # 200 chương trình ngẫu nhiên + ch�
 python3 run_verify.py --n 500 --len 400
 python3 run_verify.py --mutate         # chèn lỗi cố ý, kiểm tra bộ kiểm chứng có bắt được
 ```
-Kết quả kỳ vọng: `that bai: 0` và `du 37/37 lenh`.
+Kiểm chứng pipeline (chỉ RV32I thuần, in vết ở tầng WB bằng `tb_trace_pipe.v`):
+```
+python3 run_verify.py --pipe                   # 200 chương trình ngẫu nhiên + chương trình định hướng
+python3 run_verify.py --pipe --mutate          # 20 lỗi hazard/forwarding/flush chèn cố ý
+```
+Pipeline đầy đủ (RV32IM + CSR + trap):
+```
+python3 run_verify.py --pipem
+python3 run_verify.py --pipem --mutate         # 41 lỗi chèn cố ý (hazard, CSR, trap, M, flush)
+```
+Chương trình ngẫu nhiên ưu tiên một nhóm thanh ghi nhỏ (x0, x2..x5) để các lệnh sát nhau hay phụ thuộc dữ liệu, nhờ đó forwarding và load-use được thử nhiều.
+
+Kết quả kỳ vọng: `that bai: 0`, `Phu lenh: 55/55`, `Phu truong hop bien chia: ... | du`, `du 4 loai trap`. Mutation test chạy lâu hơn (vài phút), kỳ vọng `Bat duoc 37/37 loi chen co y` (có thể chạy riêng nhóm lỗi bằng `--mutate --only "M:"`).
 
 ## Định dạng vết
 ```
 pc=00000000 ins=40000093 rd=1 val=00000400 st=0 addr=00000000 data=00000000 strb=0
 ```
 Mỗi dòng là một lệnh đã thực thi: `rd`/`val` là thanh ghi đích và giá trị ghi (0 nếu không ghi), `st`/`addr`/`data`/`strb` là lần ghi bộ nhớ (data đã che theo byte-enable).
-Khi đổi sang pipeline, chỉ cần `tb_trace.v` in vết ở tầng commit theo cùng định dạng, ISS và bộ sinh dùng lại nguyên.
+Pipeline dùng lại nguyên ISS và bộ sinh (profile `base`), chỉ khác testbench in vết ở tầng WB theo cùng định dạng.
 
 ## Giới hạn
 - ISS và RTL do cùng một người viết, nên hiểu sai đặc tả ở cả hai bên sẽ không bị phát hiện. Muốn chắc hơn thì đối chiếu thêm với Spike hoặc bộ `riscv-tests` chính thức.
-- Chưa phủ: truy cập không căn chỉnh, ngoại lệ (trap), CSR, FENCE.
+- Chưa phủ: truy cập load/store không căn chỉnh, ngắt.
+- Bộ xử lý trap trong chương trình ngẫu nhiên luôn quay lại lệnh kế tiếp (`mepc + 4`), nên chỉ kiểm tra trap theo kiểu "bỏ qua lệnh gây lỗi".
 - Chương trình ngẫu nhiên không có vòng lặp (nhánh chỉ nhảy tới); vòng lặp được thử trong `prog.hex` định hướng.
+
+- Mutation test coi mutation bị bỏ qua (không tìm thấy chuỗi cần thay trong RTL) là thất bại. Khi sửa RTL, cập nhật chuỗi trong `MUTATIONS` cho khớp.
+- Testbench in vết dừng sau 20.000 chu kỳ (`TIMEOUT`) để chặn vòng lặp vô hạn khi có lỗi.

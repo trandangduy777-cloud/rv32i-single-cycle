@@ -1,10 +1,19 @@
-// RV32I single-cycle core (tu viet)
+// RV32I single-cycle core (tu viet) + Zicsr co ban + trap (chi che do Machine)
 // - Bo nho lenh/du lieu nam ngoai core (Harvard), doc lenh va doc du lieu la combinational
 // - Ho tro: LUI AUIPC JAL JALR BEQ BNE BLT BGE BLTU BGEU
 //           LB LH LW LBU LHU SB SH SW
 //           ADDI SLTI SLTIU XORI ORI ANDI SLLI SRLI SRAI
 //           ADD SUB SLL SLT SLTU XOR SRL SRA OR AND
-// - FENCE/ECALL/EBREAK/CSR: coi nhu NOP (khong co trap)
+//           FENCE / FENCE.I (coi nhu NOP), ECALL, EBREAK, MRET
+//           CSRRW CSRRS CSRRC CSRRWI CSRRSI CSRRCI
+//           Phan mo rong M: MUL MULH MULHSU MULHU DIV DIVU REM REMU (nhan/chia lap, nhieu chu ky, core dung pc cho den khi xong)
+// - CSR: mstatus(MIE,MPIE; MPP co dinh 11) misa mtvec(che do truc tiep) mscratch mepc mcause mtval mhartid
+// - Ngoai le (trap): lenh bat hop le (cause 2), EBREAK (3), ECALL tu M-mode (11),
+//                    dia chi lenh nhay toi khong can chinh 4 byte (cause 0),
+//                    load/store khong can chinh (cause 4 / 6, mtval = dia chi)
+//   Khi trap: lenh gay trap khong ghi thanh ghi/bo nho; mepc=pc, mcause, mtval cap nhat,
+//             MPIE<=MIE, MIE<=0, pc<=mtvec. MRET: pc<=mepc, MIE<=MPIE, MPIE<=1.
+// - Chua co ngat (interrupt)
 module rv32i_core (
     input  wire        clk,
     input  wire        rst_n,
@@ -50,6 +59,8 @@ module rv32i_core (
     localparam OP_STORE  = 7'b0100011;
     localparam OP_IMM    = 7'b0010011;
     localparam OP_REG    = 7'b0110011;
+    localparam OP_FENCE  = 7'b0001111;
+    localparam OP_SYSTEM = 7'b1110011;
 
     wire is_lui    = (opcode == OP_LUI);
     wire is_auipc  = (opcode == OP_AUIPC);
@@ -60,6 +71,8 @@ module rv32i_core (
     wire is_store  = (opcode == OP_STORE);
     wire is_imm    = (opcode == OP_IMM);
     wire is_reg    = (opcode == OP_REG);
+    wire is_fence  = (opcode == OP_FENCE);
+    wire is_system = (opcode == OP_SYSTEM);
 
     // Immediate
     wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]};
@@ -74,6 +87,68 @@ module rv32i_core (
     reg  [31:0] regs [1:31];
     wire [31:0] rs1_val = (rs1 == 5'd0) ? 32'd0 : regs[rs1];
     wire [31:0] rs2_val = (rs2 == 5'd0) ? 32'd0 : regs[rs2];
+
+    // ------------------------------------------------------------
+    // Kiem tra lenh hop le (giai ma chat: moi truong khong dung phai dung gia tri quy dinh)
+    // ------------------------------------------------------------
+    wire f7_zero = (instr[31:25] == 7'b0000000);
+    wire f7_alt  = (instr[31:25] == 7'b0100000);
+    wire f7_m    = (instr[31:25] == 7'b0000001);      // phan mo rong M
+
+    wire legal_reg    = is_reg & (f7_zero | f7_m | (f7_alt & (funct3 == 3'b000 | funct3 == 3'b101)));
+    wire legal_imm    = is_imm & ((funct3 == 3'b001) ? f7_zero :
+                                  (funct3 == 3'b101) ? (f7_zero | f7_alt) : 1'b1);
+    wire legal_load   = is_load & (funct3 == 3'b000 | funct3 == 3'b001 | funct3 == 3'b010 |
+                                   funct3 == 3'b100 | funct3 == 3'b101);
+    wire legal_store  = is_store & (funct3 == 3'b000 | funct3 == 3'b001 | funct3 == 3'b010);
+    wire legal_branch = is_branch & (funct3 != 3'b010 & funct3 != 3'b011);
+    wire legal_jalr   = is_jalr & (funct3 == 3'b000);
+    wire legal_fence  = is_fence & (funct3 == 3'b000 | funct3 == 3'b001);
+
+    wire is_ecall  = (instr == 32'h0000_0073);
+    wire is_ebreak = (instr == 32'h0010_0073);
+    wire is_mret   = (instr == 32'h3020_0073);
+    wire is_csr    = is_system & (funct3 != 3'b000) & (funct3 != 3'b100);
+
+    // ------------------------------------------------------------
+    // CSR
+    // ------------------------------------------------------------
+    reg         mstatus_mie, mstatus_mpie;
+    reg  [31:2] mtvec_r, mepc_r;
+    reg  [31:0] mscratch, mcause_r, mtval_r;
+
+    wire [11:0] csr_addr = instr[31:20];
+    reg  [31:0] csr_rdata;
+    reg         csr_exists;
+    always @* begin
+        csr_exists = 1'b1;
+        case (csr_addr)
+            12'h300: csr_rdata = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
+            12'h301: csr_rdata = 32'h4000_0100;           // misa: RV32, chu I
+            12'h305: csr_rdata = {mtvec_r, 2'b00};
+            12'h340: csr_rdata = mscratch;
+            12'h341: csr_rdata = {mepc_r, 2'b00};
+            12'h342: csr_rdata = mcause_r;
+            12'h343: csr_rdata = mtval_r;
+            12'hF14: csr_rdata = 32'd0;                   // mhartid (chi doc)
+            default: begin csr_rdata = 32'd0; csr_exists = 1'b0; end
+        endcase
+    end
+
+    wire        csr_we_req = (funct3[1:0] == 2'b01) | (rs1 != 5'd0);   // RS/RC voi rs1=x0 khong ghi
+    wire        csr_ro     = (csr_addr[11:10] == 2'b11);
+    wire        csr_ok     = csr_exists & ~(csr_we_req & csr_ro);
+    wire        legal_csr  = is_csr & csr_ok;
+
+    wire [31:0] csr_src = funct3[2] ? {27'b0, rs1} : rs1_val;
+    reg  [31:0] csr_new;
+    always @* begin
+        case (funct3[1:0])
+            2'b01:   csr_new = csr_src;
+            2'b10:   csr_new = csr_rdata | csr_src;
+            default: csr_new = csr_rdata & ~csr_src;
+        endcase
+    end
 
     // ------------------------------------------------------------
     // ALU
@@ -134,7 +209,54 @@ module rv32i_core (
     wire [31:0] jal_target    = pc + imm_j;
     wire [31:0] jalr_target   = (rs1_val + imm_i) & 32'hFFFF_FFFE;
 
-    assign pc_next = is_jal                       ? jal_target    :
+    // ------------------------------------------------------------
+    // Phan mo rong M: don vi nhan/chia lap. Lenh M giu pc (stall) cho den khi m_done.
+    // retire = 1 o chu ky lenh hoan tat (testbench in vet khi retire = 1)
+    // ------------------------------------------------------------
+    wire        is_mext = is_reg & f7_m;
+    wire        m_done;
+    wire [31:0] m_result;
+    rv32m u_m (
+        .clk(clk), .rst_n(rst_n),
+        .req(is_mext), .funct3(funct3),
+        .a(rs1_val), .b(rs2_val),
+        .done(m_done), .result(m_result)
+    );
+    wire stall  = is_mext & ~m_done;
+    wire retire = ~stall;
+
+    // ------------------------------------------------------------
+    // Trap
+    // ------------------------------------------------------------
+    wire illegal = ~(is_lui | is_auipc | is_jal | legal_jalr | legal_branch | legal_load |
+                     legal_store | legal_imm | legal_reg | legal_fence |
+                     is_ecall | is_ebreak | is_mret | legal_csr);
+
+    // dia chi nhay toi phai chia het cho 4 (khong co lenh nen C)
+    wire misaligned = (is_jal & jal_target[1]) | (legal_jalr & jalr_target[1]) |
+                      (legal_branch & take_branch & branch_target[1]);
+    wire [31:0] bad_target = is_jal ? jal_target : (is_jalr ? jalr_target : branch_target);
+
+    // load/store lech dia chi: nua tu (LH/LHU/SH) phai chan, tu (LW/SW) phai chia het cho 4
+    wire ld_misal = legal_load  & (((funct3[1:0] == 2'b01) & mem_addr[0]) | ((funct3[1:0] == 2'b10) & (mem_addr[1:0] != 2'b00)));
+    wire st_misal = legal_store & (((funct3[1:0] == 2'b01) & mem_addr[0]) | ((funct3[1:0] == 2'b10) & (mem_addr[1:0] != 2'b00)));
+
+    wire trap = illegal | is_ecall | is_ebreak | misaligned | ld_misal | st_misal;
+
+    reg [31:0] trap_cause, trap_tval;
+    always @* begin
+        if (illegal)       begin trap_cause = 32'd2;  trap_tval = instr;      end
+        else if (is_ecall) begin trap_cause = 32'd11; trap_tval = 32'd0;      end
+        else if (is_ebreak)begin trap_cause = 32'd3;  trap_tval = pc;         end
+        else if (ld_misal) begin trap_cause = 32'd4;  trap_tval = mem_addr;   end
+        else if (st_misal) begin trap_cause = 32'd6;  trap_tval = mem_addr;   end
+        else               begin trap_cause = 32'd0;  trap_tval = bad_target; end
+    end
+
+    assign pc_next = stall                        ? pc               :
+                     trap                         ? {mtvec_r, 2'b00} :
+                     is_mret                      ? {mepc_r, 2'b00}  :
+                     is_jal                       ? jal_target    :
                      is_jalr                      ? jalr_target   :
                      (is_branch & take_branch)    ? branch_target :
                                                     pc_plus4;
@@ -142,7 +264,7 @@ module rv32i_core (
     // ------------------------------------------------------------
     // Store
     // ------------------------------------------------------------
-    assign dmem_we = is_store;
+    assign dmem_we = is_store & ~trap;
     wire [1:0] byte_off = mem_addr[1:0];
 
     reg [31:0] st_data;
@@ -164,7 +286,7 @@ module rv32i_core (
         endcase
     end
     assign dmem_wdata = st_data;
-    assign dmem_wstrb = is_store ? st_strb : 4'b0000;
+    assign dmem_wstrb = dmem_we ? st_strb : 4'b0000;
 
     // ------------------------------------------------------------
     // Load
@@ -187,24 +309,156 @@ module rv32i_core (
     // ------------------------------------------------------------
     // Ghi nguoc
     // ------------------------------------------------------------
-    wire        rd_we = is_lui | is_auipc | is_jal | is_jalr | is_load | is_imm | is_reg;
+    wire        rd_we = (is_lui | is_auipc | is_jal | is_jalr | is_load | is_imm | is_reg | is_csr) & ~trap & ~stall;
     reg  [31:0] rd_val;
     always @* begin
         if      (is_lui)           rd_val = imm_u;
         else if (is_auipc)         rd_val = pc + imm_u;
         else if (is_jal | is_jalr) rd_val = pc_plus4;
+        else if (is_csr)           rd_val = csr_rdata;
+        else if (is_mext)          rd_val = m_result;
         else if (is_load)          rd_val = ld_data;
         else                       rd_val = alu_out;
     end
 
+    wire csr_write = is_csr & csr_ok & csr_we_req;   // csr_ok da loai truong hop trap
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc <= 32'd0;
+            pc           <= 32'd0;
+            mstatus_mie  <= 1'b0;
+            mstatus_mpie <= 1'b0;
+            mtvec_r      <= 30'd0;
+            mepc_r       <= 30'd0;
+            mscratch     <= 32'd0;
+            mcause_r     <= 32'd0;
+            mtval_r      <= 32'd0;
         end else begin
             pc <= pc_next;
             if (rd_we && rd != 5'd0)
                 regs[rd] <= rd_val;
+
+            if (trap) begin
+                mepc_r       <= pc[31:2];
+                mcause_r     <= trap_cause;
+                mtval_r      <= trap_tval;
+                mstatus_mpie <= mstatus_mie;
+                mstatus_mie  <= 1'b0;
+            end else if (is_mret) begin
+                mstatus_mie  <= mstatus_mpie;
+                mstatus_mpie <= 1'b1;
+            end else if (csr_write) begin
+                case (csr_addr)
+                    12'h300: begin mstatus_mie <= csr_new[3]; mstatus_mpie <= csr_new[7]; end
+                    12'h305: mtvec_r  <= csr_new[31:2];
+                    12'h340: mscratch <= csr_new;
+                    12'h341: mepc_r   <= csr_new[31:2];
+                    12'h342: mcause_r <= csr_new;
+                    12'h343: mtval_r  <= csr_new;
+                    default: ;
+                endcase
+            end
         end
     end
 
+endmodule
+
+
+// ------------------------------------------------------------
+// Don vi nhan/chia nguyen lap (32 chu ky lap, 1 bit moi chu ky)
+//   funct3: 000 MUL, 001 MULH, 010 MULHSU, 011 MULHU, 100 DIV, 101 DIVU, 110 REM, 111 REMU
+// Dung "do lon" (tri tuyet doi) roi sua dau o cuoi.
+//   Chia cho 0: thuong = tat ca bit 1, du = so bi chia.  INT_MIN / -1: thuong = INT_MIN, du = 0.
+// Giao thuc: req = 1 suot thoi gian lenh M dang cho. Don vi nhan toan hang o chu ky dau (IDLE -> RUN),
+//   chay 32 chu ky, roi o trang thai FIN bao done = 1 trong 1 chu ky (core hoan tat lenh) va ve IDLE.
+// ------------------------------------------------------------
+module rv32m (
+    input  wire        clk,
+    input  wire        rst_n,
+    input  wire        req,
+    input  wire [2:0]  funct3,
+    input  wire [31:0] a,
+    input  wire [31:0] b,
+    output wire        done,
+    output reg  [31:0] result
+);
+    localparam IDLE = 2'd0, RUN = 2'd1, FIN = 2'd2;
+
+    reg [1:0]  state;
+    reg [4:0]  cnt;
+    reg [2:0]  op;
+    reg [63:0] p;          // nhan: {tich cao, so nhan}; chia: {du, so bi chia/thuong}
+    reg [31:0] m;          // nhan: so bi nhan; chia: so chia
+    reg        neg_res;    // dao dau ket qua nhan (MULH*) hoac thuong
+    reg        neg_rem;    // dao dau du
+
+    // dau cua toan hang khi bat dau
+    wire sa = (funct3 == 3'b001 | funct3 == 3'b010 | funct3 == 3'b100 | funct3 == 3'b110) & a[31];
+    wire sb = (funct3 == 3'b001 | funct3 == 3'b100 | funct3 == 3'b110) & b[31];
+    wire [31:0] ua = sa ? (~a + 32'd1) : a;
+    wire [31:0] ub = sb ? (~b + 32'd1) : b;
+
+    // buoc nhan: cong don roi dich phai
+    wire [32:0] mul_sum  = {1'b0, p[63:32]} + (p[0] ? {1'b0, m} : 33'd0);
+    wire [63:0] mul_next = {mul_sum, p[31:0]} >> 1;
+
+    // buoc chia khoi phuc: dich trai {du, thuong} roi thu tru
+    wire [32:0] div_rem  = {p[63:32], p[31]};
+    wire        div_ge   = (div_rem >= {1'b0, m});
+    wire [32:0] div_sub  = div_rem - {1'b0, m};
+    wire [63:0] div_next = div_ge ? {div_sub[31:0], p[30:0], 1'b1}
+                                  : {div_rem[31:0], p[30:0], 1'b0};
+
+    assign done = (state == FIN);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            cnt   <= 5'd0;
+            op    <= 3'd0;
+            p     <= 64'd0;
+            m     <= 32'd0;
+            neg_res <= 1'b0;
+            neg_rem <= 1'b0;
+        end else begin
+            case (state)
+                IDLE: if (req) begin
+                    op  <= funct3;
+                    cnt <= 5'd0;
+                    state <= RUN;
+                    if (funct3[2]) begin                 // chia
+                        p <= {32'd0, ua};
+                        m <= ub;
+                        neg_res <= (sa ^ sb) & (b != 32'd0);
+                        neg_rem <= sa;
+                    end else begin                       // nhan
+                        p <= {32'd0, ub};
+                        m <= ua;
+                        neg_res <= sa ^ sb;
+                        neg_rem <= 1'b0;
+                    end
+                end
+                RUN: begin
+                    p <= op[2] ? div_next : mul_next;
+                    cnt <= cnt + 5'd1;
+                    if (cnt == 5'd31) state <= FIN;
+                end
+                default: state <= IDLE;                  // FIN: lenh da hoan tat
+            endcase
+        end
+    end
+
+    wire [63:0] p_neg = ~p + 64'd1;
+    always @* begin
+        case (op)
+            3'b000:  result = p[31:0];                                   // MUL
+            3'b001,
+            3'b010,
+            3'b011:  result = neg_res ? p_neg[63:32] : p[63:32];         // MULH, MULHSU, MULHU
+            3'b100:  result = neg_res ? (~p[31:0] + 32'd1) : p[31:0];    // DIV
+            3'b101:  result = p[31:0];                                   // DIVU
+            3'b110:  result = neg_rem ? (~p[63:32] + 32'd1) : p[63:32];  // REM
+            default: result = p[63:32];                                  // REMU
+        endcase
+    end
 endmodule

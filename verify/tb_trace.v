@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-// Testbench in vet: moi chu ky (1 lenh) in 1 dong cung dinh dang voi rv32i_iss.py
+// Testbench in vet: moi lenh hoan tat (retire) in 1 dong cung dinh dang voi rv32i_iss.py
 // Tham so dong lenh: +prog=<file hex lenh>  [+dmem=<file hex du lieu ban dau>]
 // Ket thuc khi chuong trinh ghi vao dia chi tohost (0x1000)
 module tb_trace;
@@ -40,7 +40,7 @@ module tb_trace;
     // Lay mau o canh len: luc nay cac tin hieu to hop con la gia tri cua lenh sap thuc thi
     // (cac thanh ghi chi cap nhat sau, qua NBA), nen khong bi dua tin hieu.
     always @(posedge clk) begin
-        if (rst_n) begin
+        if (rst_n && dut.retire) begin   // lenh M mat nhieu chu ky: chi in khi lenh hoan tat
             rd_w = dut.rd_we && (dut.rd != 5'd0);
             mask = {{8{dmem_wstrb[3]}}, {8{dmem_wstrb[2]}}, {8{dmem_wstrb[1]}}, {8{dmem_wstrb[0]}}};
             $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x",
@@ -63,7 +63,7 @@ module tb_trace;
         repeat (3) @(posedge clk);
         @(negedge clk);          // nha reset o canh xuong de khong dua voi canh len
         rst_n = 1;
-        #2000000;
+        #200000;
         $display("TIMEOUT");
         $finish;
     end
