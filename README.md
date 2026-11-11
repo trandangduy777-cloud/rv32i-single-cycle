@@ -218,3 +218,6 @@ Cần `gcc-riscv64-unknown-elf` và `iverilog`.
 - Bộ nhân/chia lặp nên lệnh M chậm (34 chu kỳ ở single-cycle, 35 ở pipeline); chưa có bộ nhân nhanh
 - Mô hình tham chiếu và RTL do cùng một người viết; đã bổ sung riscv-tests (rv32ui, rv32um) nhưng chưa đối chiếu lock-step với Spike
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
+- RV32IM có dự đoán chưa đạt timing ở 15 ns (slack -2,5 ns ở góc chậm); số flow của RV32IM trong README là của bản chưa có dự đoán
+- Chu kỳ tối thiểu của single-cycle là ngoại suy từ hai lần chạy, và công suất ở các chu kỳ khác nhau không so sánh trực tiếp được
+- Chưa mô phỏng gate-level, flow dùng SDC mặc định
