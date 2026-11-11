@@ -116,7 +116,19 @@ Dự đoán giảm 8,9% số chu kỳ so với bản cũ. Pipeline vẫn chậm 
 
 Kiểm chứng phần dự đoán: sinh thêm đơn vị vòng lặp có giới hạn vào bộ chương trình ngẫu nhiên (nếu không, mỗi nhánh chỉ chạy một lần và bảng đếm không bao giờ học), thêm 8 mutation riêng cho dự đoán (đích đoán sai, thiếu một chiều đoán sai, nhảy sớm khi đang stall load-use, nhảy sớm đè lên redirect của EX, nhảy sớm khi lệnh M đóng băng EX, ...). Cả 8 đều bị bắt. Riêng mutation chỉ làm giảm hiệu năng (ví dụ không cập nhật bảng đếm) không thể bị bắt bằng so sánh kết quả, vì thiết kế đã bảo đảm đoán sai không đổi kết quả; hiệu năng được kiểm bằng CPI ở trên.
 
-Chưa chạy lại flow với bản có dự đoán, nên diện tích, công suất và Fmax trong bảng so sánh bên dưới vẫn là của bản chưa có dự đoán.
+### Kết quả flow của bản có dự đoán (RV32I, 14 ns)
+
+| Hạng mục | Chưa có dự đoán | Có dự đoán |
+|---|---|---|
+| Setup slack, góc chậm | +0,216 ns | +2,02 ns |
+| Chu kỳ tối thiểu | 13,78 ns | ≈ 11,98 ns (≈ 83,5 MHz) |
+| Số instance | 33.372 | 36.466 (+9 %) |
+| Diện tích instance | 375.352 µm² | 413.937 µm² (+10 %) |
+| Công suất ước tính | 11,11 mW | 13,08 mW |
+
+Số liệu có dự đoán là của bản đã tách dữ liệu IF/ID khỏi `redirect` (xem mục cải tiến bên dưới), nên Fmax tăng đến từ cả hai thay đổi chứ không riêng bộ dự đoán.
+
+Bản RV32IM có dự đoán chưa đạt 15 ns: setup ở góc chậm trượt khoảng -2,5 ns trên khoảng 54 endpoint, nguyên nhân chưa xác định. Cột RV32IM trong bảng so sánh bên dưới vẫn là của bản chưa có dự đoán.
 
 ## Kết quả flow (clock 24 ns)
 Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR, trap và M. Chưa chạy lại flow cho bản hiện tại (diện tích sẽ tăng, nhất là do bộ nhân/chia).
