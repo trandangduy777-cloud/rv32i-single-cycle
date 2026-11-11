@@ -1,0 +1,10 @@
+# Waveforms, binaries and simulator output
+*.vcd
+*.vvp
+*.elf
+__pycache__/
+*.pyc
+
+# Flow output
+runs/
+*.log
