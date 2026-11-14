@@ -241,7 +241,9 @@ M_CORE_MUTATIONS = [
     ("M: PREP, khong chot dau a", "sa_r <= sa;", "sa_r <= 1'b0;"),
 ]
 
-PIPEM_MUTATIONS = PIPE_MUTATIONS + [
+# Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
+PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] != "P: khong huy lenh o ID sau khi nhay"] + [
+    ("P: khong huy lenh o ID sau khi nhay", "idex_valid   <= ifid_valid & ~redirect & ~stall;", "idex_valid   <= ifid_valid & ~stall;"),
     ("X: ID nhay som khi EX dang dong bang (lenh M)", "end else if (id_redirect & ~ex_stall) begin", "end else if (id_redirect) begin"),
     ("X: lenh trap van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall;"),
     ("X: mepc luu pc cua tang MEM", "mepc_r       <= idex_pc[31:2];", "mepc_r       <= exmem_pc[31:2];"),
