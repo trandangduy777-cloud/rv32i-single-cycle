@@ -177,61 +177,79 @@ module rv32im_pipeline (
     reg  [4:0]  idex_rs1, idex_rs2, idex_rd;
     reg  [2:0]  idex_funct3;
     reg         idex_f7_5;
-    reg         idex_lui, idex_auipc, idex_jal, idex_jalr, idex_branch, idex_load, idex_store, idex_imm_op, idex_reg_op;
-    reg         idex_rd_we;
+    reg         idex_lui_r, idex_auipc_r, idex_jal_r, idex_jalr_r, idex_branch_r, idex_load_r, idex_store_r, idex_imm_op_r, idex_reg_op_r;
+    reg         idex_rd_we_r;
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
-    reg         idex_illegal, idex_ecall, idex_ebreak, idex_mret, idex_csr, idex_mext;
+    reg         idex_illegal_r, idex_ecall_r, idex_ebreak_r, idex_mret_r, idex_csr_r, idex_mext_r;
+    // Cac co dieu khien chi co hieu luc khi idex_valid = 1. Nho vay lenh bi huy boi redirect chi can xoa idex_valid
+    // (1 flip-flop) thay vi xoa ~20 co o day, giam so flip-flop ma redirect phai toi.
+    wire idex_lui = idex_lui_r & idex_valid;
+    wire idex_auipc = idex_auipc_r & idex_valid;
+    wire idex_jal = idex_jal_r & idex_valid;
+    wire idex_jalr = idex_jalr_r & idex_valid;
+    wire idex_branch = idex_branch_r & idex_valid;
+    wire idex_load = idex_load_r & idex_valid;
+    wire idex_store = idex_store_r & idex_valid;
+    wire idex_imm_op = idex_imm_op_r & idex_valid;
+    wire idex_reg_op = idex_reg_op_r & idex_valid;
+    wire idex_rd_we = idex_rd_we_r & idex_valid;
+    wire idex_illegal = idex_illegal_r & idex_valid;
+    wire idex_ecall = idex_ecall_r & idex_valid;
+    wire idex_ebreak = idex_ebreak_r & idex_valid;
+    wire idex_mret = idex_mret_r & idex_valid;
+    wire idex_csr = idex_csr_r & idex_valid;
+    wire idex_mext = idex_mext_r & idex_valid;
 
     // load-use
     assign stall = ifid_valid & idex_valid & idex_load & (idex_rd != 5'd0) &
                    ((uses_rs1 & (idex_rd == rs1)) | (uses_rs2 & (idex_rd == rs2)));
 
-    wire id_bubble = redirect | stall;
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             idex_valid  <= 1'b0;
-            idex_lui    <= 1'b0; idex_auipc  <= 1'b0; idex_jal    <= 1'b0; idex_jalr   <= 1'b0;
-            idex_branch <= 1'b0; idex_load   <= 1'b0; idex_store  <= 1'b0;
-            idex_imm_op <= 1'b0; idex_reg_op <= 1'b0; idex_rd_we  <= 1'b0;
+            idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
+            idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0;
+            idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
             idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
-            idex_illegal <= 1'b0; idex_ecall <= 1'b0; idex_ebreak <= 1'b0;
-            idex_mret   <= 1'b0; idex_csr    <= 1'b0; idex_mext   <= 1'b0;
+            idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
+            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0;
             idex_pred_taken <= 1'b0;
         end else if (ex_stall) begin
             // lenh M dang chay o EX: giu nguyen ID/EX
-        end else if (id_bubble) begin
-            idex_pred_taken <= 1'b0;
-            idex_valid  <= 1'b0;
-            idex_lui    <= 1'b0; idex_auipc  <= 1'b0; idex_jal    <= 1'b0; idex_jalr   <= 1'b0;
-            idex_branch <= 1'b0; idex_load   <= 1'b0; idex_store  <= 1'b0;
-            idex_imm_op <= 1'b0; idex_reg_op <= 1'b0; idex_rd_we  <= 1'b0;
-            idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
-            idex_illegal <= 1'b0; idex_ecall <= 1'b0; idex_ebreak <= 1'b0;
-            idex_mret   <= 1'b0; idex_csr    <= 1'b0; idex_mext   <= 1'b0;
         end else begin
-            idex_valid   <= ifid_valid;
-            idex_pred_taken <= id_pred_taken;
-            idex_lui     <= is_lui & ifid_valid;
-            idex_auipc   <= is_auipc & ifid_valid;
-            idex_jal     <= is_jal & ifid_valid;
-            idex_jalr    <= legal_jalr & ifid_valid;
-            idex_branch  <= legal_branch & ifid_valid;
-            idex_load    <= legal_load & ifid_valid;
-            idex_store   <= legal_store & ifid_valid;
-            idex_imm_op  <= legal_imm & ifid_valid;
-            idex_reg_op  <= legal_reg & ifid_valid;
-            idex_rd_we   <= rd_we & ifid_valid;
-            idex_fa_mem  <= id_fa_mem;
-            idex_fa_wb   <= id_fa_wb;
-            idex_fb_mem  <= id_fb_mem;
-            idex_fb_wb   <= id_fb_wb;
-            idex_illegal <= illegal & ifid_valid;
-            idex_ecall   <= is_ecall & ifid_valid;
-            idex_ebreak  <= is_ebreak & ifid_valid;
-            idex_mret    <= is_mret & ifid_valid;
-            idex_csr     <= legal_csr & ifid_valid;
-            idex_mext    <= (is_reg & f7_m) & ifid_valid;
+            // redirect (tin hieu muon) chi dieu khien idex_valid; stall (tin hieu som) xoa cac co con lai
+            idex_valid   <= ifid_valid & ~redirect & ~stall;
+            if (stall) begin
+                idex_pred_taken <= 1'b0;
+                idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
+                idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0;
+                idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
+                idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
+                idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
+                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0;
+            end else begin
+                idex_pred_taken <= id_pred_taken;
+                idex_lui_r     <= is_lui & ifid_valid;
+                idex_auipc_r   <= is_auipc & ifid_valid;
+                idex_jal_r     <= is_jal & ifid_valid;
+                idex_jalr_r    <= legal_jalr & ifid_valid;
+                idex_branch_r  <= legal_branch & ifid_valid;
+                idex_load_r    <= legal_load & ifid_valid;
+                idex_store_r   <= legal_store & ifid_valid;
+                idex_imm_op_r  <= legal_imm & ifid_valid;
+                idex_reg_op_r  <= legal_reg & ifid_valid;
+                idex_rd_we_r   <= rd_we & ifid_valid;
+                idex_fa_mem  <= id_fa_mem;
+                idex_fa_wb   <= id_fa_wb;
+                idex_fb_mem  <= id_fb_mem;
+                idex_fb_wb   <= id_fb_wb;
+                idex_illegal_r <= illegal & ifid_valid;
+                idex_ecall_r   <= is_ecall & ifid_valid;
+                idex_ebreak_r  <= is_ebreak & ifid_valid;
+                idex_mret_r    <= is_mret & ifid_valid;
+                idex_csr_r     <= legal_csr & ifid_valid;
+                idex_mext_r    <= (is_reg & f7_m) & ifid_valid;
+            end
         end
     end
 
