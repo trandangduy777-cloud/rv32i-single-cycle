@@ -242,8 +242,11 @@ M_CORE_MUTATIONS = [
 ]
 
 # Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
-PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] != "P: khong huy lenh o ID sau khi nhay"] + [
-    ("P: khong huy lenh o ID sau khi nhay", "idex_valid   <= ifid_valid & ~redirect & ~stall;", "idex_valid   <= ifid_valid & ~stall;"),
+PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX")] + [
+    ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= redirect_pc_q;"),
+    ("P: khong huy lenh o ID sau khi nhay", "idex_valid_r <= ifid_valid & ~redirect_q & ~stall;", "idex_valid_r <= ifid_valid & ~stall;"),
+    ("R: lenh o EX sau redirect khong bi vo hieu", "wire        idex_valid = idex_valid_r & ~redirect_q;", "wire        idex_valid = idex_valid_r;"),
+    ("R: redirect_pc_q khong dang ky (dung pc cu)", "pc         <= redirect_pc_q;", "pc         <= pc;"),
     ("X: ID nhay som khi EX dang dong bang (lenh M)", "end else if (id_redirect & ~ex_stall) begin", "end else if (id_redirect) begin"),
     ("X: lenh trap van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall;"),
     ("X: mepc luu pc cua tang MEM", "mepc_r       <= idex_pc[31:2];", "mepc_r       <= exmem_pc[31:2];"),
