@@ -420,6 +420,23 @@ module rv32im_pipeline (
     end
     always @(posedge clk) redirect_pc_q <= redirect_pc;
 
+    // Ghi CSR khi trap cung tre 1 chu ky: trap_ex phu thuoc ket qua so sanh nhanh (dich nhanh lech), nen khong de no
+    // dieu khien enable cua ~100 flip-flop mepc/mcause/mtval cung chu ky. Lenh o EX chu ky sau da bi redirect_q vo hieu
+    // va lenh dau tien cua trinh xu ly trap toi EX sau it nhat 3 chu ky, nen ghi tre khong doi hanh vi.
+    reg         trap_q;
+    reg  [29:0] tepc_q;
+    reg  [3:0]  tcause_q;
+    reg  [31:0] ttval_q;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) trap_q <= 1'b0;
+        else        trap_q <= trap_ex;
+    end
+    always @(posedge clk) begin
+        tepc_q       <= idex_pc[31:2];
+        tcause_q     <= trap_cause[3:0];
+        ttval_q      <= trap_tval;
+    end
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mstatus_mie  <= 1'b0;
@@ -429,10 +446,10 @@ module rv32im_pipeline (
             mscratch     <= 32'd0;
             mcause_r     <= 32'd0;
             mtval_r      <= 32'd0;
-        end else if (trap_ex) begin
-            mepc_r       <= idex_pc[31:2];
-            mcause_r     <= trap_cause;
-            mtval_r      <= trap_tval;
+        end else if (trap_q) begin
+            mepc_r       <= tepc_q;
+            mcause_r     <= {28'd0, tcause_q};
+            mtval_r      <= ttval_q;
             mstatus_mpie <= mstatus_mie;
             mstatus_mie  <= 1'b0;
         end else if (mret_ex) begin
