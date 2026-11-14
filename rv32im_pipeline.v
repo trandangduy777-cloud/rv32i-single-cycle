@@ -32,8 +32,12 @@ module rv32im_pipeline (
     wire        id_fa_mem, id_fa_wb, id_fb_mem, id_fb_wb;   // chon forwarding, tinh san o ID
     wire        stall;                 // load-use: giu IF/ID va PC, chen bong bay vao EX
     wire        ex_stall;              // lenh M dang chay o EX: dong bang IF/ID/EX
-    wire        redirect;              // EX: JALR, doan sai nhanh, trap hoac MRET
+    wire        redirect;              // EX: JALR, doan sai nhanh, trap hoac MRET (tin hieu muon, chi duoc DANG KY)
     wire [31:0] redirect_pc;
+    // redirect khong duoc dung ngay trong chu ky dang tinh: no duoc luu vao redirect_q/redirect_pc_q va ap vao chu ky ke tiep.
+    // Nho vay cay fanout cua redirect bat dau tu 1 flip-flop thay vi tu sau bo so sanh nhanh. Doi lai phat nhanh doan sai la 3 chu ky.
+    reg         redirect_q;
+    reg  [31:0] redirect_pc_q;
     wire        id_redirect;           // ID nhay som (JAL, hoac nhanh doan "nhay")
     wire [31:0] id_target;
 
@@ -55,8 +59,8 @@ module rv32im_pipeline (
         if (!rst_n) begin
             pc         <= 32'd0;
             ifid_valid <= 1'b0;
-        end else if (redirect) begin
-            pc         <= redirect_pc;
+        end else if (redirect_q) begin
+            pc         <= redirect_pc_q;
             ifid_valid <= 1'b0;                // huy lenh vua doc nham duong
         end else if (id_redirect & ~ex_stall) begin   // nhay som o ID: huy lenh vua doc tuan tu o IF
             pc         <= id_target;
@@ -171,7 +175,9 @@ module rv32im_pipeline (
         if (wb_we) regs[memwb_rd] <= memwb_val;
 
     // ID/EX
-    reg         idex_valid;
+    reg         idex_valid_r;
+    // Lenh o EX o chu ky ngay sau redirect la lenh nham duong (da vao EX truoc khi redirect duoc ap): vo hieu bang redirect_q.
+    wire        idex_valid = idex_valid_r & ~redirect_q;
     reg         idex_pred_taken;                              // du doan cua nhanh dang o EX
     reg  [31:0] idex_pc, idex_instr, idex_rs1_val, idex_rs2_val, idex_imm;
     reg  [4:0]  idex_rs1, idex_rs2, idex_rd;
@@ -206,7 +212,7 @@ module rv32im_pipeline (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            idex_valid  <= 1'b0;
+            idex_valid_r <= 1'b0;
             idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
             idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0;
             idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
@@ -217,8 +223,8 @@ module rv32im_pipeline (
         end else if (ex_stall) begin
             // lenh M dang chay o EX: giu nguyen ID/EX
         end else begin
-            // redirect (tin hieu muon) chi dieu khien idex_valid; stall (tin hieu som) xoa cac co con lai
-            idex_valid   <= ifid_valid & ~redirect & ~stall;
+            // redirect_q chi dieu khien idex_valid_r; stall (tin hieu som) xoa cac co con lai
+            idex_valid_r <= ifid_valid & ~redirect_q & ~stall;
             if (stall) begin
                 idex_pred_taken <= 1'b0;
                 idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
@@ -407,6 +413,12 @@ module rv32im_pipeline (
     assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
                          mret_ex ? {mepc_r, 2'b00}  :
                          idex_jalr ? jalr_target : (idex_pred_taken ? idex_pc + 32'd4 : pc_imm);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) redirect_q <= 1'b0;
+        else        redirect_q <= redirect;
+    end
+    always @(posedge clk) redirect_pc_q <= redirect_pc;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
