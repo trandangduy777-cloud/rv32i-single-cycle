@@ -8,3 +8,7 @@ __pycache__/
 # Flow output
 runs/
 *.log
+
+# Gate-level simulation: netlist copied from a flow run and build output
+gls/*.nl.v
+gls/build/
