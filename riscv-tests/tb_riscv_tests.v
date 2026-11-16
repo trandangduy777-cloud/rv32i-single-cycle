@@ -64,6 +64,7 @@ module tb_riscv_tests;
         $readmemh(imgfile, imem);
         $readmemh(imgfile, dmem);
         repeat (3) @(posedge clk);
+        @(negedge clk);             // nha reset o canh xuong, tranh chay dua voi canh len (quan trong khi mo phong netlist)
         rst_n = 1;
     end
 endmodule

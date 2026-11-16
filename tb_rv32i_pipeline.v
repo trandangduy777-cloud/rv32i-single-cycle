@@ -63,9 +63,12 @@ module tb_rv32i_pipeline;
         for (i = 0; i < 1024; i = i + 1) begin imem[i] = 32'h00000013; dmem[i] = 32'd0; end   // NOP
         if (!$value$plusargs("prog=%s", progfile)) progfile = "prog_base.hex";
         $readmemh(progfile, imem);
+`ifndef NO_VCD
         $dumpfile("rv32i_pipeline.vcd");
         $dumpvars(0, tb_rv32i_pipeline);
+`endif
         repeat (3) @(posedge clk);
+        @(negedge clk);             // nha reset o canh xuong: tranh chay dua voi canh len, netlist sau P&R moi cho cung so chu ky voi RTL
         rst_n = 1;
         #200000;
         $display("[TB] TIMEOUT");

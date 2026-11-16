@@ -54,6 +54,6 @@ module tb_bench;
         for (i = 0; i < 16384; i = i + 1) begin imem[i] = 32'h13; dmem[i] = 0; end
         if (!$value$plusargs("img=%s", img)) begin $display("thieu +img="); $finish; end
         $readmemh(img, imem); $readmemh(img, dmem);
-        repeat (3) @(posedge clk); rst_n = 1;
+        repeat (3) @(posedge clk); @(negedge clk); rst_n = 1;   // nha reset o canh xuong, tranh chay dua
     end
 endmodule
