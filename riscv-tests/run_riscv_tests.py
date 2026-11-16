@@ -14,6 +14,9 @@ SKIP = {"fence_i": "can Zifencei", "ma_data": "can truy cap lech do phan cung xu
 CORES = [("single-cycle (rv32i_core.v)", "", ["rv32i_core.v"], "rv32i"),
          ("pipeline RV32I (rv32i_pipeline.v)", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
          ("pipeline RV32IM (rv32im_pipeline.v)", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im")]
+# Mo phong muc cong: GLS_FILES="<netlist.nl.v> <thu vien cell chuc nang> <udp>" chay them bo test tren netlist sau P&R
+if os.environ.get("GLS_FILES"):
+    CORES.append(("netlist RV32IM sau P&R (GLS)", "-DPIPE_FULL", os.environ["GLS_FILES"].split(), "rv32im"))
 
 
 def sh(cmd, **kw):
@@ -51,8 +54,8 @@ def main():
                 tests.append((suite, os.path.join(d, f)))
     tmp = tempfile.mkdtemp(prefix="rvtests_")
     sims = {}
-    for title, flag, files, arch in CORES:
-        out = os.path.join(tmp, "sim_" + (flag or "sc").strip("-D"))
+    for k, (title, flag, files, arch) in enumerate(CORES):
+        out = os.path.join(tmp, "sim_%d" % k)
         cmd = ["iverilog", "-g2012", "-o", out] + ([flag] if flag else []) + \
               [os.path.join(HERE, "tb_riscv_tests.v")] + [os.path.join(ROOT, x) for x in files]
         r = sh(cmd)
