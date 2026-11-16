@@ -15,8 +15,13 @@ CORES = [("single-cycle (rv32i_core.v)", "", ["rv32i_core.v"], "rv32i"),
          ("pipeline RV32I (rv32i_pipeline.v)", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
          ("pipeline RV32IM (rv32im_pipeline.v)", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im")]
 # Mo phong muc cong: GLS_FILES="<netlist.nl.v> <thu vien cell chuc nang> <udp>" chay them bo test tren netlist sau P&R
+# (RV32I hoac RV32IM, nhan dien theo ten module trong netlist)
 if os.environ.get("GLS_FILES"):
-    CORES.append(("netlist RV32IM sau P&R (GLS)", "-DPIPE_FULL", os.environ["GLS_FILES"].split(), "rv32im"))
+    _gls = os.environ["GLS_FILES"].split()
+    with open(os.path.join(ROOT, _gls[0])) as _f:
+        _full = "module rv32im_pipeline" in _f.read()
+    CORES.append(("netlist %s sau P&R (GLS)" % ("RV32IM" if _full else "RV32I"),
+                  "-DPIPE_FULL" if _full else "-DPIPE", _gls, "rv32im" if _full else "rv32i"))
 
 
 def sh(cmd, **kw):
