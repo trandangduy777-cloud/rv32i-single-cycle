@@ -232,15 +232,18 @@ python3 riscv-tests/run_riscv_tests.py riscv-tests
 
 Cần `gcc-riscv64-unknown-elf` và `iverilog`.
 
-## Mô phỏng gate-level (netlist RV32IM sau P&R)
+## Mô phỏng gate-level (netlist pipeline sau P&R)
 
-Netlist cuối của run RV32IM 15 ns (`final/nl/rv32im_pipeline.nl.v`, 46.464 cell) được mô phỏng bằng iverilog với mô hình cell IHP SG13G2, dùng nguyên các testbench của RTL:
+Netlist cuối của hai lõi pipeline có dự đoán (RV32IM 15 ns: 46.464 cell; RV32I 14 ns: 36.466 cell, cùng run cho số liệu flow ở trên) được mô phỏng bằng iverilog với mô hình cell IHP SG13G2, dùng nguyên các testbench của RTL:
 
 | Bài | RTL | Netlist sau P&R |
 |---|---|---|
-| `prog.hex` (RV32IM + CSR + trap) | PASS, 2.479 chu kỳ | PASS, 2.479 chu kỳ |
-| Bộ benchmark `bench/` | 43.737 chu kỳ, checksum khớp | 43.737 chu kỳ, cùng 5 checksum |
-| riscv-tests (rv32ui, rv32um) | 48 PASS | 48 PASS |
+| RV32IM: `prog.hex` (RV32IM + CSR + trap) | PASS, 2.479 chu kỳ | PASS, 2.479 chu kỳ |
+| RV32IM: bộ benchmark `bench/` | 43.737 chu kỳ | 43.737 chu kỳ, cùng 5 checksum |
+| RV32IM: riscv-tests (rv32ui, rv32um) | 48 PASS | 48 PASS |
+| RV32I: `prog_base.hex` | PASS, 294 chu kỳ | PASS, 294 chu kỳ |
+| RV32I: bộ benchmark `bench/` | 42.744 chu kỳ | 42.744 chu kỳ, cùng 5 checksum |
+| RV32I: riscv-tests (rv32ui) | 40 PASS | 40 PASS |
 
 Hai điểm cần biết khi chạy:
 - Mô hình flip-flop của IHP lấy D/CLK/RESET_B qua các dây `delayed_*` chỉ được nối trong khối `specify`, iverilog không nối nên mọi flip-flop ra X. `gls/make_func_lib.py` tạo bản sao thư viện có `assign delayed_X = X;` (file PDK gốc không bị sửa).
@@ -248,7 +251,7 @@ Hai điểm cần biết khi chạy:
 
 Đây là mô phỏng chức năng, chưa có độ trễ thật (chưa nạp SDF), nên nó kiểm việc tổng hợp và P&R không làm sai logic chứ không kiểm timing; timing do STA của flow đảm nhận. Chạy lại (trong container có PDK):
 ```
-cp runs/RUN_.../final/nl/rv32im_pipeline.nl.v gls/
+cp runs/RUN_.../final/nl/rv32im_pipeline.nl.v gls/      # hoặc rv32i_pipeline.nl.v, script tự nhận diện
 sh gls/run_gls.sh gls/rv32im_pipeline.nl.v
 GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ihp-sg13g2/libs.ref/sg13g2_stdcell/verilog/sg13g2_udp.v" python3 riscv-tests/run_riscv_tests.py <thu_muc_riscv-tests>
 ```
@@ -261,4 +264,4 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
 - Chu kỳ tối thiểu của single-cycle là ngoại suy từ hai lần chạy, và công suất ở các chu kỳ khác nhau không so sánh trực tiếp được
-- Mô phỏng gate-level chỉ ở mức chức năng (không SDF), mới làm cho RV32IM; flow dùng SDC mặc định
+- Mô phỏng gate-level chỉ ở mức chức năng (không SDF), làm cho hai lõi pipeline, chưa làm cho single-cycle; flow dùng SDC mặc định
