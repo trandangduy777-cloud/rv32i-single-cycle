@@ -121,7 +121,7 @@ Kiểm chứng phần dự đoán: sinh thêm đơn vị vòng lặp có giới 
 Ở RV32IM có dự đoán, flow 15 ns trượt setup vì `redirect` (sau bộ so sánh nhánh, khoảng 10 ns) phải đi qua khoảng 13 tầng buffer mới tới `pc` và các thanh ghi bị huỷ. Lần sửa lần lượt:
 - Các cờ điều khiển ID/EX chỉ bị `stall` xoá, `redirect` chỉ xoá `idex_valid`: slack góc chậm từ -2,50 ns lên -2,15 ns.
 - `redirect` và `redirect_pc` được lưu vào `redirect_q`/`redirect_pc_q` và áp ở chu kỳ sau; lệnh nằm ở EX trong chu kỳ đó bị vô hiệu qua `idex_valid = idex_valid_r & ~redirect_q`. Slack lên -0,26 ns, chỉ còn 1 endpoint trượt (`mtval_r`).
-- Endpoint đó do `trap_ex` (phụ thuộc kết quả so sánh khi đích nhánh lệch) điều khiển enable của các CSR trap, nên các CSR này cũng ghi trễ 1 chu kỳ qua `trap_q`. Lệnh ở EX chu kỳ sau đã bị huỷ và lệnh đầu của trình xử lý trap tới EX sau ít nhất 3 chu kỳ, nên hành vi không đổi. Chưa chạy lại flow sau thay đổi này.
+- Endpoint đó do `trap_ex` (phụ thuộc kết quả so sánh khi đích nhánh lệch) điều khiển enable của các CSR trap, nên các CSR này cũng ghi trễ 1 chu kỳ qua `trap_q`. Lệnh ở EX chu kỳ sau đã bị huỷ và lệnh đầu của trình xử lý trap tới EX sau ít nhất 3 chu kỳ, nên hành vi không đổi. Flow 15 ns sau thay đổi này đạt: slack góc chậm +0,79 ns.
 
 Cái giá: phạt khi đoán sai, JALR, trap và MRET tăng từ 2 lên 3 chu kỳ, CPI bench từ 1,290 lên 1,320 (+2,3 %), thêm khoảng 67 flip-flop. Các thay đổi được kiểm bằng 200 chương trình ngẫu nhiên, riscv-tests (rv32ui, rv32um) và 4 mutation mới. RV32I không đổi.
 
@@ -137,7 +137,18 @@ Cái giá: phạt khi đoán sai, JALR, trap và MRET tăng từ 2 lên 3 chu k�
 
 Số liệu có dự đoán là của bản đã tách dữ liệu IF/ID khỏi `redirect` (xem mục cải tiến bên dưới), nên Fmax tăng đến từ cả hai thay đổi chứ không riêng bộ dự đoán.
 
-Bản RV32IM có dự đoán chưa đạt 15 ns: setup ở góc chậm trượt khoảng -2,5 ns trên khoảng 54 endpoint, nguyên nhân chưa xác định. Cột RV32IM trong bảng so sánh bên dưới vẫn là của bản chưa có dự đoán.
+### Kết quả flow của bản có dự đoán (RV32IM, 15 ns)
+
+| Hạng mục | Chưa có dự đoán | Có dự đoán, redirect đăng ký |
+|---|---|---|
+| Setup slack, góc chậm | +0,441 ns | +0,792 ns |
+| Chu kỳ tối thiểu | 14,56 ns | ≈ 14,21 ns (≈ 70,4 MHz) |
+| Số instance | 42.064 | 46.464 (+10 %) |
+| Diện tích instance | 474.858 µm² | 532.973 µm² (+12 %) |
+| Công suất ước tính | 21,51 mW | 14,17 mW |
+| Vi phạm Max Slew | 7 | 0 |
+
+Thời gian chạy bộ benchmark: 43.737 chu kỳ × 14,21 ns ≈ 621 µs so với 46.917 chu kỳ × 14,56 ns ≈ 683 µs, tức nhanh hơn khoảng 1,10 lần, đổi lại diện tích tăng 12 %. Công suất ước tính giảm nhưng dùng hoạt động chuyển mạch mặc định của công cụ, nên mức giảm này chưa giải thích được và không nên dùng để kết luận. Số liệu: `results/metrics_rv32im_15ns_bp.json`.
 
 ## Kết quả flow (clock 24 ns)
 Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR, trap và M. Chưa chạy lại flow cho bản hiện tại (diện tích sẽ tăng, nhất là do bộ nhân/chia).
@@ -158,16 +169,16 @@ Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR,
 
 ## So sánh single-cycle và pipeline (cùng PDK, cùng flow, SDC mặc định)
 
-| Hạng mục | Single-cycle RV32I | Pipeline RV32I | Pipeline RV32IM |
-|---|---|---|---|
-| Clock chạy flow | 24 ns | 14 ns | 15 ns |
-| Setup slack, góc chậm | +0,587 ns | +0,216 ns | +0,441 ns |
-| Hold slack tồi nhất | +0,134 ns | +0,099 ns | +0,121 ns |
-| Chu kỳ tối thiểu | 23,0 ns (ngoại suy), ≈ 43 MHz | 13,78 ns, ≈ 72,6 MHz | 14,56 ns, ≈ 68,7 MHz |
-| Số instance | 28.775 | 33.372 (+16 %) | 42.064 (+46 %) |
-| Diện tích instance | không ghi lại | 375.352 µm² | 474.858 µm² |
-| Công suất ước tính | 4,21 mW (24 ns) | 11,11 mW (14 ns) | 21,51 mW (15 ns) |
-| DRC (route / Magic / KLayout), LVS, antenna | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Hạng mục | Single-cycle RV32I | Pipeline RV32I | Pipeline RV32IM | Pipeline RV32IM, có dự đoán |
+|---|---|---|---|---|
+| Clock chạy flow | 24 ns | 14 ns | 15 ns | 15 ns |
+| Setup slack, góc chậm | +0,587 ns | +0,216 ns | +0,441 ns | +0,792 ns |
+| Hold slack tồi nhất | +0,134 ns | +0,099 ns | +0,121 ns | +0,106 ns |
+| Chu kỳ tối thiểu | 23,0 ns (ngoại suy), ≈ 43 MHz | 13,78 ns, ≈ 72,6 MHz | 14,56 ns, ≈ 68,7 MHz | 14,21 ns, ≈ 70,4 MHz |
+| Số instance | 28.775 | 33.372 (+16 %) | 42.064 (+46 %) | 46.464 (+61 %) |
+| Diện tích instance | không ghi lại | 375.352 µm² | 474.858 µm² | 532.973 µm² |
+| Công suất ước tính | 4,21 mW (24 ns) | 11,11 mW (14 ns) | 21,51 mW (15 ns) | 14,17 mW (15 ns) |
+| DRC (route / Magic / KLayout), LVS, antenna | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | đạt cả ba |
 
 Cách đọc:
 - Pipeline RV32I có tần số tối đa cao hơn single-cycle khoảng 1,67 lần (23,0 / 13,78). CPI của pipeline cao hơn khoảng 1,21 lần (1,22 so với 1,01 trên chương trình ngẫu nhiên dày phụ thuộc dữ liệu), nên thời gian chạy thực tế nhanh hơn khoảng 1,4 lần, đổi lại diện tích tăng 16 %.
@@ -176,7 +187,7 @@ Cách đọc:
 - Không có số liệu flow của single-cycle RV32IM, nên cột RV32IM chỉ so được với pipeline RV32I.
 - Công suất ở các chu kỳ khác nhau không so sánh trực tiếp được.
 - SDC là SDC mặc định của flow (độ trễ vào ra 20 % chu kỳ). Chưa mô phỏng gate-level.
-- Run RV32IM và RV32I còn cảnh báo Max Slew ở góc chậm (nom_slow_1p08V_125C). Đây là vi phạm ràng buộc điện, không làm flow dừng nhưng chưa được xử lý.
+- Run RV32IM và RV32I chưa có dự đoán còn cảnh báo Max Slew ở góc chậm (nom_slow_1p08V_125C). Đây là vi phạm ràng buộc điện, không làm flow dừng nhưng chưa được xử lý. Hai run có dự đoán (RV32I 14 ns, RV32IM 15 ns) không còn vi phạm Max Slew.
 
 ### Cải tiến đã giúp giảm chu kỳ
 - Tính sẵn các tín hiệu chọn forwarding ở tầng ID rồi đăng ký vào ID/EX (RV32I: từ ≈ 17,6 ns xuống 15,49 ns).
@@ -227,6 +238,6 @@ Cần `gcc-riscv64-unknown-elf` và `iverilog`.
 - Bộ nhân/chia lặp nên lệnh M chậm (34 chu kỳ ở single-cycle, 35 ở pipeline); chưa có bộ nhân nhanh
 - Mô hình tham chiếu và RTL do cùng một người viết; đã bổ sung riscv-tests (rv32ui, rv32um) nhưng chưa đối chiếu lock-step với Spike
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
-- RV32IM có dự đoán chưa đạt timing ở 15 ns (slack -2,5 ns ở góc chậm); số flow của RV32IM trong README là của bản chưa có dự đoán
+- Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
 - Chu kỳ tối thiểu của single-cycle là ngoại suy từ hai lần chạy, và công suất ở các chu kỳ khác nhau không so sánh trực tiếp được
 - Chưa mô phỏng gate-level, flow dùng SDC mặc định
