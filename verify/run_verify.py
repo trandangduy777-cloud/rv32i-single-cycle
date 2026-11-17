@@ -293,7 +293,8 @@ def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=F
     if full_pipe and (not only or only.lower() in "m:"):
         muts = muts + [m for m in M_CORE_MUTATIONS if not only or only.lower() in m[0].lower()]
     for name, old, new in muts:
-        is_core = name.startswith("M:")
+        # chi o --pipem, mutation "M:" moi nam trong file rv32i_core.v rieng; o single-cycle, rv32i_core.v chinh la file dang kiem
+        is_core = name.startswith("M:") and full_pipe
         if old not in (core_src if is_core else src):
             print(f"  [BO QUA] {name}: khong tim thay doan can doi trong RTL (chuoi trong MUTATIONS can cap nhat theo RTL)")
             skipped += 1
