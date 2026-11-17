@@ -375,7 +375,9 @@ endmodule
 // Tham so PREP: 0 = lay toan hang va dao dau trong cung 1 chu ky (bo don-cycle dung ban nay);
 //               1 = chu ky dau chi chep toan hang tho vao thanh ghi, chu ky sau moi dao dau (them 1 chu ky cho moi lenh M).
 //                   Pipeline dung PREP = 1: toan hang di qua mux forwarding nen khong duoc dat them bo cong dao dau phia sau.
-module rv32m #(parameter PREP = 0) (
+// STEPS: so bit xu ly moi chu ky (1, 2 hoac 4). Bo nhan/chia lap lai buoc 1 bit STEPS lan trong mot chu ky,
+// nen lenh M mat 32/STEPS chu ky lap thay vi 32; doi lai duong to hop dai gap STEPS lan.
+module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        req,
@@ -405,16 +407,37 @@ module rv32m #(parameter PREP = 0) (
     wire [31:0] ua_r = sa_r ? (~p[31:0] + 32'd1) : p[31:0];
     wire [31:0] ub_r = sb_r ? (~m + 32'd1) : m;
 
-    // buoc nhan: cong don roi dich phai
-    wire [32:0] mul_sum  = {1'b0, p[63:32]} + (p[0] ? {1'b0, m} : 33'd0);
-    wire [63:0] mul_next = {mul_sum, p[31:0]} >> 1;
+    localparam [4:0] LAST = 32 / STEPS - 1;   // chi so chu ky lap cuoi
 
-    // buoc chia khoi phuc: dich trai {du, thuong} roi thu tru
-    wire [32:0] div_rem  = {p[63:32], p[31]};
-    wire        div_ge   = (div_rem >= {1'b0, m});
-    wire [32:0] div_sub  = div_rem - {1'b0, m};
-    wire [63:0] div_next = div_ge ? {div_sub[31:0], p[30:0], 1'b1}
-                                  : {div_rem[31:0], p[30:0], 1'b0};
+    // buoc nhan 1 bit: cong don roi dich phai
+    function [63:0] mul_step(input [63:0] pp, input [31:0] mm);
+        reg [32:0] sum;
+        begin
+            sum      = {1'b0, pp[63:32]} + (pp[0] ? {1'b0, mm} : 33'd0);
+            mul_step = {sum, pp[31:0]} >> 1;
+        end
+    endfunction
+
+    // buoc chia khoi phuc 1 bit: dich trai {du, thuong} roi thu tru
+    function [63:0] div_step(input [63:0] pp, input [31:0] mm);
+        reg [32:0] rem, sub;
+        reg        ge;
+        begin
+            rem = {pp[63:32], pp[31]};
+            ge  = (rem >= {1'b0, mm});
+            sub = rem - {1'b0, mm};
+            div_step = ge ? {sub[31:0], pp[30:0], 1'b1} : {rem[31:0], pp[30:0], 1'b0};
+        end
+    endfunction
+
+    // STEPS buoc noi tiep trong mot chu ky
+    reg [63:0] p_next;
+    integer k;
+    always @* begin
+        p_next = p;
+        for (k = 0; k < STEPS; k = k + 1)
+            p_next = op[2] ? div_step(p_next, m) : mul_step(p_next, m);
+    end
 
     assign done = (state == FIN);
 
@@ -467,9 +490,9 @@ module rv32m #(parameter PREP = 0) (
                     state <= RUN;
                 end
                 RUN: begin
-                    p <= op[2] ? div_next : mul_next;
+                    p <= p_next;
                     cnt <= cnt + 5'd1;
-                    if (cnt == 5'd31) state <= FIN;
+                    if (cnt == LAST) state <= FIN;
                 end
                 default: state <= IDLE;                  // FIN: lenh da hoan tat
             endcase
