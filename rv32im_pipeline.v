@@ -321,7 +321,7 @@ module rv32im_pipeline (
     // nhan/chia
     wire        m_done;
     wire [31:0] m_result;
-    rv32m #(.PREP(1)) u_m (
+    rv32m #(.PREP(1), .STEPS(2)) u_m (
         .clk(clk), .rst_n(rst_n),
         .req(idex_mext), .funct3(idex_funct3),
         .a(op_a), .b(op_b),
