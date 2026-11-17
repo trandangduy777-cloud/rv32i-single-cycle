@@ -16,21 +16,21 @@ Cần `python3` và `iverilog`. Chạy trong thư mục `verify/` của repo (fi
 ```
 python3 run_verify.py                  # 200 chương trình ngẫu nhiên + chương trình định hướng
 python3 run_verify.py --n 500 --len 400
-python3 run_verify.py --mutate         # chèn lỗi cố ý, kiểm tra bộ kiểm chứng có bắt được
+python3 run_verify.py --mutate         # 42 lỗi chèn cố ý, kiểm tra bộ kiểm chứng có bắt được
 ```
 Kiểm chứng pipeline (chỉ RV32I thuần, in vết ở tầng WB bằng `tb_trace_pipe.v`):
 ```
 python3 run_verify.py --pipe                   # 200 chương trình ngẫu nhiên + chương trình định hướng
-python3 run_verify.py --pipe --mutate          # 20 lỗi hazard/forwarding/flush chèn cố ý
+python3 run_verify.py --pipe --mutate          # 28 lỗi hazard/forwarding/flush/dự đoán nhánh chèn cố ý
 ```
 Pipeline đầy đủ (RV32IM + CSR + trap):
 ```
 python3 run_verify.py --pipem
-python3 run_verify.py --pipem --mutate         # 41 lỗi chèn cố ý (hazard, CSR, trap, M, flush)
+python3 run_verify.py --pipem --mutate         # 66 lỗi chèn cố ý (hazard, CSR, trap, M, flush, redirect đăng ký)
 ```
 Chương trình ngẫu nhiên ưu tiên một nhóm thanh ghi nhỏ (x0, x2..x5) để các lệnh sát nhau hay phụ thuộc dữ liệu, nhờ đó forwarding và load-use được thử nhiều.
 
-Kết quả kỳ vọng: `that bai: 0`, `Phu lenh: 55/55`, `Phu truong hop bien chia: ... | du`, `du 4 loai trap`. Mutation test chạy lâu hơn (vài phút), kỳ vọng `Bat duoc 37/37 loi chen co y` (có thể chạy riêng nhóm lỗi bằng `--mutate --only "M:"`).
+Kết quả kỳ vọng: `that bai: 0`, `Phu lenh: 55/55`, `Phu truong hop bien chia: ... | du`, `du 6 loai trap`. Mutation test chạy lâu hơn (5-15 phút), kỳ vọng bắt được toàn bộ: `Bat duoc 42/42` (single-cycle), `28/28` (`--pipe`), `66/66` (`--pipem`). Có thể chạy riêng một nhóm lỗi bằng `--only`, ví dụ `--mutate --only "M:"`. Mutation nào không còn tìm thấy chuỗi cần đổi trong RTL được báo `BO QUA` và tính là thất bại, để không âm thầm bỏ qua khi RTL thay đổi.
 
 ## Định dạng vết
 ```
