@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 // Do hieu nang: chay bench.hex tren 1 loi, in so chu ky, so lenh hoan tat va CPI.
-//   (khong -D): rv32i_core (CPI = 1 theo thiet ke)   -DPIPE: rv32i_pipeline   -DPIPE_FULL: rv32im_pipeline
+//   (khong -D): rv32i_core (CPI = 1 voi RV32I, lon hon 1 khi co lenh M)   -DPIPE: rv32i_pipeline   -DPIPE_FULL: rv32im_pipeline
 module tb_bench;
     reg clk = 0, rst_n = 0;
     always #5 clk = ~clk;
@@ -39,7 +39,7 @@ module tb_bench;
 `elsif PIPE
         if (dut.memwb_valid) instret <= instret + 1;
 `else
-        instret <= instret + 1;
+        if (dut.retire) instret <= instret + 1;   // lenh M dung lai nhieu chu ky, nen khong dem moi chu ky
 `endif
         if (dmem_we && dmem_addr == TOHOST) begin
             $display("BENCH cycles=%0d instret=%0d CPI=%0d.%03d", cycles, instret,
