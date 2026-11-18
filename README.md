@@ -252,12 +252,13 @@ Cần `gcc-riscv64-unknown-elf` và `iverilog`.
 
 ## Mô phỏng gate-level (netlist pipeline sau P&R)
 
-Netlist cuối của hai lõi pipeline có dự đoán (RV32IM 15 ns: 46.464 cell; RV32I 14 ns: 36.466 cell, cùng run cho số liệu flow ở trên) được mô phỏng bằng iverilog với mô hình cell IHP SG13G2, dùng nguyên các testbench của RTL:
+Netlist cuối của hai lõi pipeline có dự đoán (RV32IM 15 ns với `STEPS = 2`: 47.129 cell; RV32I 14 ns: 36.466 cell, cùng run cho số liệu flow ở trên) được mô phỏng bằng iverilog với mô hình cell IHP SG13G2, dùng nguyên các testbench của RTL:
 
 | Bài | RTL | Netlist sau P&R |
 |---|---|---|
-| RV32IM: `prog.hex` (RV32IM + CSR + trap) | PASS, 2.479 chu kỳ | PASS, 2.479 chu kỳ |
+| RV32IM: `prog.hex` (RV32IM + CSR + trap) | PASS, 1.871 chu kỳ | PASS, 1.871 chu kỳ |
 | RV32IM: bộ benchmark `bench/` | 43.737 chu kỳ | 43.737 chu kỳ, cùng 5 checksum |
+| RV32IM: `bench_m` (nặng nhân/chia) | 73.313 chu kỳ | 73.313 chu kỳ, cùng 5 checksum |
 | RV32IM: riscv-tests (rv32ui, rv32um) | 48 PASS | 48 PASS |
 | RV32I: `prog_base.hex` | PASS, 294 chu kỳ | PASS, 294 chu kỳ |
 | RV32I: bộ benchmark `bench/` | 42.744 chu kỳ | 42.744 chu kỳ, cùng 5 checksum |
@@ -277,7 +278,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 ## Giới hạn
 - Chưa có ngắt, chưa có chế độ User
 - JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
-- Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song. Mô phỏng gate-level RV32IM ở trên là của netlist `STEPS = 1`, chưa chạy lại cho netlist `STEPS = 2`
+- Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song
 - Mô hình tham chiếu và RTL do cùng một người viết; đã bổ sung riscv-tests (rv32ui, rv32um) nhưng chưa đối chiếu lock-step với Spike
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
