@@ -17,7 +17,12 @@ Lõi vi xử lý RV32IM single-cycle viết bằng Verilog, có CSR cơ bản v�
 | `verify/` | Mô hình tham chiếu (ISS), bộ sinh chương trình ngẫu nhiên, so vết từng lệnh, mutation test (xem `verify/README.md`) |
 | `prog.hex` | Chương trình test đã sinh sẵn |
 | `config.json` | Cấu hình LibreLane (`CLOCK_PERIOD` = 24 ns) |
-| `metrics.json` | Số liệu cuối của flow |
+| `metrics.json` | Số liệu flow của single-cycle RV32I (24 ns) |
+| `results/` | Số liệu flow của các lõi pipeline (`metrics_*.json`), mỗi file ứng với một dòng trong bảng so sánh |
+| `bench/` | Benchmark C: `bench.c` (RV32I thuần) và `bench_m.c` (nặng nhân/chia), `run_bench.sh` in số chu kỳ và CPI |
+| `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
+| `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
+| `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
 `LUI AUIPC JAL JALR`, `BEQ BNE BLT BGE BLTU BGEU`, `LB LH LW LBU LHU SB SH SW`, `ADDI SLTI SLTIU XORI ORI ANDI SLLI SRLI SRAI`, `ADD SUB SLL SLT SLTU XOR SRL SRA OR AND`.
