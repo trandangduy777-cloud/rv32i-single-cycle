@@ -26,7 +26,7 @@ Phần mở rộng M: `MUL MULH MULHSU MULHU DIV DIVU REM REMU`.
 
 ## Phần mở rộng M
 - Bộ nhân/chia lặp, mỗi chu kỳ xử lý 1 bit, một lệnh M mất 34 chu kỳ (1 nhận toán hạng, 32 lặp, 1 hoàn tất). Trong lúc đó lõi giữ nguyên PC (stall).
-- Tham số `STEPS` (1, 2 hoặc 4) cho số bit xử lý mỗi chu kỳ: bước nhân/chia 1 bit được lặp `STEPS` lần nối tiếp trong một chu kỳ, nên chỉ cần 32/`STEPS` chu kỳ lặp. Single-cycle giữ `STEPS = 1` (34 chu kỳ). Bản RV32IM pipeline dùng `STEPS = 2` (19 chu kỳ mỗi lệnh M thay vì 35); `STEPS = 4` cho 11 chu kỳ nhưng nối 4 bộ cộng/trừ 33 bit trong một chu kỳ, chưa thử flow.
+- Tham số `STEPS` (1, 2 hoặc 4) cho số bit xử lý mỗi chu kỳ: bước nhân/chia 1 bit được lặp `STEPS` lần nối tiếp trong một chu kỳ, nên chỉ cần 32/`STEPS` chu kỳ lặp. Single-cycle giữ `STEPS = 1` (34 chu kỳ). Bản RV32IM pipeline dùng `STEPS = 2` (19 chu kỳ mỗi lệnh M thay vì 35); flow 15 ns vẫn đạt (slack +0,60 ns). `STEPS = 4` cho 11 chu kỳ nhưng nối 4 bộ cộng/trừ 33 bit trong một chu kỳ, chưa thử flow.
 - Bản pipeline dùng tham số `PREP = 1` của module `rv32m`: chu kỳ đầu chỉ chép toán hạng thô vào thanh ghi, chu kỳ sau mới đảo dấu từ chính các flop đó (thêm 1 chu kỳ mỗi lệnh M). Lý do: toán hạng của lệnh M đã đi qua mux forwarding, nếu đảo dấu (bộ cộng 32 bit) ngay trước khi ghi thì đường `idex_fb_wb` → đảo dấu → thanh ghi nhân/chia trở thành đường tới hạn của RV32IM. Bản single-cycle giữ `PREP = 0`.
 - Chọn bộ lặp thay vì nhân/chia tổ hợp 32 bit để không kéo dài đường tới hạn của lõi.
 - Chia cho 0: thương toàn bit 1, dư bằng số bị chia. `INT_MIN / -1`: thương `INT_MIN`, dư 0, không trap (đúng đặc tả).
@@ -124,6 +124,8 @@ Bộ `bench/` ở trên không có lệnh M. `bench/bench_m.c` (biên dịch v�
 | Pipeline RV32IM, `STEPS = 2` (hiện tại) | 73.313 | 5,00 |
 | Pipeline RV32IM, `STEPS = 4` (chưa dùng) | 48.617 | 3,32 |
 
+Flow 15 ns của RV32IM với `STEPS = 2` (`results/metrics_rv32im_15ns_steps2.json`): slack góc chậm +0,601 ns (Tmin ≈ 14,40 ns), 47.129 instance, 538.550 µm² (+1 % so với `STEPS = 1`). Thời gian chạy `bench_m`: 73.313 × 14,40 ns ≈ 1.056 µs so với 122.705 × 14,21 ns ≈ 1.743 µs, nhanh hơn khoảng 1,65 lần. Bộ `bench/` không có lệnh M chậm đi khoảng 1,3 % (≈ 630 µs so với ≈ 621 µs) vì Tmin tăng 0,19 ns; mức chênh này nhỏ, có thể một phần do biến động của P&R chứ không chỉ do bộ nhân/chia.
+
 
 Kiểm chứng phần dự đoán: sinh thêm đơn vị vòng lặp có giới hạn vào bộ chương trình ngẫu nhiên (nếu không, mỗi nhánh chỉ chạy một lần và bảng đếm không bao giờ học), thêm 8 mutation riêng cho dự đoán (đích đoán sai, thiếu một chiều đoán sai, nhảy sớm khi đang stall load-use, nhảy sớm đè lên redirect của EX, nhảy sớm khi lệnh M đóng băng EX, ...). Cả 8 đều bị bắt. Riêng mutation chỉ làm giảm hiệu năng (ví dụ không cập nhật bảng đếm) không thể bị bắt bằng so sánh kết quả, vì thiết kế đã bảo đảm đoán sai không đổi kết quả; hiệu năng được kiểm bằng CPI ở trên.
 
@@ -180,16 +182,16 @@ Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR,
 
 ## So sánh single-cycle và pipeline (cùng PDK, cùng flow, SDC mặc định)
 
-| Hạng mục | Single-cycle RV32I | Pipeline RV32I | Pipeline RV32IM | Pipeline RV32IM, có dự đoán |
-|---|---|---|---|---|
-| Clock chạy flow | 24 ns | 14 ns | 15 ns | 15 ns |
-| Setup slack, góc chậm | +0,587 ns | +0,216 ns | +0,441 ns | +0,792 ns |
-| Hold slack tồi nhất | +0,134 ns | +0,099 ns | +0,121 ns | +0,106 ns |
-| Chu kỳ tối thiểu | 23,0 ns (ngoại suy), ≈ 43 MHz | 13,78 ns, ≈ 72,6 MHz | 14,56 ns, ≈ 68,7 MHz | 14,21 ns, ≈ 70,4 MHz |
-| Số instance | 28.775 | 33.372 (+16 %) | 42.064 (+46 %) | 46.464 (+61 %) |
-| Diện tích instance | không ghi lại | 375.352 µm² | 474.858 µm² | 532.973 µm² |
-| Công suất ước tính | 4,21 mW (24 ns) | 11,11 mW (14 ns) | 21,51 mW (15 ns) | 14,17 mW (15 ns) |
-| DRC (route / Magic / KLayout), LVS, antenna | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | đạt cả ba |
+| Hạng mục | Single-cycle RV32I | Pipeline RV32I | Pipeline RV32IM | Pipeline RV32IM, có dự đoán | RV32IM, có dự đoán, `STEPS = 2` (hiện tại) |
+|---|---|---|---|---|---|
+| Clock chạy flow | 24 ns | 14 ns | 15 ns | 15 ns | 15 ns |
+| Setup slack, góc chậm | +0,587 ns | +0,216 ns | +0,441 ns | +0,792 ns | +0,601 ns |
+| Hold slack tồi nhất | +0,134 ns | +0,099 ns | +0,121 ns | +0,106 ns | +0,108 ns |
+| Chu kỳ tối thiểu | 23,0 ns (ngoại suy), ≈ 43 MHz | 13,78 ns, ≈ 72,6 MHz | 14,56 ns, ≈ 68,7 MHz | 14,21 ns, ≈ 70,4 MHz | 14,40 ns, ≈ 69,5 MHz |
+| Số instance | 28.775 | 33.372 (+16 %) | 42.064 (+46 %) | 46.464 (+61 %) | 47.129 (+64 %) |
+| Diện tích instance | không ghi lại | 375.352 µm² | 474.858 µm² | 532.973 µm² | 538.550 µm² |
+| Công suất ước tính | 4,21 mW (24 ns) | 11,11 mW (14 ns) | 21,51 mW (15 ns) | 14,17 mW (15 ns) | 14,56 mW (15 ns) |
+| DRC (route / Magic / KLayout), LVS, antenna | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | đạt cả ba | đạt cả ba |
 
 Cách đọc:
 - Pipeline RV32I có tần số tối đa cao hơn single-cycle khoảng 1,67 lần (23,0 / 13,78). CPI của pipeline cao hơn khoảng 1,21 lần (1,22 so với 1,01 trên chương trình ngẫu nhiên dày phụ thuộc dữ liệu), nên thời gian chạy thực tế nhanh hơn khoảng 1,4 lần, đổi lại diện tích tăng 16 %.
@@ -270,7 +272,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 ## Giới hạn
 - Chưa có ngắt, chưa có chế độ User
 - JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
-- Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song. Chưa chạy lại flow RV32IM sau khi đổi sang `STEPS = 2`, nên số Fmax/diện tích RV32IM trong README là của `STEPS = 1`
+- Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song. Mô phỏng gate-level RV32IM ở trên là của netlist `STEPS = 1`, chưa chạy lại cho netlist `STEPS = 2`
 - Mô hình tham chiếu và RTL do cùng một người viết; đã bổ sung riscv-tests (rv32ui, rv32um) nhưng chưa đối chiếu lock-step với Spike
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
