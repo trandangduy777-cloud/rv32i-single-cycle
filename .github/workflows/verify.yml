@@ -1,0 +1,62 @@
+# Kiem chung tu dong moi lan push: testbench tu kiem tra, so vet voi ISS tren chuong trinh ngau nhien,
+# bo test ISA chinh thuc riscv-tests va benchmark (so checksum giua cac loi).
+# Mutation test chay lau (10-20 phut) nen chi chay khi bam "Run workflow" trong tab Actions.
+name: verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  simulate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cai iverilog va trinh bien dich RISC-V
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog gcc-riscv64-unknown-elf
+
+      - name: Testbench tu kiem tra (3 loi)
+        run: |
+          iverilog -g2012 -DNO_VCD -o sc tb_rv32i_core.v rv32i_core.v
+          vvp sc | tee sc.log && grep -q "\[TB\] PASS" sc.log
+          iverilog -g2012 -DPIPE -DNO_VCD -o p tb_rv32i_pipeline.v rv32i_pipeline.v
+          vvp p +prog=prog_base.hex | tee p.log && grep -q "\[TB\] PASS" p.log
+          iverilog -g2012 -DPIPE_FULL -DNO_VCD -o pm tb_rv32i_pipeline.v rv32im_pipeline.v rv32i_core.v
+          vvp pm +prog=prog.hex | tee pm.log && grep -q "\[TB\] PASS" pm.log
+
+      - name: So vet tung lenh voi ISS (chuong trinh ngau nhien)
+        working-directory: verify
+        run: |
+          python3 run_verify.py --n 60
+          python3 run_verify.py --pipe --n 60
+          python3 run_verify.py --pipem --n 60
+
+      - name: riscv-tests (rv32ui, rv32um)
+        run: |
+          git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
+          python3 riscv-tests/run_riscv_tests.py /tmp/riscv-tests
+
+      - name: Benchmark (CPI, so checksum giua cac loi)
+        run: sh bench/run_bench.sh
+
+  mutation:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cai iverilog
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog
+      - name: Mutation test (3 loi)
+        working-directory: verify
+        run: |
+          python3 run_verify.py --mutate
+          python3 run_verify.py --pipe --mutate
+          python3 run_verify.py --pipem --mutate
