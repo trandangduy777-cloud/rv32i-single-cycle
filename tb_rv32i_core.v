@@ -57,8 +57,10 @@ module tb_rv32i_core;
     initial begin
         for (i = 0; i < 1024; i = i + 1) begin imem[i] = 32'h00000013; dmem[i] = 32'd0; end   // NOP
         $readmemh("prog.hex", imem);
+`ifndef NO_VCD
         $dumpfile("rv32i_core.vcd");
         $dumpvars(0, tb_rv32i_core);
+`endif
         repeat (3) @(posedge clk);
         rst_n = 1;
         #200000;
