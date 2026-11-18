@@ -1,6 +1,34 @@
 # rv32i-single-cycle
 
-Lõi vi xử lý RV32IM single-cycle viết bằng Verilog, có CSR cơ bản và trap (chế độ Machine), kèm testbench tự kiểm tra và bộ kiểm chứng so từng lệnh với mô hình tham chiếu Python. Bản RV32I thuần đã đi qua flow RTL-to-GDS (LibreLane, PDK IHP SG13G2) đến layout GDS đạt DRC và LVS.
+[![verify](https://github.com/trandangduy777-cloud/rv32i-single-cycle/actions/workflows/verify.yml/badge.svg)](https://github.com/trandangduy777-cloud/rv32i-single-cycle/actions/workflows/verify.yml)
+
+Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đưa qua flow RTL-to-GDS (LibreLane, PDK mở IHP SG13G2 130 nm):
+
+| Lõi | Tập lệnh | Chu kỳ tối thiểu (góc chậm) | CPI bench (RV32I / nặng M) | Số cell |
+|---|---|---|---|---|
+| `rv32i_core.v`: single-cycle | RV32IM + CSR + trap | ≈ 23,0 ns (ngoại suy) * | 1,00 / 7,95 | 28.775 * |
+| `rv32i_pipeline.v`: 5 tầng | RV32I | ≈ 11,98 ns, ≈ 83 MHz | 1,29 / - | 36.466 |
+| `rv32im_pipeline.v`: 5 tầng | RV32IM + CSR + trap | ≈ 14,40 ns, ≈ 69 MHz | 1,32 / 5,00 | 47.129 |
+
+\* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
+
+- **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
+- **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, riscv-tests chính thức (rv32ui, rv32um), mutation test (42 / 28 / 66 lỗi chèn cố ý đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push.
+- **Thiết kế vật lý**: mọi run flow trong bảng đều đạt DRC, LVS, antenna; mọi số liệu flow nằm trong `results/` và `metrics.json`.
+
+```mermaid
+flowchart LR
+    IF["IF<br/>pc, đọc lệnh"] --> ID["ID<br/>giải mã, đọc thanh ghi,<br/>chọn forwarding,<br/>dự đoán nhánh"]
+    ID --> EX["EX<br/>ALU, so sánh nhánh,<br/>CSR/trap, bộ nhân/chia"]
+    EX --> MEM["MEM<br/>load/store"]
+    MEM --> WB["WB<br/>ghi thanh ghi"]
+    ID -. "nhảy sớm (JAL, đoán nhảy)" .-> IF
+    EX -. "redirect (đoán sai, JALR, trap)" .-> IF
+    MEM -. "forward" .-> EX
+    WB -. "forward" .-> EX
+```
+
+Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và các điểm chưa làm được ghi ở mục cuối.
 
 ## Cấu trúc thư mục
 | File | Nội dung |
