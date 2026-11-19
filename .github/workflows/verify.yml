@@ -1,4 +1,4 @@
-# Kiem chung tu dong moi lan push: testbench tu kiem tra, so vet voi ISS tren chuong trinh ngau nhien,
+# Kiem chung tu dong moi lan push: testbench tu kiem tra, so vet voi ISS tren chuong trinh ngau nhien, ngat,
 # bo test ISA chinh thuc riscv-tests va benchmark (so checksum giua cac loi).
 # Mutation test chay lau (10-20 phut) nen chi chay khi bam "Run workflow" trong tab Actions.
 name: verify
@@ -35,6 +35,12 @@ jobs:
           python3 run_verify.py --n 60
           python3 run_verify.py --pipe --n 60
           python3 run_verify.py --pipem --n 60
+
+      - name: Ngat timer va ngat ngoai (pipeline RV32IM) va mutation test phan ngat
+        run: |
+          iverilog -g2012 -o irq.vvp irq/tb_irq.v rv32im_pipeline.v rv32i_core.v rv32_mtimer.v
+          vvp irq.vvp | tee irq.log && grep -q "\[IRQ\] PASS" irq.log
+          python3 irq/mutate_irq.py
 
       - name: riscv-tests (rv32ui, rv32um)
         run: |
