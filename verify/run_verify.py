@@ -64,13 +64,13 @@ def compare(rtl_lines, iss_lines):
     return None
 
 
-def check_one(vvp, prog_words, dmem_words, tmp, tag):
+def check_one(vvp, prog_words, dmem_words, tmp, tag, irq_csrs=False):
     p = os.path.join(tmp, f"{tag}.prog.hex")
     d = os.path.join(tmp, f"{tag}.dmem.hex")
     write_hex(p, prog_words + [0x13] * (1024 - len(prog_words)))
     write_hex(d, dmem_words)
     rtl_lines, timeout = run_rtl(vvp, p, d)
-    iss = ISS(prog_words, dmem_words)
+    iss = ISS(prog_words, dmem_words, irq_csrs)
     iss_lines, halted = iss.run()
     if timeout or not halted:
         return ("TIMEOUT", None), iss.coverage
@@ -81,11 +81,12 @@ def check_one(vvp, prog_words, dmem_words, tmp, tag):
 def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=False):
     vvp = os.path.join(tmp, "sim.vvp")
     compile_rtl(rtl, vvp, "tb_trace_pipe.v" if pipe else "tb_trace.v", full_pipe)
-    profile = "base" if (pipe and not full_pipe) else "full"
+    # pipeline RV32IM co them CSR ngat mie/mip; single-cycle thi hai dia chi nay la CSR khong ton tai
+    profile = "base" if (pipe and not full_pipe) else ("irq" if full_pipe else "full")
     cov, fails, instr_total = {}, [], 0
     # chuong trinh dinh huong co san (pipeline chi chay ban RV32I thuan)
     directed = load_hex(os.path.join(HERE, "..", "prog_base.hex" if (pipe and not full_pipe) else "prog.hex"))
-    res, c = check_one(vvp, directed, [0] * 1024, tmp, "directed")
+    res, c = check_one(vvp, directed, [0] * 1024, tmp, "directed", full_pipe)
     for k, v in c.items():
         cov[k] = cov.get(k, 0) + v
     if res[0] != "PASS":
@@ -93,7 +94,7 @@ def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=Fa
     # chuong trinh ngau nhien
     for s in range(seed0, seed0 + n):
         words, dmem = Gen(s, length, profile).build()
-        res, c = check_one(vvp, words, dmem, tmp, f"s{s}")
+        res, c = check_one(vvp, words, dmem, tmp, f"s{s}", full_pipe)
         for k, v in c.items():
             cov[k] = cov.get(k, 0) + v
         instr_total += len(words)
@@ -251,7 +252,7 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: lenh trap van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall;"),
     ("X: mepc luu pc cua tang MEM", "tepc_q       <= idex_pc[31:2];", "tepc_q       <= exmem_pc[31:2];"),
     ("R: mtval ghi gia tri cua chu ky sau trap", "mtval_r      <= ttval_q;", "mtval_r      <= trap_tval;"),
-    ("R: mcause ghi gia tri cua chu ky sau trap", "mcause_r     <= {28'd0, tcause_q};", "mcause_r     <= trap_cause;"),
+    ("R: mcause ghi gia tri cua chu ky sau trap", "mcause_r     <= {tint_q, 27'd0, tcause_q};", "mcause_r     <= trap_cause;"),
     ("X: ECALL sai ma nguyen nhan", "else if (idex_ecall)    begin trap_cause = 32'd11;", "else if (idex_ecall)    begin trap_cause = 32'd8;"),
     ("X: mtval lenh bat hop le = 0", "begin trap_cause = 32'd2;  trap_tval = idex_instr; end", "begin trap_cause = 32'd2;  trap_tval = 32'd0; end"),
     ("X: EBREAK mtval = 0", "begin trap_cause = 32'd3;  trap_tval = idex_pc;    end", "begin trap_cause = 32'd3;  trap_tval = 32'd0;    end"),

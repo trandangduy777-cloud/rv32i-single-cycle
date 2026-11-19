@@ -19,9 +19,12 @@ CORES = [("single-cycle (rv32i_core.v)", "", ["rv32i_core.v"], "rv32i"),
 if os.environ.get("GLS_FILES"):
     _gls = os.environ["GLS_FILES"].split()
     with open(os.path.join(ROOT, _gls[0])) as _f:
-        _full = "module rv32im_pipeline" in _f.read()
+        _nl = _f.read()
+    _full = "module rv32im_pipeline" in _nl
+    # netlist tong hop truoc khi co ngat thi khong co chan irq_timer/irq_ext
+    _flag = ("-DPIPE_FULL" + ("" if "irq_timer" in _nl else " -DNO_IRQ_PORTS")) if _full else "-DPIPE"
     CORES.append(("netlist %s sau P&R (GLS)" % ("RV32IM" if _full else "RV32I"),
-                  "-DPIPE_FULL" if _full else "-DPIPE", _gls, "rv32im" if _full else "rv32i"))
+                  _flag, _gls, "rv32im" if _full else "rv32i"))
 
 
 def sh(cmd, **kw):
@@ -61,7 +64,7 @@ def main():
     sims = {}
     for k, (title, flag, files, arch) in enumerate(CORES):
         out = os.path.join(tmp, "sim_%d" % k)
-        cmd = ["iverilog", "-g2012", "-o", out] + ([flag] if flag else []) + \
+        cmd = ["iverilog", "-g2012", "-o", out] + (flag.split() if flag else []) + \
               [os.path.join(HERE, "tb_riscv_tests.v")] + [os.path.join(ROOT, x) for x in files]
         r = sh(cmd)
         if r.returncode:

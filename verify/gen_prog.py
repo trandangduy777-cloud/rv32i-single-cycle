@@ -41,10 +41,12 @@ def lui_addi(rd, val):
 
 class Gen:
     def __init__(self, seed, n_body=300, profile="full"):
-        """profile: "full" = RV32IM + CSR + trap; "base" = chi RV32I thuan (cho pipeline)"""
+        """profile: "full" = RV32IM + CSR + trap; "irq" = "full" + CSR ngat mie/mip; "base" = chi RV32I thuan"""
         self.r = random.Random(seed)
         self.n_body = n_body
         self.base = (profile == "base")
+        self.csrs = CSR_LIST + ([("mie", 0x304), ("mip", 0x344)] if profile == "irq" else [])
+        self.bad_csrs = [0x000, 0x7C0, 0xB00, 0xC00, 0xF11, 0x100, 0x3A0] + ([] if profile == "irq" else [0x304, 0x344])
 
     # Nhom thanh ghi "nong": chon thanh ghi nguon/dich tu nhom nho voi xac suat HOT_P de cac lenh sat nhau
     # hay phu thuoc du lieu (forwarding, load-use). x0 nam trong nhom de thu ghi/doc x0 giua chuoi phu thuoc.
@@ -183,7 +185,7 @@ class Gen:
 
     # ---------- CSR / trap ----------
     def u_csr(self):
-        name, addr = self.r.choice(CSR_LIST)
+        name, addr = self.r.choice(self.csrs)
         f3 = self.r.choice([1, 2, 3, 5, 6, 7])
         if name == "mtvec" and (f3 & 3) == 1:       # khong ghi de len mtvec (se lam hong bo xu ly)
             f3 += 1
@@ -273,7 +275,7 @@ class Gen:
             return [enc_i(r.randint(0, 4095), self.reg(), r.randint(2, 7), self.dst(), 0b0001111)]
         # CSR khong ton tai, hoac ghi vao CSR chi doc
         if r.random() < 0.5:
-            addr = r.choice([0x000, 0x7C0, 0x304, 0x344, 0xB00, 0xC00, 0xF11, 0x100, 0x3A0])
+            addr = r.choice(self.bad_csrs)
             return [enc_i(addr, self.reg(), r.choice([1, 2, 3, 5, 6, 7]), self.dst(), OP_SYSTEM)]
         f3 = r.choice([1, 5])
         return [enc_i(0xF14, self.reg(), f3, self.dst(), OP_SYSTEM)]

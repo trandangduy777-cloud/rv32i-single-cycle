@@ -7,7 +7,8 @@ Quy uoc giong RTL:
   - bo nho lenh va du lieu rieng, moi bo 1024 tu (4 KB), chi so = dia chi[11:2]
   - ghi vao dia chi 0x1000 (tohost) la dung chuong trinh
   - truy cap load/store khong can chinh chua duoc ho tro (bo sinh khong tao ra)
-  - CSR (che do Machine): mstatus misa mtvec mscratch mepc mcause mtval mhartid
+  - CSR (che do Machine): mstatus misa mtvec mscratch mepc mcause mtval mhartid; them mie, mip khi irq_csrs=True
+    (chan ngat luon = 0 nen mip doc ra 0; ngat duoc kiem tra rieng bang tb_irq.v)
   - trap: lenh bat hop le(2) EBREAK(3) ECALL(11) nhay toi dia chi khong chia het 4 (0)
     lenh gay trap khong ghi thanh ghi/bo nho; dong vet van in voi rd=0 va st=0
 """
@@ -29,7 +30,7 @@ def s32(v):
 
 
 class ISS:
-    def __init__(self, prog, dmem=None):
+    def __init__(self, prog, dmem=None, irq_csrs=False):
         self.imem = list(prog) + [NOP] * (MEM_WORDS - len(prog))
         self.dmem = list(dmem) + [0] * (MEM_WORDS - len(dmem)) if dmem else [0] * MEM_WORDS
         self.x = [0] * 32
@@ -37,6 +38,8 @@ class ISS:
         self.halted = False
         self.coverage = {}
         self.mie = 0
+        self.irq_csrs = irq_csrs
+        self.mie_reg = 0                 # CSR mie (0x304): chi bit MTIE (7) va MEIE (11)
         self.mpie = 0
         self.mtvec = 0
         self.mepc = 0
@@ -63,6 +66,10 @@ class ISS:
             return self.mtval
         if addr == 0xF14:
             return 0
+        if self.irq_csrs and addr == 0x304:
+            return self.mie_reg
+        if self.irq_csrs and addr == 0x344:
+            return 0
         return None
 
     def csr_write(self, addr, v):
@@ -80,6 +87,8 @@ class ISS:
             self.mcause = v
         elif addr == 0x343:
             self.mtval = v
+        elif self.irq_csrs and addr == 0x304:
+            self.mie_reg = v & 0x880
         # misa: ghi bi bo qua; mhartid: chi doc (da bi chan truoc do)
 
     # ---- giai ma ----

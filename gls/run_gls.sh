@@ -12,8 +12,11 @@ python3 gls/make_func_lib.py "$LIB/sg13g2_stdcell.v" $B/sg13g2_stdcell_func.v
 CELLS="$B/sg13g2_stdcell_func.v $LIB/sg13g2_udp.v"
 
 # nhan dien loi theo ten module trong netlist
+# netlist tong hop truoc khi co ngat thi khong co chan irq_timer/irq_ext
+grep -q "irq_timer" "$NL" || NOIRQ=-DNO_IRQ_PORTS
+
 if grep -q "^module rv32im_pipeline" "$NL"; then
-    FLAG=-DPIPE_FULL; RTL="rv32im_pipeline.v rv32i_core.v"; PROG=prog.hex
+    FLAG="-DPIPE_FULL $NOIRQ"; RTL="rv32im_pipeline.v rv32i_core.v"; PROG=prog.hex
 elif grep -q "^module rv32i_pipeline" "$NL"; then
     FLAG=-DPIPE;      RTL="rv32i_pipeline.v";               PROG=prog_base.hex
 else
@@ -33,7 +36,7 @@ if command -v riscv64-unknown-elf-gcc >/dev/null 2>&1; then
     iverilog -g2012 $FLAG -o $B/gls_bench bench/tb_bench.v "$NL" $CELLS 2>/dev/null
     vvp $B/rtl_bench +img=bench/bench.hex | grep -E "BENCH|CHECK"
     vvp $B/gls_bench +img=bench/bench.hex | grep -E "BENCH|CHECK"
-    if [ "$FLAG" = "-DPIPE_FULL" ]; then
+    if [ "$RTL" != "rv32i_pipeline.v" ]; then
         echo "== bench_m (nang nhan/chia): RTL va netlist"
         vvp $B/rtl_bench +img=bench/bench_m.hex | grep -E "BENCH|CHECK"
         vvp $B/gls_bench +img=bench/bench_m.hex | grep -E "BENCH|CHECK"
