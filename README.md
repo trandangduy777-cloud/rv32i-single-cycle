@@ -8,11 +8,13 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 |---|---|---|---|---|
 | `rv32i_core.v`: single-cycle | RV32IM + CSR + trap | ≈ 23,0 ns (ngoại suy) * | 1,00 / 7,95 | 28.775 * |
 | `rv32i_pipeline.v`: 5 tầng | RV32I | ≈ 11,98 ns, ≈ 83 MHz | 1,29 / - | 36.466 |
-| `rv32im_pipeline.v`: 5 tầng | RV32IM + CSR + trap | ≈ 14,40 ns, ≈ 69 MHz | 1,32 / 5,00 | 47.129 |
+| `rv32im_pipeline.v`: 5 tầng | RV32IM + CSR + trap + ngắt | ≈ 14,40 ns, ≈ 69 MHz ** | 1,32 / 5,00 | 47.129 ** |
 
 \* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
+\*\* Đo trước khi thêm ngắt (ngắt chỉ thêm khoảng 10 flip-flop và logic chọn mcause, chưa chạy lại flow).
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
+- **Ngắt**: ngắt timer (bộ đếm `mtime`/`mtimecmp` kiểu CLINT) và ngắt ngoài cho pipeline RV32IM, nhận chính xác ở tầng EX; testbench riêng cho ngắt xen vào giữa vòng lặp nhân/chia/load/store hơn 200 lần, kèm 11 đột biến phần ngắt đều bị bắt.
 - **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, riscv-tests chính thức (rv32ui, rv32um), mutation test (42 / 28 / 66 lỗi chèn cố ý đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push.
 - **Thiết kế vật lý**: mọi run flow trong bảng đều đạt DRC, LVS, antenna; mọi số liệu flow nằm trong `results/` và `metrics.json`.
 
@@ -23,7 +25,7 @@ flowchart LR
     EX --> MEM["MEM<br/>load/store"]
     MEM --> WB["WB<br/>ghi thanh ghi"]
     ID -. "nhảy sớm (JAL, đoán nhảy)" .-> IF
-    EX -. "redirect (đoán sai, JALR, trap)" .-> IF
+    EX -. "redirect (đoán sai, JALR, trap, ngắt)" .-> IF
     MEM -. "forward" .-> EX
     WB -. "forward" .-> EX
 ```
@@ -33,11 +35,13 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 ## Cấu trúc thư mục
 | File | Nội dung |
 |---|---|
-| `rv32i_core.v` | Lõi RV32I single-cycle, bộ nhớ lệnh và dữ liệu nằm ngoài lõi |
+| `rv32i_core.v` | Lõi single-cycle RV32IM + CSR + trap (chứa module `rv32m` dùng chung), bộ nhớ lệnh và dữ liệu nằm ngoài lõi |
 | `tb_rv32i_core.v` | Testbench: nạp `prog.hex`, báo PASS/FAIL qua địa chỉ `0x1000` |
 | `rv32i_pipeline.v` | Pipeline 5 tầng, RV32I thuần (xem mục Pipeline) |
 | `tb_rv32i_pipeline.v` | Testbench tự kiểm tra cho pipeline, nạp `prog_base.hex` |
-| `rv32im_pipeline.v` | Pipeline đầy đủ: RV32IM + CSR + trap (dùng module `rv32m` trong `rv32i_core.v`) |
+| `rv32im_pipeline.v` | Pipeline đầy đủ: RV32IM + CSR + trap + ngắt (dùng module `rv32m` trong `rv32i_core.v`) |
+| `rv32_mtimer.v` | Bộ đếm `mtime`/`mtimecmp` 64 bit, ánh xạ bộ nhớ, sinh ngắt timer |
+| `irq/` | Kiểm chứng ngắt: chương trình `irq_test.S`, testbench `tb_irq.v`, mutation test `mutate_irq.py` (xem mục Ngắt) |
 | `config_pipeline.json` | Cấu hình LibreLane cho pipeline RV32I thuần (`CLOCK_PERIOD` = 14 ns, đã chạy đạt timing) |
 | `config_pipeline_full.json` | Cấu hình LibreLane cho pipeline đầy đủ (`CLOCK_PERIOD` = 15 ns, đã chạy đạt timing) |
 | `prog_base.hex` | Chương trình test chỉ gồm RV32I thuần (229 lệnh), dùng cho pipeline |
@@ -103,7 +107,28 @@ Kết quả đúng: `[TB] PASS sau 2423 chu ky`.
 - Trap: lệnh bất hợp lệ (cause 2), `EBREAK` (3), `ECALL` (11), nhảy tới địa chỉ không chia hết cho 4 (0), load lệch địa chỉ (4), store lệch địa chỉ (6; `mtval` = địa chỉ vi phạm). Lệnh gây trap không ghi thanh ghi hay bộ nhớ.
 - Truy cập CSR không tồn tại, hoặc ghi vào CSR chỉ đọc, là lệnh bất hợp lệ.
 - Giải mã chặt: các trường `funct7`/`funct3`/`rd`/`rs1` sai giá trị quy định đều gây trap.
-- Chưa có ngắt. `FENCE` giữ vai trò NOP (đúng với lõi in-order, bộ nhớ đồng bộ một cổng). Bản `rv32i_pipeline.v` là RV32I thuần, không có trap nên không kiểm tra căn chỉnh; chương trình test của nó chỉ truy cập đúng căn chỉnh.
+- Ngắt chỉ có ở `rv32im_pipeline.v` (xem mục Ngắt). `FENCE` giữ vai trò NOP (đúng với lõi in-order, bộ nhớ đồng bộ một cổng). Bản `rv32i_pipeline.v` là RV32I thuần, không có trap nên không kiểm tra căn chỉnh; chương trình test của nó chỉ truy cập đúng căn chỉnh.
+
+## Ngắt (pipeline RV32IM)
+- Hai chân ngắt mức cao: `irq_timer` (MTIP) và `irq_ext` (MEIP), đồng bộ qua 1 flip-flop. Thêm CSR `mie` (MTIE, MEIE) và `mip` (chỉ đọc, phản ánh hai chân ngắt).
+- Ngắt được nhận ở tầng EX khi `mstatus.MIE = 1`, bit tương ứng trong `mie` bật và EX đang có lệnh hợp lệ. Lệnh ở EX không thực thi (không ghi thanh ghi, không ghi bộ nhớ, không ghi CSR); `mepc` = pc của lệnh đó, nên ngắt chính xác: mọi lệnh cũ hơn đã ở MEM/WB và hoàn tất, lệnh bị ngắt chạy lại sau `MRET`.
+- `mcause` = `0x8000000B` (ngoài) hoặc `0x80000007` (timer); ngắt ngoài ưu tiên hơn. Đi chung đường với trap: redirect tới `mtvec`, `mepc`/`mcause`/`mstatus` ghi trễ 1 chu kỳ.
+- Điều kiện nhận ngắt chỉ dùng thanh ghi (`mstatus`, `mie`, `mip`, `idex_valid`), không dùng kết quả so sánh nhánh, nên không kéo dài đường tới hạn.
+- Lệnh nhân/chia đang chạy không bị ngắt: ngắt chờ tới lệnh kế tiếp. Độ trễ ngắt ngoài đo được tối đa 17 chu kỳ (lệnh M 19 chu kỳ đang chạy).
+- `rv32_mtimer.v`: `mtime` tăng mỗi `PRESCALE` chu kỳ, `irq = mtime >= mtimecmp`, `mtimecmp` khởi động bằng toàn bit 1. Ánh xạ: `+0x0`/`+0x4` mtime, `+0x8`/`+0xC` mtimecmp. Khối này nằm ngoài lõi (như CLINT), testbench đặt ở `0x0200_0000`.
+
+Kiểm chứng (`irq/`, chạy trong GitHub Actions):
+- `irq_test.S`: vòng lặp 300 lần tính checksum bằng `mul`/`remu`/load/store/nhánh, trong khi ngắt timer (khoảng cách thay đổi 40-103 chu kỳ) và 3 ngắt ngoài xen vào. Checksum phải bằng giá trị tính trước bằng Python (`checksum.py`): lệnh bị ngắt phải chạy lại đúng một lần. Trình xử lý kiểm tra `mcause`, `mstatus` (MIE = 0, MPIE = 1) và `mepc`.
+- Sau vòng lặp: ngắt đang chờ nhưng bị che bởi `mstatus.MIE` hoặc `mie` thì không được nhận, `mip` phải báo cả MTIP và MEIP; bật cả hai cùng lúc thì ngắt ngoài phải được nhận trước.
+- `tb_irq.v` tự đếm số lần lõi nhận ngắt và so với bộ đếm của phần mềm, đếm số lần ghi bộ nhớ của vòng lặp (phải đúng 300) và số vị trí lệnh bị ngắt. Kết quả: 220 ngắt timer, 4 ngắt ngoài, ngắt rơi vào 13 lệnh khác nhau, PASS sau 23.767 chu kỳ.
+- `mutate_irq.py`: 11 đột biến (mepc lệch, lệnh bị ngắt vẫn ghi thanh ghi hoặc bộ nhớ, không xoá MIE, bỏ qua MIE/MTIE/MEIE, mcause thiếu bit ngắt, đảo ưu tiên, nhận ngắt khi EX trống, MRET không khôi phục MIE) đều bị bắt.
+- Bộ so vết với ISS ngẫu nhiên cũng sinh lệnh đọc/ghi `mie`, `mip` cho pipeline RV32IM (chân ngắt nối 0).
+
+```
+iverilog -g2012 -o irq.vvp irq/tb_irq.v rv32im_pipeline.v rv32i_core.v rv32_mtimer.v && vvp irq.vvp
+python3 irq/mutate_irq.py
+sh irq/build.sh        # biên dịch lại irq_test.hex, cần riscv64-unknown-elf-gcc
+```
 
 ## Mô phỏng
 Cần `python3` và Icarus Verilog (`iverilog`, `vvp`).
@@ -304,7 +329,8 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 ```
 
 ## Giới hạn
-- Chưa có ngắt, chưa có chế độ User
+- Ngắt chỉ có ở pipeline RV32IM; chưa có `WFI`, ngắt phần mềm (MSIP), `mtvec` chế độ vectored, chế độ User
+- Flow của RV32IM pipeline chưa chạy lại sau khi thêm ngắt
 - JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
 - Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song
 - Mô hình tham chiếu và RTL do cùng một người viết; đã bổ sung riscv-tests (rv32ui, rv32um) nhưng chưa đối chiếu lock-step với Spike

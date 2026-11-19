@@ -23,7 +23,7 @@ Kiểm chứng pipeline (chỉ RV32I thuần, in vết ở tầng WB bằng `tb_
 python3 run_verify.py --pipe                   # 200 chương trình ngẫu nhiên + chương trình định hướng
 python3 run_verify.py --pipe --mutate          # 28 lỗi hazard/forwarding/flush/dự đoán nhánh chèn cố ý
 ```
-Pipeline đầy đủ (RV32IM + CSR + trap):
+Pipeline đầy đủ (RV32IM + CSR + trap; chương trình ngẫu nhiên có thêm đọc/ghi `mie`, `mip`, chân ngắt nối 0, ngắt được kiểm riêng trong `../irq/`):
 ```
 python3 run_verify.py --pipem
 python3 run_verify.py --pipem --mutate         # 66 lỗi chèn cố ý (hazard, CSR, trap, M, flush, redirect đăng ký)
