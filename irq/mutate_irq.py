@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation test cho phan ngat cua rv32im_pipeline.v: moi dot bien phai lam tb_irq.v bao FAIL (hoac het thoi gian).
+"""Mutation test cho phan ngat va WFI cua rv32im_pipeline.v: moi dot bien phai lam tb_irq.v bao FAIL (hoac het thoi gian).
 Chay tu thu muc goc repo: python3 irq/mutate_irq.py"""
 import os, subprocess, sys, tempfile
 
@@ -20,20 +20,33 @@ MUTATIONS = [
      "            mstatus_mie  <= 1'b0;\n        end else if (mret_ex)",
      "            mstatus_mie  <= mstatus_mie;\n        end else if (mret_ex)"),
     ("bo qua mstatus.MIE",
-     "wire irq_any   = mstatus_mie & (", "wire irq_any   = 1'b1 & ("),
+     "wire irq_any   = mstatus_mie & irq_pend;", "wire irq_any   = irq_pend;"),
     ("bo qua mie.MTIE",
-     "(mip_mtip & mie_mtie)", "(mip_mtip)"),
+     "wire irq_mtip  = mip_mtip & mie_mtie;", "wire irq_mtip  = mip_mtip;"),
     ("bo qua mie.MEIE",
      "wire irq_meip  = mip_meip & mie_meie;", "wire irq_meip  = mip_meip;"),
+    ("bo qua mie.MSIE",
+     "wire irq_msip  = mip_msip & mie_msie;", "wire irq_msip  = mip_msip;"),
     ("mcause thieu bit ngat",
      "mcause_r     <= {tint_q, 27'd0, tcause_q};", "mcause_r     <= {1'b0, 27'd0, tcause_q};"),
-    ("dao uu tien timer / ngoai",
-     "trap_cause = irq_meip ? 32'h8000_000B : 32'h8000_0007;",
-     "trap_cause = (mip_mtip & mie_mtie) ? 32'h8000_0007 : 32'h8000_000B;"),
+    ("dao uu tien ngoai / phan mem",
+     "trap_cause = irq_meip ? 32'h8000_000B : (irq_msip ? 32'h8000_0003 : 32'h8000_0007);",
+     "trap_cause = irq_msip ? 32'h8000_0003 : (irq_meip ? 32'h8000_000B : 32'h8000_0007);"),
+    ("dao uu tien phan mem / timer",
+     "trap_cause = irq_meip ? 32'h8000_000B : (irq_msip ? 32'h8000_0003 : 32'h8000_0007);",
+     "trap_cause = irq_meip ? 32'h8000_000B : (irq_mtip ? 32'h8000_0007 : 32'h8000_0003);"),
     ("nhan ngat ca khi EX khong co lenh hop le",
-     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r;", "wire irq_take  = irq_any & ~idex_mext_r;"),
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r;",
+     "wire irq_take  = irq_any & ~idex_mext_r & ~idex_wfi_r;"),
     ("MRET khong khoi phuc MIE",
      "mstatus_mie  <= mstatus_mpie;", "mstatus_mie  <= 1'b0;"),
+    ("WFI khong dung (chay nhu NOP)",
+     "assign wfi_wait = idex_wfi & ~irq_pend;", "assign wfi_wait = 1'b0;"),
+    ("WFI thuc day khi co ngat dang cho du bi che boi mie",
+     "assign wfi_wait = idex_wfi & ~irq_pend;", "assign wfi_wait = idex_wfi & ~(mip_mtip | mip_msip | mip_meip);"),
+    ("ngat nhan tren chinh lenh WFI (mepc = WFI)",
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r;",
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r;"),
 ]
 
 

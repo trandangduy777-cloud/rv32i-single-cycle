@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-// Testbench ngat cho rv32im_pipeline: loi + rv32_mtimer (0x0200_0000) + nguon ngat ngoai gia lap.
+// Testbench ngat va WFI cho rv32im_pipeline: loi + rv32_mtimer (0x0200_0000, co msip) + nguon ngat ngoai gia lap.
 // Chay: iverilog -g2012 -o irq irq/tb_irq.v rv32im_pipeline.v rv32i_core.v rv32_mtimer.v && vvp irq +prog=irq/irq_test.hex
 // irq_ext duoc bat o chu ky 400, 1500, 2600 (hoac khi chuong trinh ghi vao 0x0300_0004) va giu cho toi khi
 // chuong trinh ghi vao 0x0300_0000.
@@ -15,7 +15,7 @@ module tb_irq;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we;
     wire [31:0] dmem_rdata;
-    wire        irq_timer;
+    wire        irq_timer, irq_soft;
     reg         irq_ext = 1'b0;
 
     rv32im_pipeline dut (
@@ -24,7 +24,7 @@ module tb_irq;
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata),
         .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
         .dmem_rdata(dmem_rdata),
-        .irq_timer(irq_timer), .irq_ext(irq_ext)
+        .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
     );
 
     // ---- bo nho ----
@@ -40,8 +40,8 @@ module tb_irq;
     wire [31:0] tmr_rdata;
     rv32_mtimer #(.PRESCALE(1)) u_tmr (
         .clk(clk), .rst_n(rst_n),
-        .sel(sel_tmr), .addr(dmem_addr[3:2]), .we(dmem_we), .wstrb(dmem_wstrb), .wdata(dmem_wdata),
-        .rdata(tmr_rdata), .irq(irq_timer)
+        .sel(sel_tmr), .addr(dmem_addr[4:2]), .we(dmem_we), .wstrb(dmem_wstrb), .wdata(dmem_wdata),
+        .rdata(tmr_rdata), .irq(irq_timer), .msip(irq_soft)
     );
     assign dmem_rdata = sel_tmr ? tmr_rdata : dmem[dmem_addr[11:2]];
 
@@ -77,7 +77,7 @@ module tb_irq;
     always @(posedge clk) if (rst_n && dmem_we && dmem_addr[31:5] == (32'h200 >> 5)) loop_st = loop_st + 1;
 
     // ---- dem ngat loi da nhan ----
-    integer hw_tmr = 0, hw_ext = 0, n_pos = 0;
+    integer hw_tmr = 0, hw_ext = 0, hw_soft = 0, n_pos = 0;
     reg     hit [0:1023];                    // lenh nao da tung bi ngat (o EX khi loi nhan ngat)
     always @(posedge clk) begin
         if (rst_n && dut.irq_take) begin
@@ -87,9 +87,14 @@ module tb_irq;
                 lat = cycles - ext_start;
                 if (ext_sched && lat > lat_max) lat_max = lat;
             end else if (dut.trap_cause == 32'h8000_0007) hw_tmr = hw_tmr + 1;
+            else if (dut.trap_cause == 32'h8000_0003) hw_soft = hw_soft + 1;
             else begin $display("[IRQ] FAIL: mcause la 0x%08x", dut.trap_cause); $finish; end
         end
     end
+
+    // ---- so chu ky loi dung o WFI ----
+    integer wfi_cyc = 0;
+    always @(posedge clk) if (rst_n && dut.wfi_wait) wfi_cyc = wfi_cyc + 1;
 
     // ---- ket qua ----
     reg [8*256-1:0] progfile;
@@ -97,16 +102,19 @@ module tb_irq;
     always @(posedge clk) begin
         if (rst_n && dmem_we && dmem_addr == TOHOST) begin
             if (dmem_wdata != 32'd1)
-                $display("[IRQ] FAIL: chuong trinh bao loi %0d (ngat timer %0d, ngat ngoai %0d)",
-                         dmem_wdata & 32'h3FF, dmem[32'h300 >> 2], dmem[32'h304 >> 2]);
-            else if (hw_tmr != dmem[32'h300 >> 2] || hw_ext != dmem[32'h304 >> 2] || hw_ext != ext_raised)
-                $display("[IRQ] FAIL: loi nhan %0d timer / %0d ngoai, phan mem dem %0d / %0d, testbench phat %0d ngoai",
-                         hw_tmr, hw_ext, dmem[32'h300 >> 2], dmem[32'h304 >> 2], ext_raised);
+                $display("[IRQ] FAIL: chuong trinh bao loi %0d (ngat timer %0d, ngoai %0d, phan mem %0d)",
+                         dmem_wdata & 32'h3FF, dmem[32'h300 >> 2], dmem[32'h304 >> 2], dmem[32'h308 >> 2]);
+            else if (hw_tmr != dmem[32'h300 >> 2] || hw_ext != dmem[32'h304 >> 2] || hw_soft != dmem[32'h308 >> 2] ||
+                     hw_ext != ext_raised)
+                $display("[IRQ] FAIL: loi nhan %0d timer / %0d ngoai / %0d phan mem, phan mem dem %0d / %0d / %0d, testbench phat %0d ngoai",
+                         hw_tmr, hw_ext, hw_soft, dmem[32'h300 >> 2], dmem[32'h304 >> 2], dmem[32'h308 >> 2], ext_raised);
             else if (loop_st != NITER)
                 $display("[IRQ] FAIL: vong lap chinh ghi bo nho %0d lan, dung ra %0d", loop_st, NITER);
+            else if (wfi_cyc < 400)
+                $display("[IRQ] FAIL: loi chi dung o WFI %0d chu ky (hai lenh WFI phai cho khoang 300 va 200 chu ky)", wfi_cyc);
             else
-                $display("[IRQ] PASS sau %0d chu ky: %0d ngat timer, %0d ngat ngoai, ngat roi vao %0d lenh khac nhau, tre ngat ngoai lon nhat %0d chu ky",
-                         cycles, hw_tmr, hw_ext, n_pos, lat_max);
+                $display("[IRQ] PASS sau %0d chu ky: %0d ngat timer, %0d ngat ngoai, %0d ngat phan mem, ngat roi vao %0d lenh khac nhau, tre ngat ngoai lon nhat %0d chu ky, dung o WFI %0d chu ky",
+                         cycles, hw_tmr, hw_ext, hw_soft, n_pos, lat_max, wfi_cyc);
             $finish;
         end
     end
