@@ -1,6 +1,9 @@
 // Bo benchmark nho, khong dung libc, khong dung nhan/chia (de chay duoc tren RV32I thuan).
 // Moi bai ghi checksum vao RESULT[] de doi chieu giua cac cau hinh loi.
-#define RESULT ((volatile unsigned *)0x800)
+#ifndef RESULT_ADDR
+#define RESULT_ADDR 0x800      // cosim/run_cosim.py doi sang vung nho cua Spike
+#endif
+#define RESULT ((volatile unsigned *)RESULT_ADDR)
 
 static unsigned lcg(unsigned x) { return x ^ (x << 13) ^ (x >> 7) ^ (x << 17); }
 

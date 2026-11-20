@@ -1,5 +1,8 @@
 // Benchmark nang lenh M (nhan/chia), bien dich voi -march=rv32im. Ghi checksum vao RESULT[] nhu bench.c.
-#define RESULT ((volatile unsigned *)0x800)
+#ifndef RESULT_ADDR
+#define RESULT_ADDR 0x800      // cosim/run_cosim.py doi sang vung nho cua Spike
+#endif
+#define RESULT ((volatile unsigned *)RESULT_ADDR)
 
 static unsigned lcg(unsigned x) { return x ^ (x << 13) ^ (x >> 7) ^ (x << 17); }
 
