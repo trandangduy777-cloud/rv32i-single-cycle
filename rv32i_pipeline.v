@@ -15,7 +15,9 @@
 //     + bang dem duoc cap nhat tre 1 chu ky (qua thanh ghi o tang MEM) de ket qua so sanh nhanh khong
 //       phai dieu khien enable cua cac flop bang dem
 // - Cac tin hieu memwb_* duoc testbench doc truc tiep (tang commit) de in vet; khong noi ra cong
-module rv32i_pipeline (
+module rv32i_pipeline #(
+    parameter [31:0] RESET_PC = 32'h0000_0000   // dia chi lenh dau tien sau reset (phai chia het cho 4)
+) (
     input  wire        clk,
     input  wire        rst_n,
 
@@ -56,7 +58,7 @@ module rv32i_pipeline (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc         <= 32'd0;
+            pc         <= RESET_PC;
             ifid_valid <= 1'b0;
         end else if (redirect) begin
             pc         <= redirect_pc;

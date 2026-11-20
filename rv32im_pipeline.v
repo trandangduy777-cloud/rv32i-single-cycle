@@ -17,7 +17,9 @@
 //   nhan tren chinh lenh WFI ma tren lenh ke tiep, nen mepc = pc cua WFI + 4.
 // - Cac tin hieu memwb_* duoc testbench doc truc tiep (tang commit) de in vet
 // Can bien dich cung rv32i_core.v (de lay module rv32m) hoac dua module rv32m vao cung file khi tong hop.
-module rv32im_pipeline (
+module rv32im_pipeline #(
+    parameter [31:0] RESET_PC = 32'h0000_0000   // dia chi lenh dau tien sau reset (phai chia het cho 4)
+) (
     input  wire        clk,
     input  wire        rst_n,
 
@@ -67,7 +69,7 @@ module rv32im_pipeline (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc         <= 32'd0;
+            pc         <= RESET_PC;
             ifid_valid <= 1'b0;
         end else if (redirect_q) begin
             pc         <= redirect_pc_q;

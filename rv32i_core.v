@@ -14,7 +14,9 @@
 //   Khi trap: lenh gay trap khong ghi thanh ghi/bo nho; mepc=pc, mcause, mtval cap nhat,
 //             MPIE<=MIE, MIE<=0, pc<=mtvec. MRET: pc<=mepc, MIE<=MPIE, MPIE<=1.
 // - Chua co ngat (interrupt)
-module rv32i_core (
+module rv32i_core #(
+    parameter [31:0] RESET_PC = 32'h0000_0000   // dia chi lenh dau tien sau reset (phai chia het cho 4)
+) (
     input  wire        clk,
     input  wire        rst_n,
 
@@ -325,7 +327,7 @@ module rv32i_core (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc           <= 32'd0;
+            pc           <= RESET_PC;
             mstatus_mie  <= 1'b0;
             mstatus_mpie <= 1'b0;
             mtvec_r      <= 30'd0;
