@@ -15,7 +15,7 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
 - **Ngắt**: ngắt timer, ngắt phần mềm (khối `mtime`/`mtimecmp`/`msip` kiểu CLINT) và ngắt ngoài cho pipeline RV32IM, nhận chính xác ở tầng EX, cùng lệnh `WFI`; testbench riêng cho ngắt xen vào giữa vòng lặp nhân/chia/load/store hơn 300 lần, kèm 16 đột biến phần ngắt và WFI đều bị bắt.
-- **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, riscv-tests chính thức (rv32ui, rv32um), mutation test (42 / 28 / 66 lỗi chèn cố ý đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push.
+- **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, so từng lệnh với Spike (trình mô phỏng chuẩn của RISC-V) trên riscv-tests và benchmark, riscv-tests chính thức (rv32ui, rv32um), mutation test (42 / 28 / 66 lỗi chèn cố ý đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push.
 - **Thiết kế vật lý**: mọi run flow trong bảng đều đạt DRC, LVS, antenna; mọi số liệu flow nằm trong `results/` và `metrics.json`.
 
 ```mermaid
@@ -53,6 +53,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `results/` | Số liệu flow của các lõi pipeline (`metrics_*.json`), mỗi file ứng với một dòng trong bảng so sánh |
 | `bench/` | Benchmark C: `bench.c` (RV32I thuần) và `bench_m.c` (nặng nhân/chia), `run_bench.sh` in số chu kỳ và CPI |
 | `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
+| `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike) |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
@@ -304,6 +305,29 @@ python3 riscv-tests/run_riscv_tests.py riscv-tests
 ```
 
 Cần `gcc-riscv64-unknown-elf` và `iverilog`.
+
+## So vết từng lệnh với Spike
+
+riscv-tests chỉ tự báo PASS/FAIL ở cuối, và ISS Python do chính mình viết nên có thể sai giống RTL. `cosim/run_cosim.py` so **mọi lệnh hoàn tất** của RTL với [Spike](https://github.com/riscv-software-src/riscv-isa-sim), trình mô phỏng ISA chuẩn của RISC-V:
+
+- Chương trình: 48 test riscv-tests (rv32ui, rv32um) và 2 benchmark C (`bench`, `bench_m`), biên dịch đặt ở `0x8000_0000` theo bản đồ bộ nhớ mặc định của Spike. Lõi khởi động ở đó nhờ tham số `RESET_PC`; bộ nhớ lệnh và dữ liệu dùng chung như Spike.
+- Spike chạy với `--log-commits`. Với từng lệnh, so pc, mã lệnh, thanh ghi đích và giá trị ghi, địa chỉ / độ rộng / giá trị của lệnh store. Dừng ở lệnh lệch đầu tiên và in 3 lệnh trước đó.
+- Thanh ghi x1-x31 được đặt 0 trước khi chạy như Spike (register file không có reset, hàm C lưu thanh ghi chưa dùng lên stack).
+
+| Lõi | Chương trình | Số lệnh khớp Spike |
+|---|---|---|
+| Single-cycle (RV32IM) | 50 (rv32ui, rv32um, bench, bench_m) | 61.576 |
+| Pipeline RV32I | 41 (rv32ui, bench) | 44.986 |
+| Pipeline RV32IM | 50 | 61.576 |
+
+- Đã kiểm tra bộ so bắt được lỗi: bỏ bypass WB → ID của rs2 trong pipeline RV32IM thì cả `bench` và `bench_m` lệch ngay, và báo đúng lệnh store đầu tiên ghi sai giá trị.
+- Spike được build từ mã nguồn, ghim phiên bản (`7d1ee24`), và lưu cache trong GitHub Actions (job `cosim`).
+
+```
+python3 cosim/run_cosim.py <thư mục riscv-tests> [--spike <đường dẫn spike>] [--only <tên test>]
+```
+
+Cần `spike`, `gcc-riscv64-unknown-elf`, `iverilog`.
 
 ## Mô phỏng gate-level (netlist pipeline sau P&R)
 

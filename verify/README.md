@@ -40,7 +40,7 @@ Mỗi dòng là một lệnh đã thực thi: `rd`/`val` là thanh ghi đích v�
 Pipeline dùng lại nguyên ISS và bộ sinh (profile `base`), chỉ khác testbench in vết ở tầng WB theo cùng định dạng.
 
 ## Giới hạn
-- ISS và RTL do cùng một người viết, nên hiểu sai đặc tả ở cả hai bên sẽ không bị phát hiện. Muốn chắc hơn thì đối chiếu thêm với Spike hoặc bộ `riscv-tests` chính thức.
+- ISS và RTL do cùng một người viết, nên hiểu sai đặc tả ở cả hai bên sẽ không bị phát hiện. Vì vậy RTL còn được chạy trên bộ `riscv-tests` chính thức (`../riscv-tests/`) và so từng lệnh với Spike (`../cosim/`). Chương trình ngẫu nhiên ở đây chưa chạy được trên Spike vì bộ nhớ lệnh và dữ liệu của chúng tách riêng, cùng bắt đầu từ địa chỉ 0.
 - Chưa phủ: truy cập load/store không căn chỉnh, ngắt.
 - Bộ xử lý trap trong chương trình ngẫu nhiên luôn quay lại lệnh kế tiếp (`mepc + 4`), nên chỉ kiểm tra trap theo kiểu "bỏ qua lệnh gây lỗi".
 - Chương trình ngẫu nhiên không có vòng lặp (nhánh chỉ nhảy tới); vòng lặp được thử trong `prog.hex` định hướng.
