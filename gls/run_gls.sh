@@ -12,8 +12,8 @@ python3 gls/make_func_lib.py "$LIB/sg13g2_stdcell.v" $B/sg13g2_stdcell_func.v
 CELLS="$B/sg13g2_stdcell_func.v $LIB/sg13g2_udp.v"
 
 # nhan dien loi theo ten module trong netlist
-# netlist tong hop truoc khi co ngat thi khong co chan irq_timer/irq_ext
-grep -q "irq_timer" "$NL" || NOIRQ=-DNO_IRQ_PORTS
+# netlist tong hop truoc khi co ngat thi khong co chan irq_timer/irq_soft/irq_ext
+grep -q "irq_soft" "$NL" || NOIRQ=-DNO_IRQ_PORTS
 
 if grep -q "^module rv32im_pipeline" "$NL"; then
     FLAG="-DPIPE_FULL $NOIRQ"; RTL="rv32im_pipeline.v rv32i_core.v"; PROG=prog.hex

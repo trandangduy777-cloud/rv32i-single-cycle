@@ -26,7 +26,7 @@ module tb_riscv_tests;
         .dmem_rdata(dmem_rdata)
 `ifdef PIPE_FULL
 `ifndef NO_IRQ_PORTS
-        , .irq_timer(1'b0), .irq_ext(1'b0)     // ngat duoc kiem tra rieng trong tb_irq.v
+        , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)     // ngat duoc kiem tra rieng trong tb_irq.v
 `endif
 `endif
     );

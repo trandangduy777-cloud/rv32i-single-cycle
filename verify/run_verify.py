@@ -270,7 +270,7 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: FENCE.I bi coi la bat hop le", "wire legal_fence  = is_fence & (funct3 == 3'b000 | funct3 == 3'b001);", "wire legal_fence  = is_fence & (funct3 == 3'b000);"),
     ("X: coi funct7=1 la bat hop le", "wire legal_reg    = is_reg & (f7_zero | f7_m | (f7_alt", "wire legal_reg    = is_reg & (f7_zero | (f7_alt"),
     ("X: M khong dong bang IF", "end else if (!(stall | ex_stall)) begin", "end else if (!stall) begin"),
-    ("X: M khong dong bang ID/EX", "end else if (ex_stall) begin\n            // lenh M dang chay o EX: giu nguyen ID/EX", "end else if (1'b0) begin\n            // lenh M dang chay o EX: giu nguyen ID/EX"),
+    ("X: M khong dong bang ID/EX", "end else if (ex_stall) begin\n            // lenh M dang chay hoac WFI dang cho o EX: giu nguyen ID/EX", "end else if (1'b0) begin\n            // lenh M dang chay hoac WFI dang cho o EX: giu nguyen ID/EX"),
     ("X: M khong nhan bong bay o EX/MEM", "exmem_valid     <= idex_valid & ~ex_stall;", "exmem_valid     <= idex_valid;"),
     ("X: M dung toan hang chua forward", ".a(op_a), .b(op_b),", ".a(idex_rs1_val), .b(idex_rs2_val),"),
     ("X: LH/SH lech khong trap", "wire ld_misal = idex_load  & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) |",

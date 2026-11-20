@@ -39,7 +39,7 @@ class ISS:
         self.coverage = {}
         self.mie = 0
         self.irq_csrs = irq_csrs
-        self.mie_reg = 0                 # CSR mie (0x304): chi bit MTIE (7) va MEIE (11)
+        self.mie_reg = 0                 # CSR mie (0x304): chi bit MSIE (3), MTIE (7), MEIE (11)
         self.mpie = 0
         self.mtvec = 0
         self.mepc = 0
@@ -88,7 +88,7 @@ class ISS:
         elif addr == 0x343:
             self.mtval = v
         elif self.irq_csrs and addr == 0x304:
-            self.mie_reg = v & 0x880
+            self.mie_reg = v & 0x888
         # misa: ghi bi bo qua; mhartid: chi doc (da bi chan truoc do)
 
     # ---- giai ma ----

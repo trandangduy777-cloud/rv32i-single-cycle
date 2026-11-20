@@ -21,8 +21,8 @@ if os.environ.get("GLS_FILES"):
     with open(os.path.join(ROOT, _gls[0])) as _f:
         _nl = _f.read()
     _full = "module rv32im_pipeline" in _nl
-    # netlist tong hop truoc khi co ngat thi khong co chan irq_timer/irq_ext
-    _flag = ("-DPIPE_FULL" + ("" if "irq_timer" in _nl else " -DNO_IRQ_PORTS")) if _full else "-DPIPE"
+    # netlist tong hop truoc khi co ngat thi khong co chan irq_timer/irq_soft/irq_ext
+    _flag = ("-DPIPE_FULL" + ("" if "irq_soft" in _nl else " -DNO_IRQ_PORTS")) if _full else "-DPIPE"
     CORES.append(("netlist %s sau P&R (GLS)" % ("RV32IM" if _full else "RV32I"),
                   _flag, _gls, "rv32im" if _full else "rv32i"))
 
