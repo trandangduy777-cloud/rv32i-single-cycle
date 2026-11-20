@@ -1,4 +1,5 @@
 # Kiem chung tu dong moi lan push: testbench tu kiem tra, so vet voi ISS tren chuong trinh ngau nhien, ngat,
+# so tung lenh voi Spike (job cosim),
 # bo test ISA chinh thuc riscv-tests va benchmark (so checksum giua cac loi).
 # Mutation test chay lau (10-20 phut) nen chi chay khi bam "Run workflow" trong tab Actions.
 name: verify
@@ -49,6 +50,44 @@ jobs:
 
       - name: Benchmark (CPI, so checksum giua cac loi)
         run: sh bench/run_bench.sh
+
+  cosim:
+    # So tung lenh voi Spike. Spike duoc build tu ma nguon (ghim phien ban) va luu cache giua cac lan chay.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cai iverilog, trinh bien dich RISC-V va dtc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog gcc-riscv64-unknown-elf device-tree-compiler
+
+      - name: Cache Spike
+        id: cache-spike
+        uses: actions/cache@v4
+        with:
+          path: ~/spike
+          key: spike-${{ env.SPIKE_SHA }}-ubuntu-24.04
+
+      - name: Build Spike
+        if: steps.cache-spike.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
+          cd /tmp/spike-src
+          git checkout $SPIKE_SHA
+          git submodule update --init --depth 1
+          mkdir build && cd build
+          ../configure --prefix=$HOME/spike
+          make -j$(nproc)
+          make install
+
+      - name: So vet voi Spike (riscv-tests, bench, bench_m; 3 loi)
+        run: |
+          git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
+          python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
 
   mutation:
     if: github.event_name == 'workflow_dispatch'
