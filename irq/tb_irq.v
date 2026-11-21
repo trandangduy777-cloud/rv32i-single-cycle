@@ -24,7 +24,8 @@ module tb_irq;
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata),
         .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
         .dmem_rdata(dmem_rdata),
-        .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
+        .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext),
+        .imem_ready(1'b1), .dmem_ready(1'b1), .dmem_re()
     );
 
     // ---- bo nho ----

@@ -24,6 +24,7 @@ module tb_trace_pipe;
 `ifdef PIPE_FULL
 `ifndef NO_IRQ_PORTS
         , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)     // ngat duoc kiem tra rieng trong tb_irq.v
+        , .imem_ready(1'b1), .dmem_ready(1'b1), .dmem_re()      // bo nho to hop; cache kiem tra trong cosim
 `endif
 `endif
     );
