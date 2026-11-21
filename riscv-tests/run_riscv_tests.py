@@ -4,13 +4,13 @@
 Can: riscv64-unknown-elf-gcc (Ubuntu: sudo apt install gcc-riscv64-unknown-elf), iverilog,
      ma nguon riscv-tests (git clone --recursive https://github.com/riscv-software-src/riscv-tests).
 Dung:  python3 riscv-tests/run_riscv_tests.py <thu_muc_riscv-tests>
-Bo qua: fence_i (can Zifencei), ma_data (can phan cung ho tro truy cap lech), cac test M-mode/S-mode (rv32mi, rv32si).
+Bo qua: fence_i (testbench tach bo nho lenh/du lieu nen store khong sua duoc ma; test nay chay trong cosim/), ma_data (can phan cung ho tro truy cap lech), cac test M-mode/S-mode (rv32mi, rv32si).
 """
 import os, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SKIP = {"fence_i": "can Zifencei", "ma_data": "can truy cap lech do phan cung xu ly (loi nay bao trap)"}
+SKIP = {"fence_i": "bo nho lenh/du lieu tach rieng; chay trong cosim/", "ma_data": "can truy cap lech do phan cung xu ly (loi nay bao trap)"}
 CORES = [("single-cycle (rv32i_core.v)", "", ["rv32i_core.v"], "rv32i"),
          ("pipeline RV32I (rv32i_pipeline.v)", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
          ("pipeline RV32IM (rv32im_pipeline.v)", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im")]

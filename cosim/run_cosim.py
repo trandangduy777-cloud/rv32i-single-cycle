@@ -16,8 +16,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BASE = 0x80000000
 TOHOST = 0x80100000
-SKIP = {"ma_data": "can truy cap lech do phan cung xu ly",
-        "fence_i": "chay tu .data, chua dung duoc voi moi truong rut gon cua repo; thay bang cosim/tests/fencei.S"}
+SKIP = {"ma_data": "can truy cap lech do phan cung xu ly"}
+# test can mo rong Z (them vao -march va --isa cua Spike; chi chay tren loi co mo rong do)
+ZEXT = {"fence_i": "zifencei"}
 CACHE_FILES = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_icache.v", "rv32_dcache.v",
                "rv32_bus_arbiter.v"]
 # Zifencei: single-cycle nap moi lenh sau khi lenh truoc xong nen tu nhien dung; pipeline RV32IM xoa cache lenh va
@@ -217,10 +218,11 @@ def main():
             t = fn[:-2]
             if not fn.endswith(".S") or t in SKIP:
                 continue
-            name, elf = build_rvtest(os.path.join(d, fn), march, tmp, env)
+            m = march + ("_" + ZEXT[t] if t in ZEXT else "")
+            name, elf = build_rvtest(os.path.join(d, fn), m, tmp, env)
             if elf is None:
                 print(f"loi bien dich {name}"); sys.exit(1)
-            progs.append((name, elf, march))
+            progs.append((name, elf, m))
     # test tu viet: FENCE.I voi ma tu sua (chi chay tren loi co Zifencei)
     progs.append(build_asm(os.path.join(HERE, "tests", "fencei.S"), "rv32i_zifencei", tmp) + ("rv32i_zifencei",))
     progs.append(build_bench("bench", "rv32i", tmp) + ("rv32i",))
