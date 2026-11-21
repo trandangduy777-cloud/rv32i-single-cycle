@@ -226,11 +226,14 @@ class Gen:
         return [self.r.choice([FENCE, 0x0000100F, 0x0330000F])]
 
     def u_mret(self):
-        # auipc t,0 ; addi t,t,16 ; csrrw x0,mepc,t ; mret   -> nhay toi lenh ngay sau mret
+        # auipc t,0 ; addi t,t,20 ; csrrw x0,mepc,t ; lw t,off(x0) ; mret   -> nhay toi lenh ngay sau mret
+        # lw ngay truoc mret: khi chay qua cache (run_verify --cache), load truot lam pipeline dong bang dung luc
+        # MRET dang o EX
         t = self.r.randint(2, 31)
         return [enc_u(0, t, 0b0010111),
-                enc_i(16, t, 0, t, 0b0010011),
+                enc_i(20, t, 0, t, 0b0010011),
                 enc_i(0x341, t, 1, 0, OP_SYSTEM),
+                enc_i(self.r.randrange(0, 0x800, 4), 0, 0b010, t, 0b0000011),
                 MRET]
 
     def u_illegal(self):

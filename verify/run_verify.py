@@ -40,14 +40,24 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
     if full_pipe:                       # rv32im_pipeline can module rv32m trong rv32i_core.v
         cmd[2:2] = ["-DPIPE_FULL"]
         cmd.append(os.environ.get("RV32_CORE") or os.path.join(HERE, "..", "rv32i_core.v"))
+        if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
+            cmd[2:2] = ["-DCACHE"]
+            cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stderr)
         sys.exit("Bien dich RTL that bai")
 
 
+CACHE = False                           # --cache: chay pipeline RV32IM qua cache voi bo nho tre ngau nhien
+_seed = [0]
+
+
 def run_rtl(vvp, prog, dmem=None):
     cmd = ["vvp", vvp, f"+prog={prog}"] + ([f"+dmem={dmem}"] if dmem else [])
+    if CACHE:
+        _seed[0] += 1
+        cmd += ["+lat=6", f"+seed={_seed[0]}"]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     lines = [l for l in r.stdout.splitlines() if l.startswith("pc=")]
     timeout = "TIMEOUT" in r.stdout
@@ -243,7 +253,10 @@ M_CORE_MUTATIONS = [
 ]
 
 # Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
-PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX")] + [
+PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
+                                                             "B: doan sai nhay ve dich nham")] + [
+    # pipeline RV32IM: dich "chay tiep" la pc_next (pc + 2 voi lenh nen, pc + 4 voi lenh 32 bit)
+    ("B: doan sai nhay ve dich nham", "(idex_pred_taken ? pc_next : pc_imm)", "(idex_pred_taken ? pc_imm : pc_next)"),
     ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= redirect_pc_q;"),
     ("P: khong huy lenh o ID sau khi nhay", "idex_valid_r <= ifid_valid & ~redirect_q & ~stall;", "idex_valid_r <= ifid_valid & ~stall;"),
     ("R: lenh o EX sau redirect khong bi vo hieu", "wire        idex_valid = idex_valid_r & ~redirect_q;", "wire        idex_valid = idex_valid_r;"),
@@ -266,11 +279,11 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: CSR dung rs1 chua forward", "wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : op_a;",
      "wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : idex_rs1_val;"),
     ("X: JALR nhay khong can chinh khong trap", "(idex_jalr & jalr_target[1]) |", "1'b0 |"),
-    ("X: nhanh nhay khong can chinh khong trap", "(idex_branch & take_branch & pc_imm[1]);", "1'b0;"),
+    ("X: nhanh nhay khong can chinh khong trap", "(idex_branch & take_branch & pc_imm[1]));", "1'b0);"),
     ("X: FENCE.I bi coi la bat hop le", "wire legal_fence  = is_fence & (funct3 == 3'b000 | funct3 == 3'b001);", "wire legal_fence  = is_fence & (funct3 == 3'b000);"),
     ("X: coi funct7=1 la bat hop le", "wire legal_reg    = is_reg & (f7_zero | f7_m | (f7_alt", "wire legal_reg    = is_reg & (f7_zero | (f7_alt"),
-    ("X: M khong dong bang IF", "end else if (!(stall | ex_stall)) begin", "end else if (!stall) begin"),
-    ("X: M khong dong bang ID/EX", "end else if (ex_stall) begin\n            // lenh M dang chay hoac WFI dang cho o EX: giu nguyen ID/EX", "end else if (1'b0) begin\n            // lenh M dang chay hoac WFI dang cho o EX: giu nguyen ID/EX"),
+    ("X: M khong dong bang IF", "end else if (stall | ex_stall) begin\n            // ID hoac EX dang dung", "end else if (stall) begin\n            // ID hoac EX dang dung"),
+    ("X: M khong dong bang ID/EX", "end else if (ex_stall | frz) begin\n            // lenh M dang chay", "end else if (frz) begin\n            // lenh M dang chay"),
     ("X: M khong nhan bong bay o EX/MEM", "exmem_valid     <= idex_valid & ~ex_stall;", "exmem_valid     <= idex_valid;"),
     ("X: M dung toan hang chua forward", ".a(op_a), .b(op_b),", ".a(idex_rs1_val), .b(idex_rs2_val),"),
     ("X: LH/SH lech khong trap", "wire ld_misal = idex_load  & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) |",
@@ -329,7 +342,10 @@ if __name__ == "__main__":
     ap.add_argument("--seed0", type=int, default=1)
     ap.add_argument("--mutate", action="store_true")
     ap.add_argument("--only", default=None, help="chi chay cac loi co ten chua chuoi nay (dung voi --mutate)")
+    ap.add_argument("--cache", action="store_true",
+                    help="voi --pipem: lenh/du lieu qua cache 2x2, bo nho tre ngau nhien 1..6 chu ky")
     a = ap.parse_args()
+    CACHE = a.cache and a.pipem
     if a.pipem:
         a.pipe = True
     if a.rtl is None:
