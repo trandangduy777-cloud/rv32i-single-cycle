@@ -3,7 +3,7 @@
 
 - Dot bien trong rv32_icache.v / rv32_dcache.v / rv32_bus_arbiter.v: chay cache/tb_cache_random.v (2 cau hinh cache,
   3 seed moi cau hinh, do tre 1..6). Phai co it nhat 1 lan bao FAIL hoac het thoi gian.
-- Dot bien trong rv32im_pipeline.v (bat tay bo nho, dong bang), 2 bo kiem chung:
+- Dot bien trong rv32im_pipeline.v (bat tay bo nho, dong bang, FENCE.I), 2 bo kiem chung:
   "cosim": cosim/run_cosim.py voi 2 cau hinh co cache tren bench va bench_m (co va khong co lenh nen);
   "rand":  verify/run_verify.py --pipem --cache (40 chuong trinh ngau nhien co CSR, trap, MRET... qua cache 2 x 2,
            bo nho tre 1..6), so voi ISS Python. Phai co it nhat 1 chuong trinh lech hoac treo.
@@ -67,6 +67,12 @@ MUTATIONS = [
      "        else        trap_q <= trap_ex & ~frz;", "        else        trap_q <= trap_ex;", "rand"),
     ("pipeline: MRET chay ca khi dong bang", "rv32im_pipeline.v",
      "wire mret_ex = idex_mret & ~irq_take & ~frz;", "wire mret_ex = idex_mret & ~irq_take;", "rand"),
+    # ---- FENCE.I (Zifencei): kiem bang cosim/tests/fencei.S (ma tu sua) ----
+    ("FENCE.I khong xoa cache lenh", "rv32im_pipeline.v",
+     "    assign icache_flush = fencei_ex;", "    assign icache_flush = 1'b0;", "cosim", "tests-"),
+    ("FENCE.I khong nap lai lenh sau no", "rv32im_pipeline.v",
+     "(trap_ex | mret_ex | idex_jalr | mispredict | fencei_ex) & ~frz;",
+     "(trap_ex | mret_ex | idex_jalr | mispredict) & ~frz;", "cosim", "tests-"),
     ("pipeline: EX/MEM van chay khi dong bang", "rv32im_pipeline.v",
      "        end else if (!frz) begin\n            exmem_valid     <= idex_valid & ~ex_stall;",
      "        end else begin\n            exmem_valid     <= idex_valid & ~ex_stall;", "cosim"),
@@ -95,10 +101,10 @@ def run_tb(rep):
     return False, "tb_cache_random PASS"
 
 
-def run_cosim(rep, a):
+def run_cosim(rep, a, only="bench", core="cache"):
     try:
         r = subprocess.run([sys.executable, os.path.join(rep, "cosim", "run_cosim.py"), a.riscv_tests, "--spike",
-                            a.spike, "--only=bench", "--core=cache", "--stop-on-fail"],
+                            a.spike, f"--only={only}", f"--core={core}", "--stop-on-fail"],
                            capture_output=True, text=True, timeout=1800)
     except subprocess.TimeoutExpired:
         return True, "treo"
@@ -130,7 +136,7 @@ def main():
     a = ap.parse_args()
     killed, bad = 0, 0
     muts = [m for m in MUTATIONS if a.kind in ("all", m[4])]
-    for name, fn, old, new, how in muts:
+    for name, fn, old, new, how, *only in muts:
         src = open(os.path.join(ROOT, fn)).read()
         if src.count(old) != 1:
             print(f"  BO QUA  {name}: khong tim thay chuoi goc", flush=True)
@@ -140,7 +146,13 @@ def main():
         rep = os.path.join(tmp, "repo")
         shutil.copytree(ROOT, rep, ignore=shutil.ignore_patterns(".git", "results", "*.vcd", "*.vvp"))
         open(os.path.join(rep, fn), "w").write(src.replace(old, new))
-        caught, detail = run_tb(rep) if how == "tb" else (run_cosim(rep, a) if how == "cosim" else run_rand(rep))
+        if how == "tb":
+            caught, detail = run_tb(rep)
+        elif how == "cosim":
+            # FENCE.I: chay test tu sua ma tren moi loi pipeline RV32IM (co va khong co cache)
+            caught, detail = run_cosim(rep, a, only[0], "RV32IM") if only else run_cosim(rep, a)
+        else:
+            caught, detail = run_rand(rep)
         if caught is None:
             bad += 1
             print(f"  LOI   [{how}] {name}: {detail}", flush=True)

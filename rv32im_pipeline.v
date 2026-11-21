@@ -44,6 +44,7 @@ module rv32im_pipeline #(
     output wire [3:0]  dmem_wstrb,
     output wire        dmem_we,
     output wire        dmem_re,        // lenh o MEM la load (dia chi tren dmem_addr)
+    output wire        icache_flush,   // FENCE.I o EX: xoa cache lenh (1 chu ky); bo nho to hop: bo trong
     input  wire [31:0] dmem_rdata,
     input  wire        dmem_ready,     // 1: load/store o MEM hoan tat trong chu ky nay (load: dmem_rdata hop le)
 
@@ -169,6 +170,7 @@ module rv32im_pipeline #(
     wire is_ebreak = (instr == 32'h0010_0073);
     wire is_mret   = (instr == 32'h3020_0073);
     wire is_wfi    = (instr == 32'h1050_0073);
+    wire is_fencei = is_fence & (funct3 == 3'b001);     // Zifencei
     wire is_csr    = is_system & (funct3 != 3'b000) & (funct3 != 3'b100);
 
     // CSR co ton tai khong, co ghi duoc khong: chi phu thuoc cac bit cua lenh nen xet duoc ngay o ID
@@ -239,6 +241,7 @@ module rv32im_pipeline #(
     reg         idex_rd_we_r;
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
     reg         idex_illegal_r, idex_ecall_r, idex_ebreak_r, idex_mret_r, idex_csr_r, idex_mext_r, idex_wfi_r;
+    reg         idex_fencei_r;
     // Cac co dieu khien chi co hieu luc khi idex_valid = 1. Nho vay lenh bi huy boi redirect chi can xoa idex_valid
     // (1 flip-flop) thay vi xoa ~20 co o day, giam so flip-flop ma redirect phai toi.
     wire idex_lui = idex_lui_r & idex_valid;
@@ -271,7 +274,7 @@ module rv32im_pipeline #(
             idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
             idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
             idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
-            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0;
+            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0;
             idex_pred_taken <= 1'b0;
         end else if (ex_stall | frz) begin
             // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX
@@ -285,7 +288,7 @@ module rv32im_pipeline #(
                 idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
                 idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
                 idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
-                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0;
+                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0;
             end else begin
                 idex_pred_taken <= id_pred_taken;
                 idex_lui_r     <= is_lui & ifid_valid;
@@ -307,6 +310,7 @@ module rv32im_pipeline #(
                 idex_ebreak_r  <= is_ebreak & ifid_valid;
                 idex_mret_r    <= is_mret & ifid_valid;
                 idex_wfi_r     <= is_wfi & ifid_valid;
+                idex_fencei_r  <= is_fencei & ifid_valid;
                 idex_csr_r     <= legal_csr & ifid_valid;
                 idex_mext_r    <= (is_reg & f7_m) & ifid_valid;
             end
@@ -488,10 +492,15 @@ module rv32im_pipeline #(
     // doan sai: nhanh thuc te khac du doan. Dich khi doan sai: doan "nhay" -> chay tiep pc+4; doan "khong nhay" -> pc+imm.
     // JAL da nhay o ID nen khong con redirect o EX. redirect_pc khong phu thuoc ket qua so sanh nhanh.
     wire mispredict    = idex_branch & (take_branch ^ idex_pred_taken);
+    // FENCE.I: moi store cu hon da xong (store o MEM chua xong thi pipeline dang dong bang), nen xoa cache lenh ngay
+    // va nap lai tu lenh ke tiep; cac lenh sau FENCE.I da nap vao IF/ID bi huy boi redirect
+    wire fencei_ex     = idex_fencei_r & idex_valid & ~irq_take & ~frz;
+    assign icache_flush = fencei_ex;
     // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
-    assign redirect    = (trap_ex | mret_ex | idex_jalr | mispredict) & ~frz;
+    assign redirect    = (trap_ex | mret_ex | idex_jalr | mispredict | fencei_ex) & ~frz;
     assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
                          mret_ex ? {mepc_r, 2'b00}  :
+                         fencei_ex ? pc_next :
                          idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
 
     always @(posedge clk or negedge rst_n) begin
