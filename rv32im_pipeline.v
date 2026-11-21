@@ -16,9 +16,15 @@
 // - WFI: dung o EX (dong bang IF/ID/EX nhu lenh M) cho toi khi (mip & mie) != 0, bat ke mstatus.MIE. Ngat khong
 //   nhan tren chinh lenh WFI ma tren lenh ke tiep, nen mepc = pc cua WFI + 4.
 // - Cac tin hieu memwb_* duoc testbench doc truc tiep (tang commit) de in vet
-// Can bien dich cung rv32i_core.v (de lay module rv32m) hoac dua module rv32m vao cung file khi tong hop.
+// - Mo rong C (ENABLE_C = 1): lenh 16 bit duoc giai nen o IF (rv32c_decompress.v) thanh lenh 32 bit tuong duong, nen
+//   ID/EX/MEM/WB khong doi. pc tang 2 hoac 4; dia chi lien ket cua JAL/JALR va dich "chay tiep" khi doan sai la
+//   pc + 2 voi lenh nen. Dich nhay chi can chia het cho 2 nen khong con trap lech dia chi lenh. Bo nho lenh phai tra
+//   ve 32 bit bat dau tu dia chi imem_addr chia het cho 2 (vd. 2 bank 16 bit xen ke chan / le), vi lenh 32 bit co the
+//   nam vat qua ranh gioi tu. mtval cua lenh nen khong hop le la 16 bit goc. ENABLE_C = 0: giong het ban cu.
+// Can bien dich cung rv32i_core.v (de lay module rv32m) va rv32c_decompress.v.
 module rv32im_pipeline #(
-    parameter [31:0] RESET_PC = 32'h0000_0000   // dia chi lenh dau tien sau reset (phai chia het cho 4)
+    parameter [31:0] RESET_PC = 32'h0000_0000,  // dia chi lenh dau tien sau reset (chia het cho 4, hoac 2 khi ENABLE_C)
+    parameter        ENABLE_C = 0                // 1: ho tro lenh nen 16 bit (mo rong C)
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -64,8 +70,21 @@ module rv32im_pipeline #(
     reg  [31:0] pc;
     reg         ifid_valid;
     reg  [31:0] ifid_pc, ifid_instr;
+    reg  [31:0] ifid_raw;                  // lenh goc (16 bit nen hoac 32 bit): cho mtval va vet
+    reg         ifid_c;                    // lenh o ID la lenh nen 16 bit
 
     assign imem_addr = pc;
+
+    // giai nen o IF: lenh nen chi ton 1 tang mach to hop truoc thanh ghi IF/ID
+    wire [31:0] if_dec;
+    wire        if_dec_ill;
+    wire        if_c = (ENABLE_C != 0) && (imem_data[1:0] != 2'b11);
+    generate if (ENABLE_C) begin : g_rvc
+        rv32c_decompress u_rvc (.in(imem_data), .out(if_dec), .illegal(if_dec_ill));
+    end else begin : g_no_rvc
+        assign if_dec = imem_data;
+        assign if_dec_ill = 1'b0;
+    end endgenerate
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -78,7 +97,7 @@ module rv32im_pipeline #(
             pc         <= id_target;
             ifid_valid <= 1'b0;
         end else if (!(stall | ex_stall)) begin
-            pc         <= pc + 32'd4;
+            pc         <= pc + (if_c ? 32'd2 : 32'd4);
             ifid_valid <= 1'b1;
         end
     end
@@ -88,7 +107,9 @@ module rv32im_pipeline #(
     always @(posedge clk) begin
         if (!(stall | ex_stall)) begin
             ifid_pc    <= pc;
-            ifid_instr <= imem_data;
+            ifid_instr <= if_dec;             // lenh nen khong hop le -> 0 (cung bi bo giai ma 32 bit bao illegal)
+            ifid_raw   <= if_c ? {16'd0, imem_data[15:0]} : imem_data;
+            ifid_c     <= if_c;
         end
     end
 
@@ -171,7 +192,8 @@ module rv32im_pipeline #(
     // ---- Du doan nhanh o ID ----
     localparam BHT_BITS = 6;                                  // 64 muc x 2 bit
     reg  [1:0]  bht [0:(1<<BHT_BITS)-1];                      // 00/01: khong nhay, 10/11: nhay
-    wire [BHT_BITS-1:0] bht_idx = ifid_pc[BHT_BITS+1:2];
+    // voi lenh nen, hai nhanh co the nam trong cung 1 tu: chi so lay tu bit 1
+    wire [BHT_BITS-1:0] bht_idx = (ENABLE_C != 0) ? ifid_pc[BHT_BITS:1] : ifid_pc[BHT_BITS+1:2];
     wire        id_pred_taken = legal_branch & bht[bht_idx][1];
     assign id_target   = ifid_pc + imm;                       // imm da chon imm_b / imm_j theo opcode
     // khi EX cung redirect thi redirect (EX) thang nho thu tu uu tien trong khoi IF, nen khong can dieu kien them o day
@@ -196,6 +218,7 @@ module rv32im_pipeline #(
     reg  [4:0]  idex_rs1, idex_rs2, idex_rd;
     reg  [2:0]  idex_funct3;
     reg         idex_f7_5;
+    reg         idex_c;                                       // lenh o EX la lenh nen: pc ke tiep = pc + 2
     reg         idex_lui_r, idex_auipc_r, idex_jal_r, idex_jalr_r, idex_branch_r, idex_load_r, idex_store_r, idex_imm_op_r, idex_reg_op_r;
     reg         idex_rd_we_r;
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
@@ -279,7 +302,8 @@ module rv32im_pipeline #(
     always @(posedge clk) begin
         if (!ex_stall) begin
             idex_pc      <= ifid_pc;
-            idex_instr   <= ifid_instr;
+            idex_instr   <= ifid_raw;      // chi dung cho dia chi CSR (lenh 32 bit), mtval va vet
+            idex_c       <= ifid_c;
             idex_rs1_val <= rf_rs1;
             idex_rs2_val <= rf_rs2;
             idex_imm     <= imm;
@@ -363,6 +387,7 @@ module rv32im_pipeline #(
     end
 
     wire [31:0] pc_imm      = idex_pc + idex_imm;                       // dich cua nhanh va JAL
+    wire [31:0] pc_next     = idex_pc + (idex_c ? 32'd2 : 32'd4);       // lenh ke tiep tuan tu
     wire [31:0] jalr_target = (op_a + idex_imm) & 32'hFFFF_FFFE;
 
     // ---- CSR (doc/ghi o EX, dung thu tu chuong trinh) ----
@@ -381,7 +406,7 @@ module rv32im_pipeline #(
     always @* begin
         case (csr_addr)
             12'h300: csr_rdata = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
-            12'h301: csr_rdata = 32'h4000_0100;
+            12'h301: csr_rdata = 32'h4000_0100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);   // MXL = 32, I (va C khi ENABLE_C)
             12'h304: csr_rdata = {20'b0, mie_meie, 3'b0, mie_mtie, 3'b0, mie_msie, 3'b0};
             12'h305: csr_rdata = {mtvec_r, 2'b00};
             12'h340: csr_rdata = mscratch;
@@ -417,9 +442,10 @@ module rv32im_pipeline #(
     wire csr_write = idex_csr & csr_we_req & ~irq_take;     // idex_csr chi bat cho CSR hop le
 
     // ---- trap ----
-    // dia chi nhay phai chia het cho 4 (khong co lenh nen C)
-    wire misaligned = (idex_jal & pc_imm[1]) | (idex_jalr & jalr_target[1]) |
-                      (idex_branch & take_branch & pc_imm[1]);
+    // dia chi nhay phai chia het cho 4 khi khong co lenh nen; voi C chi can chia het cho 2 (luon dung: imm chan,
+    // JALR xoa bit 0) nen khong bao gio lech
+    wire misaligned = (ENABLE_C == 0) & ((idex_jal & pc_imm[1]) | (idex_jalr & jalr_target[1]) |
+                                         (idex_branch & take_branch & pc_imm[1]));
     wire [31:0] bad_target = idex_jal ? pc_imm : (idex_jalr ? jalr_target : pc_imm);
 
     // load/store lech dia chi: chi can 2 bit thap cua dia chi hieu dung (cong 2 bit, khong cho adder 32 bit)
@@ -449,7 +475,7 @@ module rv32im_pipeline #(
     assign redirect    = trap_ex | mret_ex | idex_jalr | mispredict;
     assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
                          mret_ex ? {mepc_r, 2'b00}  :
-                         idex_jalr ? jalr_target : (idex_pred_taken ? idex_pc + 32'd4 : pc_imm);
+                         idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) redirect_q <= 1'b0;
@@ -514,7 +540,7 @@ module rv32im_pipeline #(
     // ket qua cua tang EX (voi load/store: dia chi)
     wire [31:0] ex_result = idex_lui              ? idex_imm        :
                             idex_auipc            ? pc_imm          :
-                            (idex_jal | idex_jalr)? idex_pc + 32'd4 :
+                            (idex_jal | idex_jalr)? pc_next         :
                             idex_csr              ? csr_rdata       :
                             idex_mext             ? m_result        :
                             (idex_load | idex_store) ? (op_a + idex_imm) :
@@ -531,7 +557,7 @@ module rv32im_pipeline #(
         end else begin
             exmem_bupd   <= idex_valid & idex_branch;
             exmem_btaken <= take_branch;
-            exmem_bidx   <= idex_pc[BHT_BITS+1:2];
+            exmem_bidx   <= (ENABLE_C != 0) ? idex_pc[BHT_BITS:1] : idex_pc[BHT_BITS+1:2];
             if (exmem_bupd) begin
                 if (exmem_btaken) begin if (bht[exmem_bidx] != 2'b11) bht[exmem_bidx] <= bht[exmem_bidx] + 2'd1; end
                 else              begin if (bht[exmem_bidx] != 2'b00) bht[exmem_bidx] <= bht[exmem_bidx] - 2'd1; end
