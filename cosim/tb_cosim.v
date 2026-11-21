@@ -2,7 +2,8 @@
 // Testbench cho so vet voi Spike: chuong trinh dat o 0x8000_0000 (giong ban do bo nho mac dinh cua Spike),
 // loi khoi dong o RESET_PC = 0x8000_0000, bo nho lenh va du lieu dung chung 256 KB (dia chi [17:2]).
 // Moi lenh hoan tat in 1 dong:  pc=.. ins=.. rd=.. val=.. st=.. addr=.. data=.. strb=..
-// Thanh ghi x1-x31 duoc dat 0 truoc khi chay nhu Spike. Ket thuc khi chuong trinh ghi vao TOHOST (0x8010_0000). Chon loi: -DSC (single-cycle), -DPIPE, -DPIPE_FULL.
+// Thanh ghi x1-x31 duoc dat 0 truoc khi chay nhu Spike. Ket thuc khi chuong trinh ghi vao TOHOST (0x8010_0000). Chon loi: -DSC (single-cycle), -DPIPE,
+// -DPIPE_FULL, -DPIPE_FULL -DRVC (pipeline RV32IM co ENABLE_C = 1).
 // Tham so: +prog=<file hex>
 module tb_cosim;
     reg clk = 0;
@@ -17,7 +18,11 @@ module tb_cosim;
     wire        dmem_we;
 
 `ifdef PIPE_FULL
+`ifdef RVC
+    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1)) dut (
+`else
     rv32im_pipeline #(.RESET_PC(BASE)) dut (
+`endif
 `elsif PIPE
     rv32i_pipeline #(.RESET_PC(BASE)) dut (
 `else
@@ -34,7 +39,9 @@ module tb_cosim;
     );
 
     reg [31:0] mem [0:65535];
-    assign imem_data  = mem[imem_addr[17:2]];
+    // doc lenh tai dia chi chia het cho 2: lenh 32 bit co the vat qua ranh gioi tu (mo rong C)
+    wire [15:0] iw = imem_addr[17:2];
+    assign imem_data  = imem_addr[1] ? {mem[iw + 16'd1][15:0], mem[iw][31:16]} : mem[iw];
     assign dmem_rdata = mem[dmem_addr[17:2]];
 
     always @(posedge clk) begin
@@ -48,6 +55,9 @@ module tb_cosim;
             if (dmem_wstrb[3]) mem[dmem_addr[17:2]][31:24] <= dmem_wdata[31:24];
         end
     end
+
+    integer    cyc = 0;
+    always @(posedge clk) if (rst_n) cyc <= cyc + 1;
 
     reg        rd_w;
     reg [31:0] mask;
@@ -63,7 +73,10 @@ module tb_cosim;
                      dmem_we, dmem_we ? dmem_addr : 32'd0, dmem_we ? (dmem_wdata & mask) : 32'd0,
                      dmem_we ? dmem_wstrb : 4'd0);
             n = n + 1;
-            if (dmem_we && dmem_addr == TOHOST) $finish;
+            if (dmem_we && dmem_addr == TOHOST) begin
+                $display("DONE cycles=%0d instr=%0d", cyc, n);
+                $finish;
+            end
         end
     end
 `else
@@ -75,7 +88,10 @@ module tb_cosim;
                      dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
                      dut.memwb_tst, dut.memwb_taddr, dut.memwb_tdata, dut.memwb_tstrb);
             n = n + 1;
-            if (dut.memwb_tst && dut.memwb_taddr == TOHOST) $finish;
+            if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
+                $display("DONE cycles=%0d instr=%0d", cyc, n);
+                $finish;
+            end
         end
     end
 `endif

@@ -43,6 +43,9 @@ jobs:
           vvp irq.vvp | tee irq.log && grep -q "\[IRQ\] PASS" irq.log
           python3 irq/mutate_irq.py
 
+      - name: Bo giai nen lenh C, so ca 49.152 ma lenh 16 bit voi GNU objdump
+        run: python3 rvc/check_decompress.py
+
       - name: riscv-tests (rv32ui, rv32um)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
@@ -84,10 +87,14 @@ jobs:
           make -j$(nproc)
           make install
 
-      - name: So vet voi Spike (riscv-tests, bench, bench_m; 3 loi)
+      - name: So vet voi Spike (riscv-tests, bench, bench_m; 4 cau hinh loi, co va khong co lenh C)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
+
+      - name: Mutation test mo rong C (chi khi bam Run workflow)
+        if: github.event_name == 'workflow_dispatch'
+        run: python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
 
   mutation:
     if: github.event_name == 'workflow_dispatch'
