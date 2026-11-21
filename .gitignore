@@ -1,0 +1,17 @@
+# Waveforms, binaries and simulator output
+*.vcd
+*.vvp
+*.elf
+__pycache__/
+*.pyc
+
+# Flow output
+runs/
+*.log
+
+# Gate-level simulation: netlist copied from a flow run and build output
+gls/*.nl.v
+gls/build/
+
+# Benchmark: build.sh tao lai *.bin; bench.hex va bench_m.hex duoc giu de chay khong can trinh bien dich
+bench/*.bin

@@ -1,0 +1,114 @@
+# Kiem chung tu dong moi lan push: testbench tu kiem tra, so vet voi ISS tren chuong trinh ngau nhien, ngat,
+# so tung lenh voi Spike (job cosim),
+# bo test ISA chinh thuc riscv-tests va benchmark (so checksum giua cac loi).
+# Mutation test chay lau (10-20 phut) nen chi chay khi bam "Run workflow" trong tab Actions.
+name: verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  simulate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cai iverilog va trinh bien dich RISC-V
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog gcc-riscv64-unknown-elf
+
+      - name: Testbench tu kiem tra (3 loi)
+        run: |
+          iverilog -g2012 -DNO_VCD -o sc tb_rv32i_core.v rv32i_core.v
+          vvp sc | tee sc.log && grep -q "\[TB\] PASS" sc.log
+          iverilog -g2012 -DPIPE -DNO_VCD -o p tb_rv32i_pipeline.v rv32i_pipeline.v
+          vvp p +prog=prog_base.hex | tee p.log && grep -q "\[TB\] PASS" p.log
+          iverilog -g2012 -DPIPE_FULL -DNO_VCD -o pm tb_rv32i_pipeline.v rv32im_pipeline.v rv32i_core.v
+          vvp pm +prog=prog.hex | tee pm.log && grep -q "\[TB\] PASS" pm.log
+
+      - name: So vet tung lenh voi ISS (chuong trinh ngau nhien)
+        working-directory: verify
+        run: |
+          python3 run_verify.py --n 60
+          python3 run_verify.py --pipe --n 60
+          python3 run_verify.py --pipem --n 60
+
+      - name: Ngat timer va ngat ngoai (pipeline RV32IM) va mutation test phan ngat
+        run: |
+          iverilog -g2012 -o irq.vvp irq/tb_irq.v rv32im_pipeline.v rv32i_core.v rv32_mtimer.v
+          vvp irq.vvp | tee irq.log && grep -q "\[IRQ\] PASS" irq.log
+          python3 irq/mutate_irq.py
+
+      - name: Bo giai nen lenh C, so ca 49.152 ma lenh 16 bit voi GNU objdump
+        run: python3 rvc/check_decompress.py
+
+      - name: riscv-tests (rv32ui, rv32um)
+        run: |
+          git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
+          python3 riscv-tests/run_riscv_tests.py /tmp/riscv-tests
+
+      - name: Benchmark (CPI, so checksum giua cac loi)
+        run: sh bench/run_bench.sh
+
+  cosim:
+    # So tung lenh voi Spike. Spike duoc build tu ma nguon (ghim phien ban) va luu cache giua cac lan chay.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cai iverilog, trinh bien dich RISC-V va dtc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog gcc-riscv64-unknown-elf device-tree-compiler
+
+      - name: Cache Spike
+        id: cache-spike
+        uses: actions/cache@v4
+        with:
+          path: ~/spike
+          key: spike-${{ env.SPIKE_SHA }}-ubuntu-24.04
+
+      - name: Build Spike
+        if: steps.cache-spike.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
+          cd /tmp/spike-src
+          git checkout $SPIKE_SHA
+          git submodule update --init --depth 1
+          mkdir build && cd build
+          ../configure --prefix=$HOME/spike
+          make -j$(nproc)
+          make install
+
+      - name: So vet voi Spike (riscv-tests, bench, bench_m; 4 cau hinh loi, co va khong co lenh C)
+        run: |
+          git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
+          python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
+
+      - name: Mutation test mo rong C (chi khi bam Run workflow)
+        if: github.event_name == 'workflow_dispatch'
+        run: python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
+
+  mutation:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cai iverilog
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog
+      - name: Mutation test (3 loi)
+        working-directory: verify
+        run: |
+          python3 run_verify.py --mutate
+          python3 run_verify.py --pipe --mutate
+          python3 run_verify.py --pipem --mutate
