@@ -36,8 +36,8 @@ MUTATIONS = [
      "trap_cause = irq_meip ? 32'h8000_000B : (irq_msip ? 32'h8000_0003 : 32'h8000_0007);",
      "trap_cause = irq_meip ? 32'h8000_000B : (irq_mtip ? 32'h8000_0007 : 32'h8000_0003);"),
     ("nhan ngat ca khi EX khong co lenh hop le",
-     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r;",
-     "wire irq_take  = irq_any & ~idex_mext_r & ~idex_wfi_r;"),
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;",
+     "wire irq_take  = irq_any & ~idex_mext_r & ~idex_wfi_r & ~frz;"),
     ("MRET khong khoi phuc MIE",
      "mstatus_mie  <= mstatus_mpie;", "mstatus_mie  <= 1'b0;"),
     ("WFI khong dung (chay nhu NOP)",
@@ -45,8 +45,8 @@ MUTATIONS = [
     ("WFI thuc day khi co ngat dang cho du bi che boi mie",
      "assign wfi_wait = idex_wfi & ~irq_pend;", "assign wfi_wait = idex_wfi & ~(mip_mtip | mip_msip | mip_meip);"),
     ("ngat nhan tren chinh lenh WFI (mepc = WFI)",
-     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r;",
-     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r;"),
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;",
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~frz;"),
 ]
 
 
