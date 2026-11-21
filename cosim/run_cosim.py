@@ -17,11 +17,17 @@ ROOT = os.path.dirname(HERE)
 BASE = 0x80000000
 TOHOST = 0x80100000
 SKIP = {"fence_i": "can Zifencei", "ma_data": "can truy cap lech do phan cung xu ly"}
+CACHE_FILES = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_icache.v", "rv32_dcache.v",
+               "rv32_bus_arbiter.v"]
 CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im"),
          ("pipeline RV32I", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
          ("pipeline RV32IM", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im"),
          ("pipeline RV32IMC", "-DPIPE_FULL -DRVC", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
-          "rv32imc")]
+          "rv32imc"),
+         # co cache lenh/du lieu va bo nho chung co do tre ngau nhien
+         ("RV32IMC + cache 16x4, tre 1-4", "-DPIPE_FULL -DRVC -DCACHE", CACHE_FILES, "rv32imc", ["+lat=4", "+seed=1"]),
+         ("RV32IMC + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2", CACHE_FILES,
+          "rv32imc", ["+lat=8", "+seed=7"])]
 
 
 def sh(cmd, **kw):
@@ -72,7 +78,7 @@ def norm_store(addr, size, value):
     return (addr, size, value & ((1 << (8 * size)) - 1))
 
 
-RTL_RE = re.compile(r"pc=(\w+) ins=(\w+) rd=(\d+) val=(\w+) st=(\d) addr=(\w+) data=(\w+) strb=(\w)")
+RTL_RE = re.compile(r"pc=(\w+) ins=(\w+) rd=(\w+) val=(\w+) st=(\w) addr=(\w+) data=(\w+) strb=(\w)")
 
 
 def rtl_trace(lines):
@@ -82,8 +88,14 @@ def rtl_trace(lines):
         if not m:
             continue
         pc, ins, rd, val, st, addr, data, strb = m.groups()
-        pc, ins, rd, val, addr, data, strb = int(pc, 16), int(ins, 16), int(rd), int(val, 16), \
-            int(addr, 16), int(data, 16), int(strb, 16)
+        try:
+            pc, ins, rd, val, addr, data, strb = int(pc, 16), int(ins, 16), int(rd), int(val, 16), \
+                int(addr, 16), int(data, 16), int(strb, 16)
+            if st not in ("0", "1"):
+                raise ValueError(st)
+        except ValueError:                     # gia tri X/Z trong RTL: chac chan lech
+            out.append((-1, 0, 0, 0, l.strip()))
+            break
         s = None
         if st == "1":
             off = (strb & -strb).bit_length() - 1
@@ -136,6 +148,8 @@ def spike_trace(path):
 
 def fmt(e):
     pc, ins, rd, val, s = e
+    if pc < 0:
+        return f"gia tri X/Z: {s}"
     st = f" store[{s[0]:08x}]({s[1]}B)={s[2]:x}" if s else ""
     return f"pc={pc:08x} ins={ins:08x}" + (f" x{rd}={val:08x}" if rd else "") + st
 
@@ -193,15 +207,15 @@ def main():
         progs = [p for p in progs if a.only in p[0]]
 
     sims = []
-    for k, (title, flag, files, arch) in enumerate(c for c in CORES if a.core in c[0]):
+    for k, (title, flag, files, arch, *plus) in enumerate(c for c in CORES if a.core in c[0]):
         vvp = os.path.join(tmp, f"sim{k}.vvp")
         r = sh(["iverilog", "-g2012", "-o", vvp] + flag.split() + [os.path.join(HERE, "tb_cosim.v")] +
                [os.path.join(ROOT, f) for f in files])
         if r.returncode:
             print(r.stderr); sys.exit(1)
-        sims.append((title, vvp, arch))
+        sims.append((title, vvp, arch, plus[0] if plus else []))
 
-    fails, n_instr = 0, {t: 0 for t, _, _ in sims}
+    fails, n_instr = 0, {t: 0 for t, _, _, _ in sims}
     for name, elf, march in progs:
         log = elf[:-4] + ".spike.log"
         try:
@@ -215,10 +229,10 @@ def main():
         hexf = elf[:-4] + ".hex"
         to_hex(elf, hexf)
         res = []
-        for title, vvp, arch in sims:
+        for title, vvp, arch, plus in sims:
             if not set(march[4:]) <= set(arch[4:]):      # chuong trinh dung mo rong ma loi khong co
                 continue
-            out = sh(["vvp", "-n", vvp, f"+prog={hexf}"], timeout=600).stdout.splitlines()
+            out = sh(["vvp", "-n", vvp, f"+prog={hexf}"] + plus, timeout=600).stdout.splitlines()
             err = compare(ref, rtl_trace(out))
             if err:
                 fails += 1
