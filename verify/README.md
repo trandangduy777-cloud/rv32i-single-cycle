@@ -23,6 +23,8 @@ Kiểm chứng pipeline (chỉ RV32I thuần, in vết ở tầng WB bằng `tb_
 python3 run_verify.py --pipe                   # 200 chương trình ngẫu nhiên + chương trình định hướng
 python3 run_verify.py --pipe --mutate          # 28 lỗi hazard/forwarding/flush/dự đoán nhánh chèn cố ý
 ```
+Thêm `--cache` (chỉ với `--pipem`): bộ nhớ lệnh và dữ liệu đi qua `rv32_icache` / `rv32_dcache` 2 dòng × 2 từ, bộ nhớ trễ ngẫu nhiên 1-6 chu kỳ, nên lệnh CSR, trap, MRET rơi vào lúc pipeline đang đóng băng chờ bộ nhớ.
+
 Pipeline đầy đủ (RV32IM + CSR + trap; chương trình ngẫu nhiên có thêm đọc/ghi `mie`, `mip`, chân ngắt nối 0, ngắt được kiểm riêng trong `../irq/`):
 ```
 python3 run_verify.py --pipem
