@@ -14,6 +14,7 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 \*\* Đo trước khi thêm ngắt và WFI (thêm 8 flip-flop cùng logic chọn mcause và dừng WFI, chưa chạy lại flow), với `ENABLE_C = 0`.
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
+- **Cache và bộ nhớ có độ trễ**: pipeline RV32IM có bắt tay bộ nhớ (`imem_ready`, `dmem_ready`), cache lệnh và cache dữ liệu ánh xạ trực tiếp, bộ phân xử bus chung; chạy đúng từng lệnh so với Spike với bộ nhớ trễ ngẫu nhiên 1-8 chu kỳ mỗi từ.
 - **Lệnh nén C** (tham số `ENABLE_C` của pipeline RV32IM): giải nén ở IF nên ID/EX/MEM/WB không đổi; mã của benchmark nhỏ đi khoảng 29 % mà số chu kỳ giữ nguyên. Bộ giải nén được so với GNU objdump trên toàn bộ 49.152 mã lệnh 16 bit.
 - **Ngắt**: ngắt timer, ngắt phần mềm (khối `mtime`/`mtimecmp`/`msip` kiểu CLINT) và ngắt ngoài cho pipeline RV32IM, nhận chính xác ở tầng EX, cùng lệnh `WFI`; testbench riêng cho ngắt xen vào giữa vòng lặp nhân/chia/load/store hơn 300 lần, kèm 16 đột biến phần ngắt và WFI đều bị bắt.
 - **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, so từng lệnh với Spike (trình mô phỏng chuẩn của RISC-V) trên riscv-tests và benchmark, riscv-tests chính thức (rv32ui, rv32um), mutation test (42 / 28 / 66 lỗi chèn cố ý đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push.
@@ -42,6 +43,8 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `tb_rv32i_pipeline.v` | Testbench tự kiểm tra cho pipeline, nạp `prog_base.hex` |
 | `rv32im_pipeline.v` | Pipeline đầy đủ: RV32IM + CSR + trap + ngắt + WFI (dùng module `rv32m` trong `rv32i_core.v`) |
 | `rv32c_decompress.v` | Bộ giải nén lệnh RV32C (16 bit → 32 bit), dùng ở IF của pipeline RV32IM khi `ENABLE_C = 1` |
+| `rv32_icache.v`, `rv32_dcache.v`, `rv32_bus_arbiter.v` | Cache lệnh, cache dữ liệu (ghi xuyên) và bộ phân xử bus cho pipeline RV32IM |
+| `cache/` | Kiểm chứng cache: testbench ngẫu nhiên, mutation test, đo hiệu năng (xem mục Cache) |
 | `rvc/` | Kiểm chứng lệnh nén: so bộ giải nén với objdump trên 49.152 mã lệnh, mutation test (xem mục Mở rộng C) |
 | `rv32_mtimer.v` | Bộ đếm `mtime`/`mtimecmp` 64 bit và thanh ghi `msip`, ánh xạ bộ nhớ, sinh ngắt timer và ngắt phần mềm |
 | `irq/` | Kiểm chứng ngắt và WFI: chương trình `irq_test.S`, testbench `tb_irq.v`, mutation test `mutate_irq.py` (xem mục Ngắt) |
@@ -113,6 +116,43 @@ Kết quả đúng: `[TB] PASS sau 2423 chu ky`.
 - Truy cập CSR không tồn tại, hoặc ghi vào CSR chỉ đọc, là lệnh bất hợp lệ.
 - Giải mã chặt: các trường `funct7`/`funct3`/`rd`/`rs1` sai giá trị quy định đều gây trap.
 - Ngắt chỉ có ở `rv32im_pipeline.v` (xem mục Ngắt). `FENCE` giữ vai trò NOP (đúng với lõi in-order, bộ nhớ đồng bộ một cổng). Bản `rv32i_pipeline.v` là RV32I thuần, không có trap nên không kiểm tra căn chỉnh; chương trình test của nó chỉ truy cập đúng căn chỉnh.
+
+## Cache và bộ nhớ có độ trễ (pipeline RV32IM)
+Mặc định pipeline nối với bộ nhớ tổ hợp (`imem_ready = dmem_ready = 1`, giống hệt bản cũ). Để nối với bộ nhớ thật có độ trễ, lõi có giao tiếp bắt tay và repo có sẵn 3 khối:
+
+- **Bắt tay ở lõi** (`rv32im_pipeline.v`):
+  - `imem_ready = 0`: IF giữ pc và đưa bong bóng vào ID; redirect vẫn đổi pc được trong lúc chờ.
+  - `dmem_ready = 0` khi lệnh ở MEM đang load (`dmem_re`) hoặc store (`dmem_we`): **toàn bộ pipeline đóng băng** (`frz`): pc, IF/ID, ID/EX, EX/MEM và MEM/WB giữ nguyên. Một tín hiệu đóng băng chung cho mọi tầng, thay vì chỉ dừng các tầng trước MEM, nên forwarding, bypass và các tín hiệu chọn tính sẵn ở ID không phải xử lý trường hợp mới.
+  - Trong lúc đóng băng, mọi tác dụng của lệnh ở EX bị chặn: redirect, trap, ghi CSR, `MRET`, nhận ngắt, cập nhật bảng đếm nhánh. Redirect đã đăng ký mà IF chưa dùng tới cũng được giữ. Lệnh ở EX được xét lại khi pipeline chạy tiếp.
+  - WB ghi lại cùng giá trị mỗi chu kỳ đóng băng (vô hại); `wb_commit` đánh dấu đúng 1 chu kỳ cho mỗi lệnh hoàn tất, testbench in vết theo tín hiệu này.
+- **`rv32_icache.v`**: ánh xạ trực tiếp, `LINES` dòng × `WORDS` từ. Trả 32 bit tại địa chỉ chia hết cho 2 trong cùng chu kỳ khi trúng; với lệnh nén, cửa sổ 32 bit có thể nằm vắt qua 2 dòng nên cả 2 dòng phải có mặt. Có cổng `flush` (dòng đang nạp khi bị flush sẽ không được đánh dấu valid).
+- **`rv32_dcache.v`**: ánh xạ trực tiếp, ghi xuyên (write-through), không cấp phát khi ghi. Load trúng: không tốn chu kỳ. Vùng không cacheable (`CMASK`/`CBASE`, vd. thiết bị ngoại vi, TOHOST) đọc/ghi thẳng qua bus. Store luôn đi qua bus và cập nhật dòng nếu đang có.
+- **`rv32_bus_arbiter.v`**: 2 cache dùng chung 1 bus tới bộ nhớ; ưu tiên cache dữ liệu (lệnh ở MEM đang đóng băng cả pipeline), giữ quyền bus tới khi bộ nhớ trả lời.
+
+Hiệu năng (`cache/perf_cache.py`, bản biên dịch có lệnh nén, cache lệnh và dữ liệu cùng kích thước, mỗi từ trên bus mất ngẫu nhiên 1..N chu kỳ):
+
+| Cấu hình | `bench` CPI (N = 1 / 4 / 8) | `bench_m` CPI (N = 1 / 4 / 8) | Trượt I / D (`bench`) |
+|---|---|---|---|
+| Bộ nhớ lý tưởng, không cache | 1,32 | 5,00 | - |
+| Cache 4 dòng × 4 từ (64 B mỗi cache) | 1,94 / 2,37 / 2,95 | 5,62 / 6,04 / 6,59 | 853 / 802 |
+| Cache 16 × 4 (256 B) | 1,55 / 1,71 / 1,94 | 5,14 / 5,24 / 5,37 | 40 / 136 |
+| Cache 64 × 4 (1 KB) | 1,54 / 1,70 / 1,91 | 5,06 / 5,10 / 5,15 | 34 / 106 |
+
+- Từ 64 B lên 256 B mỗi cache, số lần trượt của `bench` giảm khoảng 10 lần; lên 1 KB gần như chỉ còn trượt bắt buộc (lần đầu chạm vào dòng).
+- Phần còn lại so với bộ nhớ lý tưởng chủ yếu do ghi xuyên: mỗi store chờ bộ nhớ trả lời (chưa có bộ đệm ghi), và mỗi lần nạp dòng tốn `WORDS` lần truy cập bus.
+
+Kiểm chứng (`cache/`, `cosim/`):
+- **So vết với ISS trên chương trình ngẫu nhiên qua cache** (`verify/run_verify.py --pipem --cache`): bộ nhớ lệnh và dữ liệu đi qua cache 2 dòng × 2 từ với độ trễ 1-6, nên lệnh CSR, trap, `MRET`, lệnh M... của chương trình ngẫu nhiên rơi vào đúng lúc pipeline đang đóng băng. Đây là chỗ Spike cosim không phủ được: riscv-tests và benchmark gần như không có CSR hay trap ngay sau một load trượt cache. Bộ sinh chương trình đặt thêm 1 lệnh `lw` ngay trước mỗi `MRET` để có tình huống này.
+- **So vết với Spike**: thêm 2 cấu hình lõi RV32IMC có cache: 16 × 4 với độ trễ 1-4, và cache rất nhỏ 2 dòng × 2 từ với độ trễ 1-8 (xung đột dòng liên tục, lệnh nén vắt qua dòng). Cả 101 chương trình khớp Spike từng lệnh ở cả hai cấu hình.
+- **`cache/tb_cache_random.v`**: kiểm tra riêng 2 cache và bộ phân xử, không cần CPU. Load/store ngẫu nhiên (byte, half, word) vào vùng cacheable, vùng không cacheable và vùng thiết bị (giá trị tự tăng mỗi chu kỳ, load phải đi qua bus và trả đúng giá trị bus đọc về); ghi vào vùng mã rồi flush cache lệnh như `FENCE.I`; địa chỉ lệnh đổi ngẫu nhiên cả khi cache đang nạp. So với mô hình tham chiếu ở mỗi load, mỗi lần cache lệnh trả lệnh, và so toàn bộ bộ nhớ ở cuối. Chạy 3 kích thước cache × 3 seed trong GitHub Actions.
+- **`cache/mutate_cache.py`**: 20 đột biến, đều bị bắt. 11 đột biến trong 2 cache và bộ phân xử (không so tag, cửa sổ lệnh nén sai, flush lúc đang nạp vẫn đánh dấu valid, store không cập nhật dòng hoặc bỏ qua `wstrb`, cache cả vùng thiết bị, bus ghi sai byte, không giữ quyền bus...) bị `tb_cache_random.v` bắt; 4 đột biến bắt tay ở lõi bị so vết Spike bắt; 5 đột biến cơ chế đóng băng (IF/ID hoặc ID/EX vẫn đổi, ghi CSR, trap, `MRET` lúc đóng băng) bị chương trình ngẫu nhiên qua cache bắt. Lúc đầu có 2 đột biến không bị bắt: một cái là đột biến tương đương (trường hợp không thể xảy ra) nên được thay; cái kia lộ ra là chương trình ngẫu nhiên chưa bao giờ có `MRET` lúc đóng băng, nên bộ sinh chương trình được sửa như trên.
+
+```
+python3 cosim/run_cosim.py <thư mục riscv-tests> --core=cache
+iverilog -g2012 -DL=4 -DW=2 -o cr.vvp cache/tb_cache_random.v rv32_icache.v rv32_dcache.v rv32_bus_arbiter.v && vvp cr.vvp +seed=1
+python3 cache/perf_cache.py
+python3 cache/mutate_cache.py <thư mục riscv-tests>
+```
 
 ## Mở rộng C: lệnh nén 16 bit (pipeline RV32IM)
 Bật bằng tham số `ENABLE_C = 1` của `rv32im_pipeline`; mặc định 0 nên phần cứng và mọi số liệu flow cũ không đổi.
@@ -352,6 +392,8 @@ riscv-tests chỉ tự báo PASS/FAIL ở cuối, và ISS Python do chính mình
 | Pipeline RV32I | 41 (rv32ui, bench) | 44.986 |
 | Pipeline RV32IM | 50 | 61.576 |
 | Pipeline RV32IM, `ENABLE_C = 1` | 101 (50 không C, 51 có C) | 123.340 |
+| Như trên + cache 16 × 4, bộ nhớ trễ 1-4 | 101 | 123.340 |
+| Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 101 | 123.340 |
 
 - Đã kiểm tra bộ so bắt được lỗi: bỏ bypass WB → ID của rs2 trong pipeline RV32IM thì cả `bench` và `bench_m` lệch ngay, và báo đúng lệnh store đầu tiên ghi sai giá trị.
 - Spike được build từ mã nguồn, ghim phiên bản (`7d1ee24`), và lưu cache trong GitHub Actions (job `cosim`).
@@ -393,6 +435,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 - JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
 - Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song
 - Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chưa chạy trên Spike và chưa so với Spike khi có ngắt
+- Cache chưa có bộ đệm ghi, chưa set-associative, chưa chạy flow; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
 - Lệnh nén C chỉ có ở pipeline RV32IM và chưa chạy flow; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
