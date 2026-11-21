@@ -150,7 +150,8 @@ Kiểm chứng (`cache/`, `cosim/`):
 - **`FENCE.I` (Zifencei)**: ở EX, `FENCE.I` phát `icache_flush` (xoá mọi dòng của cache lệnh, kể cả dòng đang nạp dở) và redirect tới lệnh kế tiếp, nên các lệnh sau nó đã nằm trong IF/ID bị huỷ và nạp lại. Mọi store cũ hơn đã xong (store ở MEM chưa xong thì pipeline đang đóng băng, `FENCE.I` chưa chạy), và cache dữ liệu ghi xuyên nên bộ nhớ đã có mã mới. Chi phí: 3 chu kỳ redirect cộng các lần nạp lại cache.
   - Kiểm chứng bằng `cosim/tests/fencei.S` (tự viết, so từng lệnh với Spike): 24 vòng, mỗi vòng sửa lệnh **ngay sau** `FENCE.I` (đã bị pipeline nạp trước) và sửa một hàm đang nằm trong cache lệnh rồi gọi. Chạy trên single-cycle và 4 cấu hình pipeline RV32IM (có/không lệnh C, có/không cache); pipeline RV32I không được chạy vì không hỗ trợ Zifencei.
   - Bỏ xoá cache trong `FENCE.I` thì 2 cấu hình có cache lệch Spike ở lệnh thứ 16; bỏ redirect thì 2 cấu hình không cache lệch ngay lệnh đó. Cả 2 đột biến có trong `cache/mutate_cache.py` (nay 22 đột biến).
-  - Test `fence_i` của riscv-tests vẫn bỏ qua: nó chạy mã đặt trong `.data`, chưa dùng được với môi trường rút gọn `riscv-tests/riscv_test.h` của repo (Spike cũng không chạy hết với môi trường này).
+  - Test chính thức `rv32ui/fence_i` của riscv-tests cũng chạy trong so vết Spike (bản thường và bản biên dịch có C), khớp trên mọi lõi có Zifencei. Trước đây test này bị bỏ qua vì môi trường rút gọn `riscv-tests/riscv_test.h` dùng nhãn `2:` trong `RVTEST_FAIL`, làm `2f` của test trỏ nhầm vào đó (Spike cũng chạy sai); nay các nhãn của môi trường đổi sang số lớn.
+  - Test chính thức chỉ bắt được đột biến "không xoá cache": nó có vòng lặp chờ và `.align` trước khi nhảy tới mã vừa sửa, nên không bao giờ chạy lệnh đã bị nạp trước. Đột biến "không nạp lại" chỉ bị `cosim/tests/fencei.S` bắt.
 
 ```
 python3 cosim/run_cosim.py <thư mục riscv-tests> --core=cache
@@ -370,7 +371,7 @@ Ngoài ISS Python tự viết, 3 core được chạy trên bộ `riscv-tests` c
 | Pipeline RV32IM (rv32ui + rv32um) | 48 | 0 | 2 |
 
 - Số "bỏ qua" của single-cycle và pipeline RV32I gồm 8 test rv32um (hai core này được chạy với rv32ui) và 2 test dưới đây.
-- Bỏ qua `fence_i` (chạy mã trong `.data`, chưa hợp với môi trường rút gọn của repo; Zifencei được kiểm bằng `cosim/tests/fencei.S`) và `ma_data` (kiểm tra truy cập lệch được phần cứng xử lý, còn core này chủ động bẫy cause 4/6).
+- Bỏ qua `fence_i` (testbench này tách bộ nhớ lệnh và dữ liệu nên store không sửa được mã; test này chạy trong so vết Spike với bộ nhớ chung) và `ma_data` (kiểm tra truy cập lệch được phần cứng xử lý, còn core này chủ động bẫy cause 4/6).
 - Môi trường test là bản tối giản tự viết (`riscv-tests/riscv_test.h`, `link.ld`): không khởi tạo PMP/satp, kết quả ghi vào địa chỉ `0x00100000`. Không dùng được env gốc vì core chỉ có tập CSR M-mode nhỏ.
 - Đã kiểm tra harness bắt được lỗi: cố tình đổi SLT thành so sánh không dấu thì `slt`/`slti` fail, phá forwarding thì 34/40 test fail.
 
@@ -400,7 +401,7 @@ riscv-tests chỉ tự báo PASS/FAIL ở cuối, và ISS Python do chính mình
 | Như trên + cache 16 × 4, bộ nhớ trễ 1-4 | 101 | 123.340 |
 | Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 101 | 123.340 |
 
-Ngoài ra `cosim/tests/fencei.S` (428 lệnh) chạy trên mọi lõi có Zifencei (xem mục Cache).
+Ngoài ra `rv32ui/fence_i` (bản thường và bản có C) và `cosim/tests/fencei.S` (428 lệnh) chạy trên mọi lõi có Zifencei (xem mục Cache).
 
 - Đã kiểm tra bộ so bắt được lỗi: bỏ bypass WB → ID của rs2 trong pipeline RV32IM thì cả `bench` và `bench_m` lệch ngay, và báo đúng lệnh store đầu tiên ghi sai giá trị.
 - Spike được build từ mã nguồn, ghim phiên bản (`7d1ee24`), và lưu cache trong GitHub Actions (job `cosim`).

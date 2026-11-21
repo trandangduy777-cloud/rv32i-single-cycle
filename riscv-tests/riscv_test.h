@@ -25,16 +25,18 @@ _start:                                                                 \
         li t0, TOHOST_ADDR;                                             \
         li t1, 1;                                                       \
         sw t1, 0(t0);                                                   \
-1:      j 1b;
+9990:   j 9990b;
 
+// Nhan so lon (9991, 9992) de khong trung nhan 1:/2:/3: ma test dung (vd. fence_i.S dung "2f", "3f" tro toi ma trong
+// .data; nhan "2:" o day tung lam "2f" tro nham vao RVTEST_FAIL)
 #define RVTEST_FAIL                                                     \
         fence;                                                          \
-1:      beqz TESTNUM, 1b;                                               \
+9991:   beqz TESTNUM, 9991b;                                            \
         sll TESTNUM, TESTNUM, 1;                                        \
         or TESTNUM, TESTNUM, 1;                                         \
         li t0, TOHOST_ADDR;                                             \
         sw TESTNUM, 0(t0);                                              \
-2:      j 2b;
+9992:   j 9992b;
 
 #define EXTRA_DATA
 
