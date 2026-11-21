@@ -21,6 +21,12 @@
 //   pc + 2 voi lenh nen. Dich nhay chi can chia het cho 2 nen khong con trap lech dia chi lenh. Bo nho lenh phai tra
 //   ve 32 bit bat dau tu dia chi imem_addr chia het cho 2 (vd. 2 bank 16 bit xen ke chan / le), vi lenh 32 bit co the
 //   nam vat qua ranh gioi tu. mtval cua lenh nen khong hop le la 16 bit goc. ENABLE_C = 0: giong het ban cu.
+// - Bo nho co do tre (cache, bus): imem_ready = 0 nghia la imem_data chua co cho imem_addr: IF giu pc va dua bong
+//   bay vao ID. dmem_ready = 0 khi lenh o MEM dang load (dmem_re) hoac store (dmem_we): ca pipeline dong bang
+//   (frz), ke ca MEM/WB, va moi tac dung o EX (redirect, trap, ghi CSR, nhan ngat, cap nhat bang dem nhanh) bi chan
+//   cho toi khi lenh o MEM xong. WB ghi lai cung gia tri moi chu ky dong bang (khong doi ket qua); wb_commit danh
+//   dau dung 1 chu ky cho moi lenh hoan tat. Bo nho to hop: noi imem_ready = dmem_ready = 1 (giong het ban cu).
+//   Cache trong rv32_icache.v / rv32_dcache.v.
 // Can bien dich cung rv32i_core.v (de lay module rv32m) va rv32c_decompress.v.
 module rv32im_pipeline #(
     parameter [31:0] RESET_PC = 32'h0000_0000,  // dia chi lenh dau tien sau reset (chia het cho 4, hoac 2 khi ENABLE_C)
@@ -31,12 +37,15 @@ module rv32im_pipeline #(
 
     output wire [31:0] imem_addr,
     input  wire [31:0] imem_data,
+    input  wire        imem_ready,     // 1: imem_data hop le cho imem_addr trong chu ky nay
 
     output wire [31:0] dmem_addr,
     output wire [31:0] dmem_wdata,
     output wire [3:0]  dmem_wstrb,
     output wire        dmem_we,
+    output wire        dmem_re,        // lenh o MEM la load (dia chi tren dmem_addr)
     input  wire [31:0] dmem_rdata,
+    input  wire        dmem_ready,     // 1: load/store o MEM hoan tat trong chu ky nay (load: dmem_rdata hop le)
 
     input  wire        irq_timer,      // MTIP, tu bo dem mtime/mtimecmp ben ngoai (rv32_mtimer.v)
     input  wire        irq_soft,       // MSIP, thanh ghi msip cua rv32_mtimer.v
@@ -50,6 +59,7 @@ module rv32im_pipeline #(
     wire        id_fa_mem, id_fa_wb, id_fb_mem, id_fb_wb;   // chon forwarding, tinh san o ID
     wire        stall;                 // load-use: giu IF/ID va PC, chen bong bay vao EX
     wire        ex_stall;              // lenh M dang chay o EX: dong bang IF/ID/EX
+    wire        frz;                   // load/store o MEM dang cho bo nho: dong bang toan bo pipeline
     wire        redirect;              // EX: JALR, doan sai nhanh, trap hoac MRET (tin hieu muon, chi duoc DANG KY)
     wire [31:0] redirect_pc;
     // redirect khong duoc dung ngay trong chu ky dang tinh: no duoc luu vao redirect_q/redirect_pc_q va ap vao chu ky ke tiep.
@@ -90,13 +100,19 @@ module rv32im_pipeline #(
         if (!rst_n) begin
             pc         <= RESET_PC;
             ifid_valid <= 1'b0;
+        end else if (frz) begin
+            // dong bang: giu nguyen pc va IF/ID
         end else if (redirect_q) begin
             pc         <= redirect_pc_q;
             ifid_valid <= 1'b0;                // huy lenh vua doc nham duong
         end else if (id_redirect & ~ex_stall) begin   // nhay som o ID: huy lenh vua doc tuan tu o IF
             pc         <= id_target;
             ifid_valid <= 1'b0;
-        end else if (!(stall | ex_stall)) begin
+        end else if (stall | ex_stall) begin
+            // ID hoac EX dang dung: giu lenh o IF/ID
+        end else if (!imem_ready) begin       // cache lenh chua tra: giu pc, dua bong bay vao ID
+            ifid_valid <= 1'b0;
+        end else begin
             pc         <= pc + (if_c ? 32'd2 : 32'd4);
             ifid_valid <= 1'b1;
         end
@@ -105,7 +121,7 @@ module rv32im_pipeline #(
     // Truong du lieu cua IF/ID (pc, lenh) khong bi redirect dieu khien enable: lenh bi huy da duoc danh dau bang
     // ifid_valid = 0. Nho vay tin hieu redirect (ket qua so sanh nhanh o EX) khong phai toi hang chuc flip-flop nay.
     always @(posedge clk) begin
-        if (!(stall | ex_stall)) begin
+        if (!(stall | ex_stall | frz)) begin
             ifid_pc    <= pc;
             ifid_instr <= if_dec;             // lenh nen khong hop le -> 0 (cung bi bo giai ma 32 bit bao illegal)
             ifid_raw   <= if_c ? {16'd0, imem_data[15:0]} : imem_data;
@@ -257,8 +273,8 @@ module rv32im_pipeline #(
             idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
             idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0;
             idex_pred_taken <= 1'b0;
-        end else if (ex_stall) begin
-            // lenh M dang chay hoac WFI dang cho o EX: giu nguyen ID/EX
+        end else if (ex_stall | frz) begin
+            // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX
         end else begin
             // redirect_q chi dieu khien idex_valid_r; stall (tin hieu som) xoa cac co con lai
             idex_valid_r <= ifid_valid & ~redirect_q & ~stall;
@@ -300,7 +316,7 @@ module rv32im_pipeline #(
     // Truong du lieu cua ID/EX khong can xoa khi chen bong bay (co idex_valid va cac co dieu khien xoa roi),
     // nen khong de redirect/stall dieu khien enable cua chung: cat tai cao cua tin hieu redirect.
     always @(posedge clk) begin
-        if (!ex_stall) begin
+        if (!(ex_stall | frz)) begin
             idex_pc      <= ifid_pc;
             idex_instr   <= ifid_raw;      // chi dung cho dia chi CSR (lenh 32 bit), mtval va vet
             idex_c       <= ifid_c;
@@ -436,10 +452,10 @@ module rv32im_pipeline #(
     wire irq_mtip  = mip_mtip & mie_mtie;
     wire irq_pend  = irq_meip | irq_msip | irq_mtip;
     wire irq_any   = mstatus_mie & irq_pend;
-    wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r;
+    wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;
     assign wfi_wait = idex_wfi & ~irq_pend;
 
-    wire csr_write = idex_csr & csr_we_req & ~irq_take;     // idex_csr chi bat cho CSR hop le
+    wire csr_write = idex_csr & csr_we_req & ~irq_take & ~frz;   // idex_csr chi bat cho CSR hop le
 
     // ---- trap ----
     // dia chi nhay phai chia het cho 4 khi khong co lenh nen; voi C chi can chia het cho 2 (luon dung: imm chan,
@@ -455,7 +471,7 @@ module rv32im_pipeline #(
     wire st_misal = idex_store & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
 
     wire trap_ex = irq_take | idex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal | st_misal;
-    wire mret_ex = idex_mret & ~irq_take;
+    wire mret_ex = idex_mret & ~irq_take & ~frz;
 
     reg [31:0] trap_cause, trap_tval;
     always @* begin
@@ -472,16 +488,17 @@ module rv32im_pipeline #(
     // doan sai: nhanh thuc te khac du doan. Dich khi doan sai: doan "nhay" -> chay tiep pc+4; doan "khong nhay" -> pc+imm.
     // JAL da nhay o ID nen khong con redirect o EX. redirect_pc khong phu thuoc ket qua so sanh nhanh.
     wire mispredict    = idex_branch & (take_branch ^ idex_pred_taken);
-    assign redirect    = trap_ex | mret_ex | idex_jalr | mispredict;
+    // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
+    assign redirect    = (trap_ex | mret_ex | idex_jalr | mispredict) & ~frz;
     assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
                          mret_ex ? {mepc_r, 2'b00}  :
                          idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) redirect_q <= 1'b0;
-        else        redirect_q <= redirect;
+        if (!rst_n)    redirect_q <= 1'b0;
+        else if (!frz) redirect_q <= redirect;        // dong bang: giu redirect chua duoc IF dung toi
     end
-    always @(posedge clk) redirect_pc_q <= redirect_pc;
+    always @(posedge clk) if (!frz) redirect_pc_q <= redirect_pc;
 
     // Ghi CSR khi trap cung tre 1 chu ky: trap_ex phu thuoc ket qua so sanh nhanh (dich nhanh lech), nen khong de no
     // dieu khien enable cua ~100 flip-flop mepc/mcause/mtval cung chu ky. Lenh o EX chu ky sau da bi redirect_q vo hieu
@@ -493,7 +510,7 @@ module rv32im_pipeline #(
     reg  [31:0] ttval_q;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) trap_q <= 1'b0;
-        else        trap_q <= trap_ex;
+        else        trap_q <= trap_ex & ~frz;
     end
     always @(posedge clk) begin
         tepc_q       <= idex_pc[31:2];
@@ -555,7 +572,7 @@ module rv32im_pipeline #(
             exmem_bupd <= 1'b0; exmem_btaken <= 1'b0; exmem_bidx <= {BHT_BITS{1'b0}};
             for (bi = 0; bi < (1<<BHT_BITS); bi = bi + 1) bht[bi] <= 2'b01;      // khoi dau: yeu, khong nhay
         end else begin
-            exmem_bupd   <= idex_valid & idex_branch;
+            exmem_bupd   <= idex_valid & idex_branch & ~frz;      // dong bang: nhanh se duoc dem khi chay tiep
             exmem_btaken <= take_branch;
             exmem_bidx   <= (ENABLE_C != 0) ? idex_pc[BHT_BITS:1] : idex_pc[BHT_BITS+1:2];
             if (exmem_bupd) begin
@@ -571,7 +588,7 @@ module rv32im_pipeline #(
             exmem_rd_we <= 1'b0;
             exmem_load  <= 1'b0;
             exmem_store <= 1'b0;
-        end else begin
+        end else if (!frz) begin
             exmem_valid     <= idex_valid & ~ex_stall;      // M chua xong: nhan bong bay
             exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;
             exmem_load      <= idex_load & ~ex_stall & ~trap_ex;
@@ -611,6 +628,8 @@ module rv32im_pipeline #(
     end
 
     assign dmem_we    = exmem_valid & exmem_store;
+    assign dmem_re    = exmem_valid & exmem_load;
+    assign frz        = (dmem_we | dmem_re) & ~dmem_ready;
     assign dmem_wdata = st_data;
     assign dmem_wstrb = dmem_we ? st_strb : 4'b0000;
 
@@ -639,13 +658,19 @@ module rv32im_pipeline #(
     reg         memwb_tst;
     reg  [31:0] memwb_taddr, memwb_tdata;
     reg  [3:0]  memwb_tstrb;
+    reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
+    wire        wb_commit = memwb_valid & memwb_new;   // moi lenh hoan tat dung 1 chu ky (testbench in vet theo day)
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             memwb_valid <= 1'b0;
             memwb_rd_we <= 1'b0;
             memwb_tst   <= 1'b0;
+            memwb_new   <= 1'b0;
+        end else if (frz) begin
+            memwb_new   <= 1'b0;                     // MEM/WB giu nguyen: lenh trong do da duoc tinh la hoan tat
         end else begin
+            memwb_new   <= 1'b1;
             memwb_valid <= exmem_valid;
             memwb_rd_we <= exmem_rd_we;
             memwb_rd    <= exmem_rd;
