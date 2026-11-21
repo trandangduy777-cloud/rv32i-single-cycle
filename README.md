@@ -65,7 +65,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 
 ## Tập lệnh hỗ trợ
 `LUI AUIPC JAL JALR`, `BEQ BNE BLT BGE BLTU BGEU`, `LB LH LW LBU LHU SB SH SW`, `ADDI SLTI SLTIU XORI ORI ANDI SLLI SRLI SRAI`, `ADD SUB SLL SLT SLTU XOR SRL SRA OR AND`.
-Thêm: `FENCE`/`FENCE.I` (coi như NOP), `ECALL`, `EBREAK`, `MRET`, `CSRRW CSRRS CSRRC CSRRWI CSRRSI CSRRCI`.
+Thêm: `FENCE` (coi như NOP), `FENCE.I` (Zifencei: pipeline RV32IM xoá cache lệnh và nạp lại; single-cycle và pipeline RV32I coi như NOP), `ECALL`, `EBREAK`, `MRET`, `CSRRW CSRRS CSRRC CSRRWI CSRRSI CSRRCI`.
 Phần mở rộng M: `MUL MULH MULHSU MULHU DIV DIVU REM REMU`.
 Phần mở rộng C (chỉ pipeline RV32IM, `ENABLE_C = 1`): mọi lệnh nén RV32C không dùng số thực.
 
@@ -115,7 +115,7 @@ Kết quả đúng: `[TB] PASS sau 2423 chu ky`.
 - Trap: lệnh bất hợp lệ (cause 2), `EBREAK` (3), `ECALL` (11), nhảy tới địa chỉ không chia hết cho 4 (0), load lệch địa chỉ (4), store lệch địa chỉ (6; `mtval` = địa chỉ vi phạm). Lệnh gây trap không ghi thanh ghi hay bộ nhớ.
 - Truy cập CSR không tồn tại, hoặc ghi vào CSR chỉ đọc, là lệnh bất hợp lệ.
 - Giải mã chặt: các trường `funct7`/`funct3`/`rd`/`rs1` sai giá trị quy định đều gây trap.
-- Ngắt chỉ có ở `rv32im_pipeline.v` (xem mục Ngắt). `FENCE` giữ vai trò NOP (đúng với lõi in-order, bộ nhớ đồng bộ một cổng). Bản `rv32i_pipeline.v` là RV32I thuần, không có trap nên không kiểm tra căn chỉnh; chương trình test của nó chỉ truy cập đúng căn chỉnh.
+- Ngắt chỉ có ở `rv32im_pipeline.v` (xem mục Ngắt). `FENCE` giữ vai trò NOP (đúng với lõi in-order, bộ nhớ đồng bộ một cổng). `FENCE.I` trên pipeline RV32I là NOP nên pipeline này không hỗ trợ mã tự sửa (lệnh sau `FENCE.I` có thể đã được nạp). Bản `rv32i_pipeline.v` là RV32I thuần, không có trap nên không kiểm tra căn chỉnh; chương trình test của nó chỉ truy cập đúng căn chỉnh.
 
 ## Cache và bộ nhớ có độ trễ (pipeline RV32IM)
 Mặc định pipeline nối với bộ nhớ tổ hợp (`imem_ready = dmem_ready = 1`, giống hệt bản cũ). Để nối với bộ nhớ thật có độ trễ, lõi có giao tiếp bắt tay và repo có sẵn 3 khối:
@@ -145,7 +145,12 @@ Kiểm chứng (`cache/`, `cosim/`):
 - **So vết với ISS trên chương trình ngẫu nhiên qua cache** (`verify/run_verify.py --pipem --cache`): bộ nhớ lệnh và dữ liệu đi qua cache 2 dòng × 2 từ với độ trễ 1-6, nên lệnh CSR, trap, `MRET`, lệnh M... của chương trình ngẫu nhiên rơi vào đúng lúc pipeline đang đóng băng. Đây là chỗ Spike cosim không phủ được: riscv-tests và benchmark gần như không có CSR hay trap ngay sau một load trượt cache. Bộ sinh chương trình đặt thêm 1 lệnh `lw` ngay trước mỗi `MRET` để có tình huống này.
 - **So vết với Spike**: thêm 2 cấu hình lõi RV32IMC có cache: 16 × 4 với độ trễ 1-4, và cache rất nhỏ 2 dòng × 2 từ với độ trễ 1-8 (xung đột dòng liên tục, lệnh nén vắt qua dòng). Cả 101 chương trình khớp Spike từng lệnh ở cả hai cấu hình.
 - **`cache/tb_cache_random.v`**: kiểm tra riêng 2 cache và bộ phân xử, không cần CPU. Load/store ngẫu nhiên (byte, half, word) vào vùng cacheable, vùng không cacheable và vùng thiết bị (giá trị tự tăng mỗi chu kỳ, load phải đi qua bus và trả đúng giá trị bus đọc về); ghi vào vùng mã rồi flush cache lệnh như `FENCE.I`; địa chỉ lệnh đổi ngẫu nhiên cả khi cache đang nạp. So với mô hình tham chiếu ở mỗi load, mỗi lần cache lệnh trả lệnh, và so toàn bộ bộ nhớ ở cuối. Chạy 3 kích thước cache × 3 seed trong GitHub Actions.
-- **`cache/mutate_cache.py`**: 20 đột biến, đều bị bắt. 11 đột biến trong 2 cache và bộ phân xử (không so tag, cửa sổ lệnh nén sai, flush lúc đang nạp vẫn đánh dấu valid, store không cập nhật dòng hoặc bỏ qua `wstrb`, cache cả vùng thiết bị, bus ghi sai byte, không giữ quyền bus...) bị `tb_cache_random.v` bắt; 4 đột biến bắt tay ở lõi bị so vết Spike bắt; 5 đột biến cơ chế đóng băng (IF/ID hoặc ID/EX vẫn đổi, ghi CSR, trap, `MRET` lúc đóng băng) bị chương trình ngẫu nhiên qua cache bắt. Lúc đầu có 2 đột biến không bị bắt: một cái là đột biến tương đương (trường hợp không thể xảy ra) nên được thay; cái kia lộ ra là chương trình ngẫu nhiên chưa bao giờ có `MRET` lúc đóng băng, nên bộ sinh chương trình được sửa như trên.
+- **`cache/mutate_cache.py`**: 22 đột biến, đều bị bắt (20 của phần cache dưới đây và 2 của `FENCE.I` ở trên). 11 đột biến trong 2 cache và bộ phân xử (không so tag, cửa sổ lệnh nén sai, flush lúc đang nạp vẫn đánh dấu valid, store không cập nhật dòng hoặc bỏ qua `wstrb`, cache cả vùng thiết bị, bus ghi sai byte, không giữ quyền bus...) bị `tb_cache_random.v` bắt; 4 đột biến bắt tay ở lõi bị so vết Spike bắt; 5 đột biến cơ chế đóng băng (IF/ID hoặc ID/EX vẫn đổi, ghi CSR, trap, `MRET` lúc đóng băng) bị chương trình ngẫu nhiên qua cache bắt. Lúc đầu có 2 đột biến không bị bắt: một cái là đột biến tương đương (trường hợp không thể xảy ra) nên được thay; cái kia lộ ra là chương trình ngẫu nhiên chưa bao giờ có `MRET` lúc đóng băng, nên bộ sinh chương trình được sửa như trên.
+
+- **`FENCE.I` (Zifencei)**: ở EX, `FENCE.I` phát `icache_flush` (xoá mọi dòng của cache lệnh, kể cả dòng đang nạp dở) và redirect tới lệnh kế tiếp, nên các lệnh sau nó đã nằm trong IF/ID bị huỷ và nạp lại. Mọi store cũ hơn đã xong (store ở MEM chưa xong thì pipeline đang đóng băng, `FENCE.I` chưa chạy), và cache dữ liệu ghi xuyên nên bộ nhớ đã có mã mới. Chi phí: 3 chu kỳ redirect cộng các lần nạp lại cache.
+  - Kiểm chứng bằng `cosim/tests/fencei.S` (tự viết, so từng lệnh với Spike): 24 vòng, mỗi vòng sửa lệnh **ngay sau** `FENCE.I` (đã bị pipeline nạp trước) và sửa một hàm đang nằm trong cache lệnh rồi gọi. Chạy trên single-cycle và 4 cấu hình pipeline RV32IM (có/không lệnh C, có/không cache); pipeline RV32I không được chạy vì không hỗ trợ Zifencei.
+  - Bỏ xoá cache trong `FENCE.I` thì 2 cấu hình có cache lệch Spike ở lệnh thứ 16; bỏ redirect thì 2 cấu hình không cache lệch ngay lệnh đó. Cả 2 đột biến có trong `cache/mutate_cache.py` (nay 22 đột biến).
+  - Test `fence_i` của riscv-tests vẫn bỏ qua: nó chạy mã đặt trong `.data`, chưa dùng được với môi trường rút gọn `riscv-tests/riscv_test.h` của repo (Spike cũng không chạy hết với môi trường này).
 
 ```
 python3 cosim/run_cosim.py <thư mục riscv-tests> --core=cache
@@ -365,7 +370,7 @@ Ngoài ISS Python tự viết, 3 core được chạy trên bộ `riscv-tests` c
 | Pipeline RV32IM (rv32ui + rv32um) | 48 | 0 | 2 |
 
 - Số "bỏ qua" của single-cycle và pipeline RV32I gồm 8 test rv32um (hai core này được chạy với rv32ui) và 2 test dưới đây.
-- Bỏ qua `fence_i` (cần Zifencei, core không hỗ trợ) và `ma_data` (kiểm tra truy cập lệch được phần cứng xử lý, còn core này chủ động bẫy cause 4/6).
+- Bỏ qua `fence_i` (chạy mã trong `.data`, chưa hợp với môi trường rút gọn của repo; Zifencei được kiểm bằng `cosim/tests/fencei.S`) và `ma_data` (kiểm tra truy cập lệch được phần cứng xử lý, còn core này chủ động bẫy cause 4/6).
 - Môi trường test là bản tối giản tự viết (`riscv-tests/riscv_test.h`, `link.ld`): không khởi tạo PMP/satp, kết quả ghi vào địa chỉ `0x00100000`. Không dùng được env gốc vì core chỉ có tập CSR M-mode nhỏ.
 - Đã kiểm tra harness bắt được lỗi: cố tình đổi SLT thành so sánh không dấu thì `slt`/`slti` fail, phá forwarding thì 34/40 test fail.
 
@@ -394,6 +399,8 @@ riscv-tests chỉ tự báo PASS/FAIL ở cuối, và ISS Python do chính mình
 | Pipeline RV32IM, `ENABLE_C = 1` | 101 (50 không C, 51 có C) | 123.340 |
 | Như trên + cache 16 × 4, bộ nhớ trễ 1-4 | 101 | 123.340 |
 | Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 101 | 123.340 |
+
+Ngoài ra `cosim/tests/fencei.S` (428 lệnh) chạy trên mọi lõi có Zifencei (xem mục Cache).
 
 - Đã kiểm tra bộ so bắt được lỗi: bỏ bypass WB → ID của rs2 trong pipeline RV32IM thì cả `bench` và `bench_m` lệch ngay, và báo đúng lệnh store đầu tiên ghi sai giá trị.
 - Spike được build từ mã nguồn, ghim phiên bản (`7d1ee24`), và lưu cache trong GitHub Actions (job `cosim`).

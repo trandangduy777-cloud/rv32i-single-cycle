@@ -18,7 +18,7 @@ module tb_cosim;
 
     wire [31:0] imem_addr, dmem_addr, dmem_wdata, dmem_rdata, imem_data;
     wire [3:0]  dmem_wstrb;
-    wire        dmem_we, dmem_re, imem_ready, dmem_ready;
+    wire        dmem_we, dmem_re, imem_ready, dmem_ready, icache_flush;
 
 `ifdef PIPE_FULL
 `ifdef RVC
@@ -39,6 +39,7 @@ module tb_cosim;
 `ifdef PIPE_FULL
         , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)
         , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re)
+        , .icache_flush(icache_flush)
 `endif
     );
 
@@ -64,7 +65,7 @@ module tb_cosim;
     reg  [31:0] m_rdata;
 
     rv32_icache #(.LINES(`ICL), .WORDS(`ICW)) u_ic (
-        .clk(clk), .rst_n(rst_n), .addr(imem_addr), .data(imem_data), .ready(imem_ready), .flush(1'b0),
+        .clk(clk), .rst_n(rst_n), .addr(imem_addr), .data(imem_data), .ready(imem_ready), .flush(icache_flush),
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(m_rdata), .n_miss(ic_miss));
     rv32_dcache #(.LINES(`DCL), .WORDS(`DCW), .CMASK(32'hFFFC_0000), .CBASE(BASE)) u_dc (
         .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .wstrb(dmem_wstrb),

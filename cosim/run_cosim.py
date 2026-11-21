@@ -16,18 +16,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BASE = 0x80000000
 TOHOST = 0x80100000
-SKIP = {"fence_i": "can Zifencei", "ma_data": "can truy cap lech do phan cung xu ly"}
+SKIP = {"ma_data": "can truy cap lech do phan cung xu ly",
+        "fence_i": "chay tu .data, chua dung duoc voi moi truong rut gon cua repo; thay bang cosim/tests/fencei.S"}
 CACHE_FILES = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_icache.v", "rv32_dcache.v",
                "rv32_bus_arbiter.v"]
-CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im"),
+# Zifencei: single-cycle nap moi lenh sau khi lenh truoc xong nen tu nhien dung; pipeline RV32IM xoa cache lenh va
+# nap lai khi gap FENCE.I. Pipeline RV32I coi FENCE.I la NOP nen khong ho tro.
+CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("pipeline RV32I", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
-         ("pipeline RV32IM", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im"),
+         ("pipeline RV32IM", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im_zifencei"),
          ("pipeline RV32IMC", "-DPIPE_FULL -DRVC", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
-          "rv32imc"),
+          "rv32imc_zifencei"),
          # co cache lenh/du lieu va bo nho chung co do tre ngau nhien
-         ("RV32IMC + cache 16x4, tre 1-4", "-DPIPE_FULL -DRVC -DCACHE", CACHE_FILES, "rv32imc", ["+lat=4", "+seed=1"]),
+         ("RV32IMC + cache 16x4, tre 1-4", "-DPIPE_FULL -DRVC -DCACHE", CACHE_FILES, "rv32imc_zifencei",
+          ["+lat=4", "+seed=1"]),
          ("RV32IMC + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2", CACHE_FILES,
-          "rv32imc", ["+lat=8", "+seed=7"])]
+          "rv32imc_zifencei", ["+lat=8", "+seed=7"])]
+
+
+def exts(march):
+    """'rv32imc_zifencei' -> {'i', 'm', 'c', 'zifencei'}"""
+    base, *z = march.split("_")
+    return set(base[4:]) | set(z)
 
 
 def sh(cmd, **kw):
@@ -49,12 +59,24 @@ GCC = ["riscv64-unknown-elf-gcc", "-mabi=ilp32", "-static", "-mcmodel=medany", "
 
 def build_rvtest(src, march, tmp, env):
     name = os.path.basename(os.path.dirname(src)) + "-" + os.path.splitext(os.path.basename(src))[0] + \
-        ("-c" if march.endswith("c") else "")
+        ("-c" if "c" in exts(march) else "")
     elf = os.path.join(tmp, name + ".elf")
     macros = os.path.join(os.path.dirname(os.path.dirname(src)), "macros", "scalar")
     r = sh(GCC + [f"-march={march}", "-fvisibility=hidden", "-I", env, "-I", macros,
                   "-T", os.path.join(env, "link.ld"), src, "-o", elf])
     return (name, elf) if r.returncode == 0 else (name, None)
+
+
+def build_asm(src, march, tmp):
+    """Chuong trinh assembly tu viet trong cosim/tests (dung bench.ld, dat o BASE)."""
+    name = "tests-" + os.path.splitext(os.path.basename(src))[0]
+    ld = os.path.join(tmp, "bench80.ld")
+    open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
+    elf = os.path.join(tmp, name + ".elf")
+    r = sh(GCC + [f"-march={march}", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-T", ld, src, "-o", elf])
+    if r.returncode:
+        print(r.stderr); sys.exit(1)
+    return name, elf
 
 
 def build_bench(name, march, tmp):
@@ -199,6 +221,8 @@ def main():
             if elf is None:
                 print(f"loi bien dich {name}"); sys.exit(1)
             progs.append((name, elf, march))
+    # test tu viet: FENCE.I voi ma tu sua (chi chay tren loi co Zifencei)
+    progs.append(build_asm(os.path.join(HERE, "tests", "fencei.S"), "rv32i_zifencei", tmp) + ("rv32i_zifencei",))
     progs.append(build_bench("bench", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_m", "rv32im", tmp) + ("rv32im",))
     progs.append(build_bench("bench", "rv32ic", tmp) + ("rv32ic",))
@@ -219,7 +243,9 @@ def main():
     for name, elf, march in progs:
         log = elf[:-4] + ".spike.log"
         try:
-            r = sh([a.spike, f"--isa={march}_zicsr", "--no-dm", f"-m0x{BASE:x}:0x200000",
+            base, *z = march.split("_")
+            isa = "_".join([base] + sorted(z + ["zicsr"]))
+            r = sh([a.spike, f"--isa={isa}", "--no-dm", f"-m0x{BASE:x}:0x200000",
                     "-l", "--log-commits", f"--log={log}", elf], timeout=120)
         except subprocess.TimeoutExpired:
             print(f"FAIL {name}: Spike khong ket thuc (chuong trinh khong ghi TOHOST?)"); fails += 1; continue
@@ -230,7 +256,7 @@ def main():
         to_hex(elf, hexf)
         res = []
         for title, vvp, arch, plus in sims:
-            if not set(march[4:]) <= set(arch[4:]):      # chuong trinh dung mo rong ma loi khong co
+            if not exts(march) <= exts(arch):            # chuong trinh dung mo rong ma loi khong co
                 continue
             out = sh(["vvp", "-n", vvp, f"+prog={hexf}"] + plus, timeout=600).stdout.splitlines()
             err = compare(ref, rtl_trace(out))
