@@ -107,7 +107,10 @@ jobs:
       - name: Hieu nang bo du doan nhanh, kiem dung tung chu ky
         run: python3 bpred/perf_bpred.py --check
 
-      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, test tu viet; 11 cau hinh loi)
+      - name: CoreMark 1 vong tren pipeline RV32IM / RV32IMC (kiem CRC chuan, in CoreMark/MHz)
+        run: python3 coremark/run_coremark.py --iter 1 --quick
+
+      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 11 cau hinh loi)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike

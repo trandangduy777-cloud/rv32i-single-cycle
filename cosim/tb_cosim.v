@@ -157,18 +157,64 @@ module tb_cosim;
     reg [7:0]  t_s;
     reg [31:0] mask;
     integer    n = 0;
+
+    // ---- CoreMark (coremark/port/core_portme.c): o danh dau thoi gian va vung dem ee_printf trong RAM ----
+    // Store 1 / 2 vao MARK hoan tat: ghi lai chu ky va so lenh (bat dau / ket thuc phan do). Store vao vung CON: gom
+    // tung byte, in ra mot lan khi ket thuc (khong chen vao giua cac dong vet). +quiet: khong in vet tung lenh.
+    localparam [31:0] MARK = 32'h8003_F800, CON = 32'h8003_8000;
+    reg  [7:0] con_buf [0:16383];
+    integer    con_n = 0, mk_c1 = -1, mk_c2 = -1, mk_n1 = 0, mk_n2 = 0, ck;
+    reg        quiet = 0;
+    task tb_store(input [31:0] a, input [7:0] st, input [63:0] d);
+        begin
+            if (a == MARK && st[3:0] == 4'b1111) begin
+                if (d[31:0] == 32'd1) begin mk_c1 = cyc; mk_n1 = n; end
+                if (d[31:0] == 32'd2) begin mk_c2 = cyc; mk_n2 = n; end
+            end
+            if (a >= CON && a < CON + 32'd16384)
+                for (ck = 0; ck < 8; ck = ck + 1)
+                    if (st[ck] && con_n < 16384) begin con_buf[con_n] = d[8 * ck +: 8]; con_n = con_n + 1; end
+        end
+    endtask
+    // phan tich chu ky trong phan do (pipeline RV32IM): lenh M chiem EX, load-use, dong bang cho bo nho, redirect
+    integer    st_m = 0, st_lu = 0, st_frz = 0, st_rq = 0, st_idr = 0, st_ifw = 0;
+`ifdef PIPE_FULL
+    always @(posedge clk) if (rst_n && mk_c1 >= 0 && mk_c2 < 0) begin
+        if (dut.frz) st_frz = st_frz + 1;
+        else if (dut.ex_stall) st_m = st_m + 1;
+        else if (dut.redirect_q) st_rq = st_rq + 1;
+        else if (dut.stall) st_lu = st_lu + 1;
+        else if (dut.id_redirect) st_idr = st_idr + 1;
+        else if (!dut.imem_ready) st_ifw = st_ifw + 1;
+    end
+`endif
+    task tb_finish_report;
+        begin
+            if (mk_c1 >= 0 && mk_c2 >= 0)
+                $display("CMARK cycles=%0d instr=%0d mstall=%0d frz=%0d redir=%0d loaduse=%0d idredir=%0d ifwait=%0d",
+                         mk_c2 - mk_c1, mk_n2 - mk_n1, st_m, st_frz, st_rq, st_lu, st_idr, st_ifw);
+            if (con_n > 0) begin
+                $display("CONSOLE_BEGIN");
+                for (ck = 0; ck < con_n; ck = ck + 1) $write("%c", con_buf[ck]);
+                $display("CONSOLE_END");
+            end
+        end
+    endtask
 `ifdef SC
     // single-cycle: lay mau o canh len khi lenh hoan tat (lenh M mat nhieu chu ky)
     always @(posedge clk) begin
         if (rst_n && dut.retire) begin
             rd_w = dut.rd_we && (dut.rd != 5'd0);
             mask = {{8{dmem_wstrb[3]}}, {8{dmem_wstrb[2]}}, {8{dmem_wstrb[1]}}, {8{dmem_wstrb[0]}}};
+            if (!quiet)
             $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x",
                      imem_addr, imem_data, rd_w ? dut.rd : 5'd0, rd_w ? dut.rd_val : 32'd0,
                      dmem_we, dmem_we ? dmem_addr : 32'd0, dmem_we ? (dmem_wdata & mask) : 32'd0,
                      dmem_we ? dmem_wstrb : 4'd0);
+            if (dmem_we) tb_store(dmem_addr, {4'b0, dmem_wstrb}, {32'b0, dmem_wdata & mask});
             n = n + 1;
             if (dmem_we && dmem_addr == TOHOST) begin
+                tb_finish_report;
                 $display("DONE cycles=%0d instr=%0d", cyc, n);
                 $finish;
             end
@@ -225,7 +271,9 @@ module tb_cosim;
         if (rst_n && commit) begin
             rd_w = dut.memwb_rd_we && (dut.memwb_rd != 5'd0);
             t_d = dut.memwb_tdata; t_s = dut.memwb_tstrb;   // store vat qua tu (MISALIGNED = 1): 64 bit, wstrb 8 bit
-            if (t_s[7:4] != 4'b0000)
+            if (dut.memwb_tst) tb_store(dut.memwb_taddr, t_s, t_d);
+            if (quiet) ;
+            else if (t_s[7:4] != 4'b0000)
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
                          dut.memwb_tst, dut.memwb_taddr, t_d, t_s);
@@ -235,6 +283,7 @@ module tb_cosim;
                          dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0]);
             n = n + 1;
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
+                tb_finish_report;
 `ifdef PIPE_FULL
                 $display("BPRED br=%0d brmiss=%0d jalr=%0d jalrmiss=%0d idredir=%0d btbtaken=%0d",
                          n_br, n_brmiss, n_jr, n_jrmiss, n_idr, n_btbt);
@@ -252,6 +301,7 @@ module tb_cosim;
 `endif
 
     reg [8*256-1:0] progfile;
+    integer         tmax;
     integer i;
     initial begin
         for (i = 0; i < 65536; i = i + 1) mem[i] = 32'd0;
@@ -259,6 +309,7 @@ module tb_cosim;
         // (vd. ham luu thanh ghi s0/s1 chua dung len stack)
         for (i = 1; i < 32; i = i + 1) dut.regs[i] = 32'd0;
         if (!$value$plusargs("prog=%s", progfile)) begin $display("ERROR: thieu +prog="); $finish; end
+        if ($test$plusargs("quiet")) quiet = 1;
 `ifdef CACHE
         if (!$value$plusargs("lat=%d", lat)) lat = 4;
         if (!$value$plusargs("seed=%d", seed)) seed = 1;
@@ -271,7 +322,8 @@ module tb_cosim;
         repeat (3) @(posedge clk);
         @(negedge clk);
         rst_n = 1;
-        #50_000_000;
+        if (!$value$plusargs("tmax=%d", tmax)) tmax = 5_000_000;      // so chu ky toi da (+tmax=)
+        repeat (tmax) @(posedge clk);
         $display("TIMEOUT sau %0d lenh", n);
         $finish;
     end
