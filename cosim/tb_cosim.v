@@ -6,7 +6,7 @@
 // -DPIPE_FULL, -DPIPE_FULL -DRVC (pipeline RV32IM co ENABLE_C = 1).
 // Them -DCACHE (chi voi PIPE_FULL): loi noi qua rv32_icache + rv32_dcache + rv32_bus_arbiter toi bo nho chung co do tre
 // ngau nhien 1..(+lat) chu ky moi tu (+seed). Vung cacheable 0x8000_0000-0x8003_FFFF; TOHOST di thang qua bus.
-// Kich thuoc cache: -DICL/-DICW/-DDCL/-DDCW (so dong / so tu moi dong), mac dinh 16 x 4.
+// Kich thuoc cache: -DICL/-DICW/-DDCL/-DDCW (so dong / so tu moi dong), mac dinh 16 x 4; bo dem ghi: -DDWB (mac dinh 4 muc).
 // Tham so: +prog=<file hex> [+lat=<do tre toi da>] [+seed=<so>]
 module tb_cosim;
     reg clk = 0;
@@ -18,7 +18,7 @@ module tb_cosim;
 
     wire [31:0] imem_addr, dmem_addr, dmem_wdata, dmem_rdata, imem_data;
     wire [3:0]  dmem_wstrb;
-    wire        dmem_we, dmem_re, imem_ready, dmem_ready, icache_flush;
+    wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready, icache_flush;
 
 `ifdef PIPE_FULL
 `ifdef RVC
@@ -39,7 +39,7 @@ module tb_cosim;
 `ifdef PIPE_FULL
         , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)
         , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re)
-        , .icache_flush(icache_flush)
+        , .icache_flush(icache_flush), .dmem_fence(dmem_fence)
 `endif
     );
 
@@ -58,6 +58,9 @@ module tb_cosim;
 `ifndef DCW
 `define DCW 4
 `endif
+`ifndef DWB
+`define DWB 4
+`endif
     wire        ic_req, ic_ack, dc_req, dc_we, dc_ack, m_req, m_we;
     wire [31:0] ic_addr, dc_addr, dc_wdata, m_addr, m_wdata, ic_miss, dc_miss;
     wire [3:0]  dc_wstrb, m_wstrb;
@@ -67,8 +70,8 @@ module tb_cosim;
     rv32_icache #(.LINES(`ICL), .WORDS(`ICW)) u_ic (
         .clk(clk), .rst_n(rst_n), .addr(imem_addr), .data(imem_data), .ready(imem_ready), .flush(icache_flush),
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(m_rdata), .n_miss(ic_miss));
-    rv32_dcache #(.LINES(`DCL), .WORDS(`DCW), .CMASK(32'hFFFC_0000), .CBASE(BASE)) u_dc (
-        .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .wstrb(dmem_wstrb),
+    rv32_dcache #(.LINES(`DCL), .WORDS(`DCW), .WBUF(`DWB), .CMASK(32'hFFFC_0000), .CBASE(BASE)) u_dc (
+        .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .fence(dmem_fence), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(dmem_rdata), .ready(dmem_ready),
         .m_req(dc_req), .m_we(dc_we), .m_addr(dc_addr), .m_wdata(dc_wdata), .m_wstrb(dc_wstrb),
         .m_ack(dc_ack), .m_rdata(m_rdata), .n_miss(dc_miss));
@@ -154,6 +157,33 @@ module tb_cosim;
 `else
     wire commit = dut.memwb_valid;
 `endif
+
+`ifdef CACHE
+    // Bo dem ghi: store xong o MEM truoc khi toi bo nho. Mo hinh kien truc arch[] cap nhat khi store hoan tat (WB);
+    // khi FENCE / FENCE.I hoan tat, moi store truoc no phai da toi bo nho (mem[] khop arch[] o moi dia chi).
+    reg [31:0] arch [0:65535];
+    integer    ai, n_fchk = 0;
+    always @(posedge clk) begin
+        if (rst_n && commit) begin
+            if (dut.memwb_tst && dut.memwb_taddr != TOHOST) begin
+                if (dut.memwb_tstrb[0]) arch[dut.memwb_taddr[17:2]][7:0]   = dut.memwb_tdata[7:0];
+                if (dut.memwb_tstrb[1]) arch[dut.memwb_taddr[17:2]][15:8]  = dut.memwb_tdata[15:8];
+                if (dut.memwb_tstrb[2]) arch[dut.memwb_taddr[17:2]][23:16] = dut.memwb_tdata[23:16];
+                if (dut.memwb_tstrb[3]) arch[dut.memwb_taddr[17:2]][31:24] = dut.memwb_tdata[31:24];
+            end
+            if (dut.memwb_instr[6:0] == 7'b0001111 && dut.memwb_instr[14:13] == 2'b00) begin   // FENCE, FENCE.I
+                for (ai = 0; ai < 65536; ai = ai + 1)
+                    if (mem[ai] !== arch[ai]) begin
+                        $display("ERROR: FENCE tai pc=%08x hoan tat nhung bo nho tai tu %0d = %08x, dung la %08x",
+                                 dut.memwb_pc, ai, mem[ai], arch[ai]);
+                        $finish;
+                    end
+                n_fchk = n_fchk + 1;
+            end
+        end
+    end
+`endif
+
     always @(posedge clk) begin
         if (rst_n && commit) begin
             rd_w = dut.memwb_rd_we && (dut.memwb_rd != 5'd0);
@@ -163,8 +193,8 @@ module tb_cosim;
             n = n + 1;
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
 `ifdef CACHE
-                $display("DONE cycles=%0d instr=%0d imiss=%0d dmiss=%0d bus=%0d buscyc=%0d",
-                         cyc, n, ic_miss, dc_miss, n_bus, n_bus_cyc);
+                $display("DONE cycles=%0d instr=%0d imiss=%0d dmiss=%0d bus=%0d buscyc=%0d wbfull=%0d fwd=%0d",
+                         cyc, n, ic_miss, dc_miss, n_bus, n_bus_cyc, u_dc.n_wbfull, u_dc.n_fwd);
 `else
                 $display("DONE cycles=%0d instr=%0d", cyc, n);
 `endif
@@ -188,6 +218,9 @@ module tb_cosim;
         if (lat < 1) lat = 1;
 `endif
         $readmemh(progfile, mem);
+`ifdef CACHE
+        for (i = 0; i < 65536; i = i + 1) arch[i] = mem[i];
+`endif
         repeat (3) @(posedge clk);
         @(negedge clk);
         rst_n = 1;

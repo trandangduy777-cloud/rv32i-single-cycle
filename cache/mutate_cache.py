@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Mutation test cho cache va co che dong bang pipeline: moi dot bien phai bi bo kiem chung tuong ung bat duoc.
 
-- Dot bien trong rv32_icache.v / rv32_dcache.v / rv32_bus_arbiter.v: chay cache/tb_cache_random.v (2 cau hinh cache,
-  3 seed moi cau hinh, do tre 1..6). Phai co it nhat 1 lan bao FAIL hoac het thoi gian.
+- Dot bien trong rv32_icache.v / rv32_dcache.v (ca bo dem ghi) / rv32_bus_arbiter.v: chay cache/tb_cache_random.v
+  (3 cau hinh cache / bo dem ghi, 3 seed moi cau hinh, do tre 1..6). Phai co it nhat 1 lan bao FAIL hoac het thoi gian.
 - Dot bien trong rv32im_pipeline.v (bat tay bo nho, dong bang, FENCE.I), 2 bo kiem chung:
   "cosim": cosim/run_cosim.py voi 2 cau hinh co cache tren bench va bench_m (co va khong co lenh nen);
   "rand":  verify/run_verify.py --pipem --cache (40 chuong trinh ngau nhien co CSR, trap, MRET... qua cache 2 x 2,
-           bo nho tre 1..6), so voi ISS Python. Phai co it nhat 1 chuong trinh lech hoac treo.
+           bo nho tre 1..6), so voi ISS Python; testbench con kiem moi FENCE hoan tat thi bo nho da nhan moi store
+           truoc no. Phai co it nhat 1 chuong trinh lech hoac treo.
 
 Moi dot bien chay tren mot ban sao cua repo trong thu muc tam.
 Dung (tu thu muc goc repo): python3 cache/mutate_cache.py <thu_muc_riscv-tests> [--spike <duong dan spike>]
@@ -42,13 +43,39 @@ MUTATIONS = [
     ("dcache: vung khong cacheable van luu cache", "rv32_dcache.v",
      "wire          cacheable = ((addr & CMASK) == CBASE);", "wire          cacheable = 1'b1;", "tb"),
     ("dcache: bus ghi khong theo wstrb", "rv32_dcache.v",
-     "assign m_wstrb = (state == WR) ? wstrb : 4'b1111;", "assign m_wstrb = 4'b1111;", "tb"),
+     "assign m_wstrb = (state == DRN) ? q_strb[q_head] : 4'b1111;", "assign m_wstrb = 4'b1111;", "tb"),
+    # ---- bo dem ghi cua cache du lieu ----
+    ("bo dem ghi: nap dong khong forward store dang treo", "rv32_dcache.v",
+     "fill_data = (fill_data & ~fmask) | (q_data[fs] & fmask);", "fill_data = fill_data;", "tb"),
+    ("bo dem ghi: forward theo thu tu moi -> cu", "rv32_dcache.v",
+     "fs = q_head + j;", "fs = q_head + q_cnt - 1 - j;", "tb"),
+    ("bo dem ghi: forward so dia chi theo dong thay vi theo tu", "rv32_dcache.v",
+     "q_addr[fs] == fill_w)", "q_addr[fs][29:WB] == fill_w[29:WB])", "tb"),
+    ("bo dem ghi: forward ca muc da ghi ra bo nho", "rv32_dcache.v",
+     "if (j < q_cnt && q_addr[fs] == fill_w)", "if (q_addr[fs] == fill_w)", "tb"),
+    ("bo dem ghi: load ngoai vung cacheable khong cho ghi het", "rv32_dcache.v",
+     "end else if (q_next == 0)", "end else if (q_next == 0 | rd_miss)", "tb"),
+    ("bo dem ghi: fence khong cho ghi het", "rv32_dcache.v",
+     "(free & fence & wb_empty)", "(free & fence)", "tb"),
+    ("bo dem ghi: ghi ra bus muc cuoi thay vi muc dau", "rv32_dcache.v",
+     "(state == DRN)  ? {q_addr[q_head], 2'b00}", "(state == DRN)  ? {q_addr[q_tail], 2'b00}", "tb"),
+    ("bo dem ghi: nhan store khi da day", "rv32_dcache.v",
+     "wire push   = free & we & ~q_full;", "wire push   = free & we;", "tb"),
+    ("bo dem ghi: nap xong ve IDLE du bo dem con du lieu", "rv32_dcache.v",
+     "state <= wb_empty ? IDLE : DRN;", "state <= IDLE;", "tb"),
+    ("bo dem ghi: khong dem lui khi ghi xong", "rv32_dcache.v",
+     "wire pop    = (state == DRN) & m_ack;", "wire pop    = 1'b0;", "tb"),
     # ---- bo phan xu ----
     ("arbiter: khong giu quyen bus toi khi ack", "rv32_bus_arbiter.v",
      "wire sel_d = (own == OWN_D) | ((own == NONE) & d_req);", "wire sel_d = d_req;", "tb"),
+    ("arbiter: uu tien cache lenh (store trong bo dem toi sau lan nap lenh)", "rv32_bus_arbiter.v",
+     "wire sel_d = (own == OWN_D) | ((own == NONE) & d_req);\n    wire sel_i = (own == OWN_I) | ((own == NONE) & ~d_req & i_req);",
+     "wire sel_d = (own == OWN_D) | ((own == NONE) & d_req & ~i_req);\n    wire sel_i = (own == OWN_I) | ((own == NONE) & i_req);",
+     "tb"),
     # ---- pipeline: bat tay bo nho ----
     ("pipeline: khong dong bang khi load cho bo nho", "rv32im_pipeline.v",
-     "assign frz        = (dmem_we | dmem_re) & ~dmem_ready;", "assign frz        = dmem_we & ~dmem_ready;", "cosim"),
+     "assign frz        = (dmem_we | dmem_re | dmem_fence) & ~dmem_ready;",
+     "assign frz        = (dmem_we | dmem_fence) & ~dmem_ready;", "cosim"),
     ("pipeline: bo qua imem_ready", "rv32im_pipeline.v",
      "end else if (!imem_ready) begin", "end else if (1'b0) begin", "cosim"),
     ("pipeline: wb_commit lap lai trong luc dong bang", "rv32im_pipeline.v",
@@ -67,6 +94,12 @@ MUTATIONS = [
      "        else        trap_q <= trap_ex & ~frz;", "        else        trap_q <= trap_ex;", "rand"),
     ("pipeline: MRET chay ca khi dong bang", "rv32im_pipeline.v",
      "wire mret_ex = idex_mret & ~irq_take & ~frz;", "wire mret_ex = idex_mret & ~irq_take;", "rand"),
+    ("pipeline: FENCE khong cho bo dem ghi", "rv32im_pipeline.v",
+     "assign frz        = (dmem_we | dmem_re | dmem_fence) & ~dmem_ready;",
+     "assign frz        = (dmem_we | dmem_re) & ~dmem_ready;", "rand"),
+    ("pipeline: FENCE khong duoc dua xuong MEM", "rv32im_pipeline.v",
+     "exmem_fence     <= idex_fence_r & idex_valid & ~ex_stall & ~trap_ex;",
+     "exmem_fence     <= 1'b0;", "rand"),
     # ---- FENCE.I (Zifencei): kiem bang cosim/tests/fencei.S (ma tu sua) ----
     ("FENCE.I khong xoa cache lenh", "rv32im_pipeline.v",
      "    assign icache_flush = fencei_ex;", "    assign icache_flush = 1'b0;", "cosim", "tests-"),
@@ -78,7 +111,7 @@ MUTATIONS = [
      "        end else begin\n            exmem_valid     <= idex_valid & ~ex_stall;", "cosim"),
 ]
 
-TB_CFGS = [["-DL=4", "-DW=2"], ["-DL=2", "-DW=8"]]
+TB_CFGS = [["-DL=4", "-DW=2"], ["-DL=2", "-DW=8"], ["-DL=16", "-DW=4", "-DQ=2"]]
 
 
 def run_tb(rep):

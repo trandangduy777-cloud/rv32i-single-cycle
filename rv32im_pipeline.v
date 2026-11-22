@@ -22,7 +22,8 @@
 //   ve 32 bit bat dau tu dia chi imem_addr chia het cho 2 (vd. 2 bank 16 bit xen ke chan / le), vi lenh 32 bit co the
 //   nam vat qua ranh gioi tu. mtval cua lenh nen khong hop le la 16 bit goc. ENABLE_C = 0: giong het ban cu.
 // - Bo nho co do tre (cache, bus): imem_ready = 0 nghia la imem_data chua co cho imem_addr: IF giu pc va dua bong
-//   bay vao ID. dmem_ready = 0 khi lenh o MEM dang load (dmem_re) hoac store (dmem_we): ca pipeline dong bang
+//   bay vao ID. dmem_ready = 0 khi lenh o MEM dang load (dmem_re), store (dmem_we) hoac FENCE/FENCE.I
+//   (dmem_fence, cho bo dem ghi cua cache du lieu rong): ca pipeline dong bang
 //   (frz), ke ca MEM/WB, va moi tac dung o EX (redirect, trap, ghi CSR, nhan ngat, cap nhat bang dem nhanh) bi chan
 //   cho toi khi lenh o MEM xong. WB ghi lai cung gia tri moi chu ky dong bang (khong doi ket qua); wb_commit danh
 //   dau dung 1 chu ky cho moi lenh hoan tat. Bo nho to hop: noi imem_ready = dmem_ready = 1 (giong het ban cu).
@@ -44,6 +45,7 @@ module rv32im_pipeline #(
     output wire [3:0]  dmem_wstrb,
     output wire        dmem_we,
     output wire        dmem_re,        // lenh o MEM la load (dia chi tren dmem_addr)
+    output wire        dmem_fence,     // FENCE / FENCE.I o MEM: cho bo nho du lieu ghi het store dang treo (dmem_ready)
     output wire        icache_flush,   // FENCE.I o EX: xoa cache lenh (1 chu ky); bo nho to hop: bo trong
     input  wire [31:0] dmem_rdata,
     input  wire        dmem_ready,     // 1: load/store o MEM hoan tat trong chu ky nay (load: dmem_rdata hop le)
@@ -241,7 +243,7 @@ module rv32im_pipeline #(
     reg         idex_rd_we_r;
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
     reg         idex_illegal_r, idex_ecall_r, idex_ebreak_r, idex_mret_r, idex_csr_r, idex_mext_r, idex_wfi_r;
-    reg         idex_fencei_r;
+    reg         idex_fencei_r, idex_fence_r;
     // Cac co dieu khien chi co hieu luc khi idex_valid = 1. Nho vay lenh bi huy boi redirect chi can xoa idex_valid
     // (1 flip-flop) thay vi xoa ~20 co o day, giam so flip-flop ma redirect phai toi.
     wire idex_lui = idex_lui_r & idex_valid;
@@ -274,7 +276,7 @@ module rv32im_pipeline #(
             idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
             idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
             idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
-            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0;
+            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0;
             idex_pred_taken <= 1'b0;
         end else if (ex_stall | frz) begin
             // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX
@@ -288,7 +290,7 @@ module rv32im_pipeline #(
                 idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
                 idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
                 idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
-                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0;
+                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0;
             end else begin
                 idex_pred_taken <= id_pred_taken;
                 idex_lui_r     <= is_lui & ifid_valid;
@@ -311,6 +313,7 @@ module rv32im_pipeline #(
                 idex_mret_r    <= is_mret & ifid_valid;
                 idex_wfi_r     <= is_wfi & ifid_valid;
                 idex_fencei_r  <= is_fencei & ifid_valid;
+                idex_fence_r   <= legal_fence & ifid_valid;
                 idex_csr_r     <= legal_csr & ifid_valid;
                 idex_mext_r    <= (is_reg & f7_m) & ifid_valid;
             end
@@ -338,7 +341,7 @@ module rv32im_pipeline #(
     // ============================================================
     // EX
     // ============================================================
-    reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store;
+    reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence;
     reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val;
     reg  [4:0]  exmem_rd;
     reg  [2:0]  exmem_funct3;
@@ -597,11 +600,13 @@ module rv32im_pipeline #(
             exmem_rd_we <= 1'b0;
             exmem_load  <= 1'b0;
             exmem_store <= 1'b0;
+            exmem_fence <= 1'b0;
         end else if (!frz) begin
             exmem_valid     <= idex_valid & ~ex_stall;      // M chua xong: nhan bong bay
             exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;
             exmem_load      <= idex_load & ~ex_stall & ~trap_ex;
             exmem_store     <= idex_store & ~ex_stall & ~trap_ex;
+            exmem_fence     <= idex_fence_r & idex_valid & ~ex_stall & ~trap_ex;
             exmem_pc        <= idex_pc;
             exmem_instr     <= idex_instr;
             exmem_rd        <= idex_rd;
@@ -638,7 +643,8 @@ module rv32im_pipeline #(
 
     assign dmem_we    = exmem_valid & exmem_store;
     assign dmem_re    = exmem_valid & exmem_load;
-    assign frz        = (dmem_we | dmem_re) & ~dmem_ready;
+    assign dmem_fence = exmem_valid & exmem_fence;
+    assign frz        = (dmem_we | dmem_re | dmem_fence) & ~dmem_ready;
     assign dmem_wdata = st_data;
     assign dmem_wstrb = dmem_we ? st_strb : 4'b0000;
 

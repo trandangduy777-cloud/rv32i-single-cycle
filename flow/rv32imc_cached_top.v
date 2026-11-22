@@ -17,7 +17,7 @@ module rv32imc_cached_top (
 );
     wire [31:0] imem_addr, imem_data, dmem_addr, dmem_wdata, dmem_rdata;
     wire [3:0]  dmem_wstrb;
-    wire        dmem_we, dmem_re, imem_ready, dmem_ready, icache_flush;
+    wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready, icache_flush;
     wire        ic_req, ic_ack, dc_req, dc_we, dc_ack;
     wire [31:0] ic_addr, dc_addr, dc_wdata, ic_miss, dc_miss;
     wire [3:0]  dc_wstrb;
@@ -26,7 +26,7 @@ module rv32imc_cached_top (
         .clk(clk), .rst_n(rst_n),
         .imem_addr(imem_addr), .imem_data(imem_data), .imem_ready(imem_ready),
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata), .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
-        .dmem_re(dmem_re), .dmem_rdata(dmem_rdata), .dmem_ready(dmem_ready),
+        .dmem_re(dmem_re), .dmem_fence(dmem_fence), .dmem_rdata(dmem_rdata), .dmem_ready(dmem_ready),
         .icache_flush(icache_flush),
         .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
     );
@@ -35,7 +35,7 @@ module rv32imc_cached_top (
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(m_rdata), .n_miss(ic_miss));
     // vung cacheable: 0x0000_0000-0x7FFF_FFFF; tu 0x8000_0000 tro len la thiet bi, di thang qua bus
     rv32_dcache #(.LINES(16), .WORDS(4), .CMASK(32'h8000_0000), .CBASE(32'h0000_0000)) u_dc (
-        .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .wstrb(dmem_wstrb),
+        .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .fence(dmem_fence), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(dmem_rdata), .ready(dmem_ready),
         .m_req(dc_req), .m_we(dc_we), .m_addr(dc_addr), .m_wdata(dc_wdata), .m_wstrb(dc_wstrb),
         .m_ack(dc_ack), .m_rdata(m_rdata), .n_miss(dc_miss));

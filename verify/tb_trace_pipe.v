@@ -12,7 +12,7 @@ module tb_trace_pipe;
 
     wire [31:0] imem_addr, dmem_addr, dmem_wdata, dmem_rdata, imem_data;
     wire [3:0]  dmem_wstrb;
-    wire        dmem_we, dmem_re, imem_ready, dmem_ready;
+    wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready;
 
 `ifdef PIPE_FULL
     rv32im_pipeline dut (            // RV32IM + CSR + trap
@@ -27,7 +27,7 @@ module tb_trace_pipe;
 `ifdef PIPE_FULL
 `ifndef NO_IRQ_PORTS
         , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)     // ngat duoc kiem tra rieng trong tb_irq.v
-        , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re)
+        , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re), .dmem_fence(dmem_fence)
 `endif
 `endif
     );
@@ -46,7 +46,7 @@ module tb_trace_pipe;
         .clk(clk), .rst_n(rst_n), .addr(imem_addr), .data(imem_data), .ready(imem_ready), .flush(1'b0),
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(ic_rdata), .n_miss(ic_miss));
     rv32_dcache #(.LINES(2), .WORDS(2), .CMASK(32'hFFFF_F000), .CBASE(32'h0000_0000)) u_dc (
-        .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .wstrb(dmem_wstrb),
+        .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .fence(dmem_fence), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(dmem_rdata), .ready(dmem_ready),
         .m_req(dc_req), .m_we(dc_we), .m_addr(dc_addr), .m_wdata(dc_wdata), .m_wstrb(dc_wstrb),
         .m_ack(dc_ack), .m_rdata(dc_rdata), .n_miss(dc_miss));
@@ -90,6 +90,33 @@ module tb_trace_pipe;
     end
 `endif
 
+
+`ifdef CACHE
+    // Bo dem ghi: store xong o MEM truoc khi toi bo nho. Mo hinh kien truc arch[] cap nhat khi store hoan tat (WB);
+    // khi FENCE / FENCE.I hoan tat, moi store truoc no phai da toi bo nho (dmem[] khop arch[] o moi dia chi).
+    reg [31:0] arch [0:1023];
+    integer    ai, n_fchk = 0;
+    always @(posedge clk) begin
+        if (rst_n && dut.wb_commit) begin
+            if (dut.memwb_tst && dut.memwb_taddr != TOHOST) begin
+                if (dut.memwb_tstrb[0]) arch[dut.memwb_taddr[11:2]][7:0]   = dut.memwb_tdata[7:0];
+                if (dut.memwb_tstrb[1]) arch[dut.memwb_taddr[11:2]][15:8]  = dut.memwb_tdata[15:8];
+                if (dut.memwb_tstrb[2]) arch[dut.memwb_taddr[11:2]][23:16] = dut.memwb_tdata[23:16];
+                if (dut.memwb_tstrb[3]) arch[dut.memwb_taddr[11:2]][31:24] = dut.memwb_tdata[31:24];
+            end
+            if (dut.memwb_instr[6:0] == 7'b0001111 && dut.memwb_instr[14:13] == 2'b00) begin   // FENCE, FENCE.I
+                for (ai = 0; ai < 1024; ai = ai + 1)
+                    if (dmem[ai] !== arch[ai]) begin
+                        $display("ERROR: FENCE tai pc=%08x hoan tat nhung bo nho tai tu %0d = %08x, dung la %08x",
+                                 dut.memwb_pc, ai, dmem[ai], arch[ai]);
+                        $finish;
+                    end
+                n_fchk = n_fchk + 1;
+            end
+        end
+    end
+`endif
+
     reg rd_w;
     // Tang commit (WB): in 1 dong cho moi lenh hoan tat, cung dinh dang voi ISS.
     // Lay mau o canh len: luc nay cac thanh ghi pipeline chua cap nhat (NBA), nen doc dung lenh dang o WB.
@@ -119,6 +146,9 @@ module tb_trace_pipe;
         if (!$value$plusargs("prog=%s", progfile)) progfile = "prog.hex";
         $readmemh(progfile, imem);
         if ($value$plusargs("dmem=%s", dmemfile)) $readmemh(dmemfile, dmem);
+`ifdef CACHE
+        for (i = 0; i < 1024; i = i + 1) arch[i] = dmem[i];
+`endif
 `ifdef CACHE
         if (!$value$plusargs("lat=%d", lat)) lat = 4;
         if (!$value$plusargs("seed=%d", seed)) seed = 1;
