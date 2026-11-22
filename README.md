@@ -8,10 +8,12 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 |---|---|---|---|---|
 | `rv32i_core.v`: single-cycle | RV32IM + CSR + trap | ≈ 23,0 ns (ngoại suy) * | 1,00 / 7,95 | 28.775 * |
 | `rv32i_pipeline.v`: 5 tầng | RV32I | ≈ 11,98 ns, ≈ 83 MHz | 1,29 / - | 36.466 |
-| `rv32im_pipeline.v`: 5 tầng | RV32IM(C) + CSR + trap + ngắt + WFI | ≈ 14,40 ns, ≈ 69 MHz ** | 1,32 / 5,00 | 47.129 ** |
+| `rv32im_pipeline.v`: 5 tầng | RV32IM(C) + CSR + trap + ngắt + WFI | ≈ 13,67 ns, ≈ 73 MHz ** | 1,32 / 5,00 | 51.623 ** |
+| như trên + cache 2 × 256 B | RV32IMC, bộ nhớ có độ trễ | ≈ 18,76 ns, ≈ 53 MHz *** | 1,55-1,94 / 5,14-5,37 | 137.359 *** |
 
 \* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
-\*\* Đo trước khi thêm ngắt và WFI (thêm 8 flip-flop cùng logic chọn mcause và dừng WFI, chưa chạy lại flow), với `ENABLE_C = 0`.
+\*\* Bản đầy đủ hiện tại với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC.
+\*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo.
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
 - **Cache và bộ nhớ có độ trễ**: pipeline RV32IM có bắt tay bộ nhớ (`imem_ready`, `dmem_ready`), cache lệnh và cache dữ liệu ánh xạ trực tiếp, bộ phân xử bus chung; chạy đúng từng lệnh so với Spike với bộ nhớ trễ ngẫu nhiên 1-8 chu kỳ mỗi từ.
@@ -50,6 +52,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `irq/` | Kiểm chứng ngắt và WFI: chương trình `irq_test.S`, testbench `tb_irq.v`, mutation test `mutate_irq.py` (xem mục Ngắt) |
 | `config_pipeline.json` | Cấu hình LibreLane cho pipeline RV32I thuần (`CLOCK_PERIOD` = 14 ns, đã chạy đạt timing) |
 | `config_pipeline_full.json` | Cấu hình LibreLane cho pipeline đầy đủ (`CLOCK_PERIOD` = 15 ns, đã chạy đạt timing) |
+| `config_pipeline_c.json`, `config_cached.json`, `flow/` | Cấu hình LibreLane và module đỉnh cho bản RV32IMC (đạt 15 ns) và bản có cache (không đạt), script `flow/run_flow.sh` |
 | `prog_base.hex` | Chương trình test chỉ gồm RV32I thuần (229 lệnh), dùng cho pipeline |
 | `asm.py` | Assembler mini sinh `prog.hex` (823 lệnh tự kiểm tra, gồm CSR/trap và M) |
 | `verify/` | Mô hình tham chiếu (ISS), bộ sinh chương trình ngẫu nhiên, so vết từng lệnh, mutation test (xem `verify/README.md`) |
@@ -176,7 +179,7 @@ Lợi ích đo trên pipeline RV32IM (bộ nhớ lý tưởng, `cosim/tb_cosim.v
 | `bench` | 756 B | 532 B (−29,6 %) | 33.119 | 43.738 / 43.738 |
 | `bench_m` | 688 B | 492 B (−28,5 %) | 14.657 | 73.314 / 73.314 |
 
-Số lệnh không đổi vì mỗi lệnh nén tương ứng đúng 1 lệnh 32 bit, và giải nén không thêm chu kỳ nào. Lợi ích là mã nhỏ hơn (bộ nhớ lệnh nhỏ hơn, ít băng thông nạp lệnh hơn). Cái giá là bộ giải nén nằm trên đường IF → IF/ID; chưa chạy flow với `ENABLE_C = 1`.
+Số lệnh không đổi vì mỗi lệnh nén tương ứng đúng 1 lệnh 32 bit, và giải nén không thêm chu kỳ nào. Lợi ích là mã nhỏ hơn (bộ nhớ lệnh nhỏ hơn, ít băng thông nạp lệnh hơn). Cái giá là bộ giải nén nằm trên đường IF → IF/ID; flow với `ENABLE_C = 1` vẫn đạt 15 ns với slack góc chậm +1,33 ns (xem mục Flow cho bản RV32IMC).
 
 Kiểm chứng (`rvc/`, `cosim/`):
 - `rvc/check_decompress.py`: duyệt **toàn bộ 49.152 mã lệnh 16 bit**. GNU objdump giải mã lệnh nén, rồi giải mã lệnh 32 bit mà RTL sinh ra đặt ở cùng địa chỉ (nên đích nhánh trùng nhau); hai chuỗi phải giống hệt. Khác biệt chỉ do alias (`mv` / `addi rd,rs,0`) được biên dịch lại bằng GNU as để so mã máy. Kết quả: 28.823 mã giải nén đúng, 20.329 mã illegal đúng, 0 lệch. Có 1.537 mã dành riêng theo đặc tả RV32C (shamt[5] = 1, `c.addi16sp` imm 0) mà objdump vẫn giải mã; RTL báo illegal, khớp Spike.
@@ -319,6 +322,28 @@ Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR,
 
 Ở clock 20 ns thiết kế không đạt setup ở góc chậm (slack -1,813 ns), nên chu kỳ được nới lên 24 ns.
 
+## Flow cho bản RV32IMC và bản có cache
+
+Chạy bằng `flow/run_flow.sh` (LibreLane, IHP SG13G2, SDC mặc định, clock 15 ns), số liệu trong `results/metrics_rv32imc_15ns.json` và `results/metrics_rv32imc_cached_15ns.json`. Module đỉnh: `flow/rv32imc_top.v` (lõi với `ENABLE_C = 1`, bộ nhớ ngoài như các lần flow trước) và `flow/rv32imc_cached_top.v` (lõi + cache lệnh + cache dữ liệu 16 dòng × 4 từ + bộ phân xử, ra ngoài một bus bộ nhớ).
+
+| Hạng mục | RV32IM, `STEPS = 2` (lần trước) | RV32IMC đầy đủ (hiện tại) | RV32IMC + 2 cache 256 B |
+|---|---|---|---|
+| Thêm so với cột trước | | lệnh nén C, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I` | cache, bộ phân xử bus |
+| Setup slack, góc chậm (1,08 V, 125 °C) | +0,601 ns | +1,334 ns | −3,763 ns (205 điểm cuối vi phạm) |
+| Setup slack, góc thường | | +6,322 ns | +3,281 ns |
+| Hold slack tồi nhất | +0,108 ns | +0,111 ns | +0,068 ns |
+| Chu kỳ tối thiểu (góc chậm) | 14,40 ns, ≈ 69,5 MHz | 13,67 ns, ≈ 73,2 MHz | 18,76 ns, ≈ 53 MHz |
+| Số instance (cell chuẩn) | 47.129 (18.130) | 51.623 (19.591) | 137.359 (51.120) |
+| Diện tích instance | 538.550 µm² | 562.587 µm² (+4,5 %) | 1.607.690 µm² (×2,9) |
+| Công suất ước tính (15 ns) | 14,56 mW | 17,89 mW | 43,82 mW |
+| DRC (route / Magic / KLayout), LVS, antenna | đạt | 0 / 0 / 0, 0, 0 | 0 / 0 / 0, 0, 0 |
+
+Cách đọc:
+- **Lệnh nén C và các tính năng thêm không làm chậm lõi**: slack góc chậm còn tốt hơn lần trước (+1,33 ns so với +0,60 ns). Bộ giải nén nằm trên đường IF → IF/ID, không phải đường tới hạn. Chênh 0,7 ns một phần là do biến động của P&R giữa hai lần chạy, nên không nên hiểu là "nhanh hơn" mà là "không chậm đi". Diện tích chỉ tăng 4,5 %.
+- **Bản có cache không đạt 15 ns ở góc chậm.** Nghi vấn chính (chưa xem báo cáo đường tới hạn): đường từ địa chỉ load ở MEM → so tag và chọn 1 trong 64 từ của cache dữ liệu → `dmem_ready` → `frz` → bật/tắt ghi của mọi thanh ghi pipeline; cộng thêm bộ chọn từ 64 đầu vào của cache lệnh trước IF/ID. Hướng sửa: đăng ký `dmem_ready` (thêm 1 chu kỳ cho load trúng cache), hoặc dùng SRAM thật thay mảng flip-flop.
+- **Diện tích gần gấp 3 vì 2 × (64 từ × 32 bit + tag + valid) ≈ 4.900 flip-flop (2 × (2.048 bit dữ liệu + 16 tag × 24 bit + 16 valid))** cộng bộ chọn lớn. Với macro SRAM thật, phần này nhỏ hơn nhiều; con số chỉ để tham khảo.
+- Có 7 (bản C) và 2 (bản cache) vi phạm max slew sau flow, không ảnh hưởng DRC/LVS.
+
 ## So sánh single-cycle và pipeline (cùng PDK, cùng flow, SDC mặc định)
 
 | Hạng mục | Single-cycle RV32I | Pipeline RV32I | Pipeline RV32IM | Pipeline RV32IM, có dự đoán | RV32IM, có dự đoán, `STEPS = 2` (hiện tại) |
@@ -439,12 +464,11 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chưa có `mtvec` chế độ vectored, chế độ User
-- Flow của RV32IM pipeline chưa chạy lại sau khi thêm ngắt và WFI
 - JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
 - Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song
 - Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chưa chạy trên Spike và chưa so với Spike khi có ngắt
-- Cache chưa có bộ đệm ghi, chưa set-associative, chưa chạy flow; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
-- Lệnh nén C chỉ có ở pipeline RV32IM và chưa chạy flow; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2
+- Cache chưa có bộ đệm ghi, chưa set-associative; bản có cache không đạt timing 15 ns và dùng flip-flop thay SRAM; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
+- Lệnh nén C chỉ có ở pipeline RV32IM; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
 - Chu kỳ tối thiểu của single-cycle là ngoại suy từ hai lần chạy, và công suất ở các chu kỳ khác nhau không so sánh trực tiếp được
