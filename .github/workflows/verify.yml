@@ -37,6 +37,7 @@ jobs:
           python3 run_verify.py --pipe --n 60
           python3 run_verify.py --pipem --n 60
           python3 run_verify.py --pipem --cache --n 60
+          python3 run_verify.py --pipem --cache --ways 2 --n 60
 
       - name: Ngat timer va ngat ngoai (pipeline RV32IM) va mutation test phan ngat
         run: |
@@ -47,9 +48,10 @@ jobs:
       - name: Bo giai nen lenh C, so ca 49.152 ma lenh 16 bit voi GNU objdump
         run: python3 rvc/check_decompress.py
 
-      - name: Cache lenh/du lieu, bo dem ghi va bo phan xu bus, kiem tra ngau nhien (5 cau hinh x 3 seed)
+      - name: Cache lenh/du lieu (1, 2, 4 duong), bo dem ghi va bo phan xu bus, kiem tra ngau nhien (9 cau hinh x 3 seed)
         run: |
-          for cfg in "-DL=4 -DW=2" "-DL=16 -DW=4" "-DL=2 -DW=8" "-DL=4 -DW=2 -DQ=1" "-DL=16 -DW=4 -DQ=3"; do
+          for cfg in "-DL=4 -DW=2" "-DL=16 -DW=4" "-DL=2 -DW=8" "-DL=4 -DW=2 -DQ=1" "-DL=16 -DW=4 -DQ=3" \
+                     "-DL=8 -DW=2 -DWY=2" "-DL=16 -DW=4 -DWY=2" "-DL=4 -DW=2 -DWY=4" "-DL=16 -DW=4 -DWY=4 -DQ=1"; do
             iverilog -g2012 $cfg -o cr.vvp cache/tb_cache_random.v rv32_icache.v rv32_dcache.v rv32_bus_arbiter.v
             for seed in 1 2 3; do
               vvp -n cr.vvp +seed=$seed +n=20000 +lat=6 | tee c.log

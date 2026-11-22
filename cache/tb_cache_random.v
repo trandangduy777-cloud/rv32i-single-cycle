@@ -18,8 +18,12 @@
 //   con nhieu store cung tu -> phai forward dung thu tu va chi tu cac muc con hieu luc; (b) 2-3 store lien tiep vao
 //   cung 1 tu khong cacheable roi load tu do: load phai cho bo dem ghi het.
 // - Bao loi va dung ngay o lan lech dau tien. Ket thuc: in so lan kiem tra, so lan truot, so lan dung bus.
-// Tham so: +seed=<so> +n=<so thao tac du lieu> +lat=<do tre toi da>. Kich thuoc cache: -DL=<dong> -DW=<tu/dong>,
-// so muc bo dem ghi: -DQ=<muc> (mac dinh 4)
+// - Mo hinh thay the doc lap (2 cache): testbench giu ban sao tag/valid/LRU cua tung tap, tu viet lai chinh sach
+//   (duong trong chi so nho nhat, LRU dung cho 2 duong, cay pseudo-LRU 3 bit cho 4 duong bang cong thuc tuong minh).
+//   Moi lan tra cuu: trung/truot va duong trung cua cache phai khop mo hinh; moi lan bat dau nap: duong bi thay phai
+//   khop. Sai chinh sach thay the khong lam sai du lieu nen chi co cach nay bat duoc.
+// Tham so: +seed=<so> +n=<so thao tac du lieu> +lat=<do tre toi da>. Kich thuoc cache: -DL=<tong so dong> -DW=<tu/dong>
+// -DWY=<so duong: 1, 2, 4> (so tap = L / WY), so muc bo dem ghi: -DQ=<muc> (mac dinh 4)
 module tb_cache_random;
     reg clk = 0, rst_n = 0;
     always #5 clk = ~clk;
@@ -32,6 +36,9 @@ module tb_cache_random;
 `endif
 `ifndef Q
 `define Q 4
+`endif
+`ifndef WY
+`define WY 1
 `endif
 
     localparam [31:0] DBASE = 32'h0000_1000;   // 1 KB cacheable: 0x1000-0x13FF
@@ -55,10 +62,10 @@ module tb_cache_random;
     reg         m_ack = 0;
     reg  [31:0] m_rdata;
 
-    rv32_icache #(.LINES(`L), .WORDS(`W)) u_ic (
+    rv32_icache #(.LINES(`L), .WORDS(`W), .WAYS(`WY)) u_ic (
         .clk(clk), .rst_n(rst_n), .addr(i_addr), .data(i_data), .ready(i_ready), .flush(i_flush),
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(m_rdata), .n_miss(ic_miss));
-    rv32_dcache #(.LINES(`L), .WORDS(`W), .WBUF(`Q), .CMASK(32'hFFFF_0000), .CBASE(32'h0000_0000)) u_dc (   // 0x0000-0xFFFF
+    rv32_dcache #(.LINES(`L), .WORDS(`W), .WAYS(`WY), .WBUF(`Q), .CMASK(32'hFFFF_0000), .CBASE(32'h0000_0000)) u_dc (   // 0x0000-0xFFFF
         .clk(clk), .rst_n(rst_n), .addr(d_addr), .re(d_re), .we(d_we), .fence(d_fence), .wstrb(d_wstrb),
         .wdata(d_wdata), .rdata(d_rdata), .ready(d_ready), .wb_empty(d_wb_empty),
         .m_req(dc_req), .m_we(dc_we), .m_addr(dc_addr), .m_wdata(dc_wdata), .m_wstrb(dc_wstrb),
@@ -95,6 +102,129 @@ module tb_cache_random;
             end else
                 wait_cnt = wait_cnt - 1;
         end
+    end
+
+    // ---- mo hinh thay the doc lap ----
+    localparam SETS = `L / `WY;
+    reg [29:0] md_tag [0:63], mi_tag [0:63];   // chi so = tap * WY + duong
+    reg        md_val [0:63], mi_val [0:63];
+    reg [2:0]  md_lru [0:63], mi_lru [0:63];   // 2 duong: bit 0 = duong se bi thay; 4 duong: {b2, b1, b0}
+    integer    mx, n_repl_chk = 0, n_look_chk = 0;
+
+    function [2:0] m_touch(input [2:0] st, input integer wy);
+        begin
+            m_touch = st;
+            if (`WY == 2) m_touch[0] = (wy == 0);                 // dung duong 0 -> lan sau thay duong 1
+            else if (`WY == 4) begin
+                if (wy < 2) begin m_touch[0] = 1'b1; m_touch[1] = (wy == 0); end   // b0: 1 = thay ben phai
+                else        begin m_touch[0] = 1'b0; m_touch[2] = (wy == 2); end
+            end
+        end
+    endfunction
+    function integer m_plru(input [2:0] st);
+        m_plru = (`WY == 1) ? 0 : (`WY == 2) ? st[0] : (st[0] ? (st[2] ? 3 : 2) : (st[1] ? 1 : 0));
+    endfunction
+    // tim trong mo hinh: tra ve duong trung, -1 neu truot
+    function integer m_find_d(input [29:0] line);
+        integer z, st;
+        begin
+            m_find_d = -1; st = line % SETS;
+            for (z = 0; z < `WY; z = z + 1) if (md_val[st * `WY + z] && md_tag[st * `WY + z] == line / SETS) m_find_d = z;
+        end
+    endfunction
+    function integer m_find_i(input [29:0] line);
+        integer z, st;
+        begin
+            m_find_i = -1; st = line % SETS;
+            for (z = 0; z < `WY; z = z + 1) if (mi_val[st * `WY + z] && mi_tag[st * `WY + z] == line / SETS) m_find_i = z;
+        end
+    endfunction
+
+    initial for (mx = 0; mx < 64; mx = mx + 1) begin md_val[mx] = 0; mi_val[mx] = 0; md_lru[mx] = 0; mi_lru[mx] = 0; end
+
+    // cache du lieu
+    reg  [29:0] md_line;
+    integer     md_way, md_set, md_vic, md_exp = -1, z;
+    always @(posedge clk) if (rst_n) begin
+        if (md_exp >= 0) begin                                    // duong da chon o lan bat dau nap truoc
+            if (u_dc.fill_way !== md_exp[1:0] && `WY > 1) begin
+                $display("[CACHE] FAIL: cache du lieu thay duong %0d, mo hinh chon duong %0d", u_dc.fill_way, md_exp);
+                $finish;
+            end
+            n_repl_chk = n_repl_chk + 1;
+            md_exp = -1;
+        end
+        md_line = d_addr[31:2] >> $clog2(`W);
+        md_set  = md_line % SETS;
+        md_way  = m_find_d(md_line);
+        if (u_dc.free && (d_re || d_we) && u_dc.cacheable) begin
+            if ((md_way >= 0) !== u_dc.hit || (md_way >= 0 && md_way != u_dc.hway)) begin
+                $display("[CACHE] FAIL: cache du lieu tra cuu %08x: cache %s duong %0d, mo hinh %s duong %0d", d_addr,
+                         u_dc.hit ? "trung" : "truot", u_dc.hway, md_way >= 0 ? "trung" : "truot", md_way);
+                $finish;
+            end
+            n_look_chk = n_look_chk + 1;
+            if (md_way >= 0 && (d_re || u_dc.push)) md_lru[md_set] = m_touch(md_lru[md_set], md_way);
+        end
+        if (d_re && md_way < 0 && u_dc.cacheable && (u_dc.state == 0 || (u_dc.state == 3 && dc_ack))) begin
+            md_vic = m_plru(md_lru[md_set]);
+            for (z = `WY - 1; z >= 0; z = z - 1) if (!md_val[md_set * `WY + z]) md_vic = z;
+            md_val[md_set * `WY + md_vic] = 0;
+            md_exp = md_vic;
+        end
+        if (u_dc.state == 1 && dc_ack && u_dc.fill_cnt == `W - 1) begin
+            md_tag[md_set * `WY + u_dc.fill_way] = md_line / SETS;
+            md_val[md_set * `WY + u_dc.fill_way] = 1;
+            md_lru[md_set] = m_touch(md_lru[md_set], u_dc.fill_way);
+        end
+    end
+
+    // cache lenh
+    reg  [29:0] mi_l0, mi_l1, mi_fl;
+    integer     mi_w0, mi_w1, mi_s0, mi_s1, mi_fs, mi_vic, mi_exp = -1;
+    reg         mi_need1, mi_kill = 0;
+    always @(posedge clk) if (rst_n) begin
+        if (mi_exp >= 0) begin
+            if (u_ic.fill_way !== mi_exp[1:0] && `WY > 1) begin
+                $display("[CACHE] FAIL: cache lenh thay duong %0d, mo hinh chon duong %0d", u_ic.fill_way, mi_exp);
+                $finish;
+            end
+            n_repl_chk = n_repl_chk + 1;
+            mi_exp = -1;
+        end
+        mi_need1 = i_addr[1];
+        mi_l0 = i_addr[31:2] >> $clog2(`W);
+        mi_l1 = (i_addr[31:2] + 1) >> $clog2(`W);
+        mi_s0 = mi_l0 % SETS; mi_s1 = mi_l1 % SETS;
+        mi_w0 = m_find_i(mi_l0); mi_w1 = m_find_i(mi_l1);
+        if (u_ic.state == 0) begin
+            if ((mi_w0 >= 0) !== u_ic.hit0 || (mi_w0 >= 0 && mi_w0 != u_ic.way0) ||
+                (mi_need1 && ((mi_w1 >= 0) !== u_ic.hit1 || (mi_w1 >= 0 && mi_w1 != u_ic.way1)))) begin
+                $display("[CACHE] FAIL: cache lenh tra cuu %08x: cache %b/%b duong %0d/%0d, mo hinh duong %0d/%0d",
+                         i_addr, u_ic.hit0, u_ic.hit1, u_ic.way0, u_ic.way1, mi_w0, mi_w1);
+                $finish;
+            end
+            n_look_chk = n_look_chk + 1;
+            if (mi_w0 >= 0) mi_lru[mi_s0] = m_touch(mi_lru[mi_s0], mi_w0);
+            if (mi_need1 && mi_w1 >= 0) mi_lru[mi_s1] = m_touch(mi_lru[mi_s1], mi_w1);
+            if (!(mi_w0 >= 0 && (!mi_need1 || mi_w1 >= 0))) begin
+                mi_fl = mi_w0 < 0 ? mi_l0 : mi_l1;
+                mi_fs = mi_fl % SETS;
+                mi_vic = m_plru(mi_lru[mi_fs]);
+                for (z = `WY - 1; z >= 0; z = z - 1) if (!mi_val[mi_fs * `WY + z]) mi_vic = z;
+                if (!i_flush) mi_val[mi_fs * `WY + mi_vic] = 0;
+                mi_kill = i_flush;
+                mi_exp = mi_vic;
+            end
+        end else begin
+            if (i_flush) mi_kill = 1;
+            if (ic_ack && u_ic.fill_cnt == `W - 1) begin
+                mi_tag[mi_fs * `WY + u_ic.fill_way] = mi_fl / SETS;
+                mi_val[mi_fs * `WY + u_ic.fill_way] = !(mi_kill || i_flush);
+                mi_lru[mi_fs] = m_touch(mi_lru[mi_fs], u_ic.fill_way);
+            end
+        end
+        if (i_flush) for (z = 0; z < `L; z = z + 1) mi_val[z] = 0;
     end
 
     // ---- bat bien bo dem ghi: con du lieu thi cache du lieu phai dang giu yeu cau bus (tru chu ky vua nhan store) ----
@@ -201,7 +331,8 @@ module tb_cache_random;
                 bn = 2 + $urandom(seed) % 3;
                 if ($urandom(seed) % 3) begin
                     hx = DBASE + 32'h40 + (($urandom(seed) % 2) << 2);          // 2 tu nong, cung dong khi W >= 2
-                    t_load(hx + `L * `W * 4);                                   // cung chi so, khac tag: day X ra
+                    for (bi = 1; bi <= 2 * `WY; bi = bi + 1)                    // cung tap, khac tag: day X ra
+                        t_load(hx + bi * (`L / `WY) * `W * 4);
                     for (bi = 0; bi < bn; bi = bi + 1) t_store_rand(hx);
                     t_load(hx);                                                 // truot, bo dem con store vao X
                 end else begin
@@ -269,7 +400,7 @@ module tb_cache_random;
                 @(posedge clk);
                 n_ld = n_ld + 1;
             end
-            d_we = 0; d_re = 0;
+            #1 d_we = 0; d_re = 0;                           // ha sau canh len 1 ns, khong dua voi cac khoi lay mau o canh
             // thinh thoang de trong vai chu ky
             if ($urandom(seed) % 4 == 0) repeat ($urandom(seed) % 3) @(posedge clk);
         end
@@ -282,8 +413,8 @@ module tb_cache_random;
                 $display("[CACHE] FAIL: bo nho tai %08x = %08x, dung la %08x", i << 2, mem[i], refm[i]);
                 $finish;
             end
-        $display("[CACHE] PASS: %0d load (%0d thiet bi), %0d store (%0d vao vung ma), %0d fence, %0d chuoi don dap, %0d lan kiem tra cache lenh; truot: lenh %0d, du lieu %0d; %0d lan dung bus; bo dem ghi: day %0d chu ky, forward %0d tu",
-                 n_ld, n_dev, n_st, n_code_wr, n_fence, n_burst, n_ichk, ic_miss, dc_miss, n_bus, u_dc.n_wbfull, u_dc.n_fwd);
+        $display("[CACHE] PASS: %0d load (%0d thiet bi), %0d store (%0d vao vung ma), %0d fence, %0d chuoi don dap, %0d lan kiem tra cache lenh, %0d tra cuu + %0d lan thay the khop mo hinh; truot: lenh %0d, du lieu %0d; %0d lan dung bus; bo dem ghi: day %0d chu ky, forward %0d tu",
+                 n_ld, n_dev, n_st, n_code_wr, n_fence, n_burst, n_ichk, n_look_chk, n_repl_chk, ic_miss, dc_miss, n_bus, u_dc.n_wbfull, u_dc.n_fwd);
         $finish;
     end
 

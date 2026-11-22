@@ -1,4 +1,4 @@
-// Cache du lieu anh xa truc tiep, ghi xuyen (write-through) qua bo dem ghi (write buffer), khong cap phat khi ghi
+// Cache du lieu set-associative (WAYS duong; WAYS = 1: anh xa truc tiep), ghi xuyen (write-through) qua bo dem ghi (write buffer), khong cap phat khi ghi
 // (no-write-allocate), tu viet.
 // - Phia loi (tang MEM cua pipeline): addr, re (load), we + wstrb + wdata (store), fence (FENCE / FENCE.I).
 //   ready = 1 khi thao tac xong trong chu ky nay; voi load, rdata hop le cung chu ky.
@@ -15,10 +15,15 @@
 // - Thu tu voi cache lenh (FENCE.I): bo phan xu bus uu tien phia du lieu va bo dem giu m_req lien tuc khi con du lieu,
 //   nen moi store vao bo dem truoc mot lan nap cua cache lenh deu toi bo nho truoc lan nap do.
 // - Vung cacheable: (addr & CMASK) == CBASE.
+// - Thay the: duong con trong co chi so nho nhat, neu tap day thi theo cay pseudo-LRU (WAYS - 1 bit moi tap; WAYS = 2
+//   la LRU dung). Load trung va store trung danh dau duong do moi dung nhat (lan nap xong khong can: load dang cho
+//   trung ngay chu ky sau). LINES la tong so dong,
+//   so tap = LINES / WAYS (dung luong khong doi khi doi WAYS).
 // - Bus: 1 yeu cau moi lan, m_req giu cho toi khi m_ack (1 chu ky); m_rdata hop le khi m_ack voi lenh doc.
 module rv32_dcache #(
     parameter        LINES = 16,
     parameter        WORDS = 4,
+    parameter        WAYS  = 1,
     parameter        WBUF  = 4,                 // so muc bo dem ghi (>= 1)
     parameter [31:0] CMASK = 32'h0000_0000,     // mac dinh: ca bo nho deu cacheable
     parameter [31:0] CBASE = 32'h0000_0000
@@ -46,21 +51,71 @@ module rv32_dcache #(
     // thong ke
     output reg  [31:0] n_miss
 );
-    localparam IB = $clog2(LINES);
+    localparam SETS = LINES / WAYS;
+    localparam LS = $clog2(SETS);         // bit chi so tap (co the bang 0)
+    localparam SB = (LS > 0) ? LS : 1;
     localparam WB = $clog2(WORDS);
-    localparam TB = 30 - IB - WB;
+    localparam TB = 30 - LS - WB;
+    localparam AB = (WAYS > 1) ? $clog2(WAYS) : 1;
+    localparam PB = (WAYS > 1) ? WAYS - 1 : 1;
     localparam QB = (WBUF > 1) ? $clog2(WBUF) : 1;
 
+    // dong vat ly = tap * WAYS + duong
     reg [TB-1:0] tag_r [0:LINES-1];
     reg          val_r [0:LINES-1];
     reg [31:0]   mem_r [0:LINES*WORDS-1];
+    reg [PB-1:0] plru_r [0:SETS-1];
 
     wire [29:0]   w   = addr[31:2];
-    wire [IB-1:0] idx = w[WB +: IB];
+    wire [SB-1:0] idx = (LS > 0) ? w[WB +: SB] : {SB{1'b0}};
     wire [TB-1:0] tg  = w[29 -: TB];
     wire          cacheable = ((addr & CMASK) == CBASE);
-    wire          hit = cacheable & val_r[idx] & (tag_r[idx] == tg);
-    wire [31:0]   cdata = mem_r[w[IB+WB-1:0]];
+
+    reg           hit_any;
+    reg [AB-1:0]  hway;
+    integer       q, qv;
+    always @* begin
+        hit_any = 1'b0; hway = {AB{1'b0}};
+        for (q = 0; q < WAYS; q = q + 1)
+            if (val_r[idx * WAYS + q] && tag_r[idx * WAYS + q] == tg) begin hit_any = 1'b1; hway = q; end
+    end
+    wire          hit = cacheable & hit_any;
+    wire [31:0]   cdata = mem_r[(idx * WAYS + hway) * WORDS + w[WB-1:0]];
+
+    // ---- pseudo-LRU dang cay (giong rv32_icache.v): nut n co con 2n+1 (trai), 2n+2 (phai), la WAYS-1+w la duong w;
+    //      bit = 0: nan nhan o cay con trai. Danh dau w moi dung: moi nut tu goc xuong w tro sang phia ben kia.
+    function [PB-1:0] plru_touch(input [PB-1:0] b, input [AB-1:0] wy);
+        integer lv, node, half, lo;
+        begin
+            plru_touch = b;
+            if (WAYS > 1) begin
+                node = 0; lo = 0; half = WAYS / 2;
+                for (lv = 0; lv < AB; lv = lv + 1) begin
+                    if (wy < lo + half) begin plru_touch[node] = 1'b1; node = 2 * node + 1; end
+                    else                begin plru_touch[node] = 1'b0; node = 2 * node + 2; lo = lo + half; end
+                    half = half / 2;
+                end
+            end
+        end
+    endfunction
+    function [AB-1:0] plru_victim(input [PB-1:0] b);
+        integer lv, node;
+        begin
+            node = 0;
+            if (WAYS > 1)
+                for (lv = 0; lv < AB; lv = lv + 1) node = b[node] ? 2 * node + 2 : 2 * node + 1;
+            plru_victim = (WAYS > 1) ? node - (WAYS - 1) : {AB{1'b0}};
+        end
+    endfunction
+
+    // duong se thay khi load truot: duong trong (chi so nho nhat) hoac theo pseudo-LRU
+    reg [AB-1:0] victim;
+    always @* begin
+        victim = plru_victim(plru_r[idx]);
+        for (qv = WAYS - 1; qv >= 0; qv = qv - 1)
+            if (!val_r[idx * WAYS + qv]) victim = qv;
+    end
+    reg [AB-1:0] fill_way;
 
     localparam IDLE = 2'd0, FILL = 2'd1, UNC = 2'd2, DRN = 2'd3;
     reg [1:0]    state;
@@ -137,6 +192,7 @@ module rv32_dcache #(
             q_tail   <= {QB{1'b0}};
             q_cnt    <= {(QB+1){1'b0}};
             for (k = 0; k < LINES; k = k + 1) val_r[k] <= 1'b0;
+            for (k = 0; k < SETS; k = k + 1) plru_r[k] <= {PB{1'b0}};
         end else begin
             q_cnt <= q_next;
             if (push) begin
@@ -144,8 +200,9 @@ module rv32_dcache #(
                 q_data[q_tail] <= wdata;
                 q_strb[q_tail] <= wstrb;
                 q_tail <= q_inc(q_tail);
-                if (hit) mem_r[w[IB+WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);
+                if (hit) mem_r[(idx * WAYS + hway) * WORDS + w[WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);
             end
+            if (ld_hit | (push & hit)) plru_r[idx] <= plru_touch(plru_r[idx], hway);
             if (pop) begin
                 q_head  <= q_inc(q_head);
                 n_drain <= n_drain + 32'd1;
@@ -159,7 +216,8 @@ module rv32_dcache #(
                     if (rd_miss & cacheable) begin               // nap dong ngay, khong cho bo dem
                         state      <= FILL;
                         fill_cnt   <= {WB{1'b0}};
-                        val_r[idx] <= 1'b0;                      // dong cu bi thay
+                        fill_way   <= victim;
+                        val_r[idx * WAYS + victim] <= 1'b0;      // dong cu bi thay
                         n_miss     <= n_miss + 32'd1;
                     end else if (rd_miss & wb_empty)             // ngoai vung cacheable, bo dem da rong
                         state <= UNC;
@@ -170,18 +228,20 @@ module rv32_dcache #(
                     if (rd_miss & cacheable) begin               // load truot dang cho: nap dong ngay sau lan ghi nay
                         state      <= FILL;
                         fill_cnt   <= {WB{1'b0}};
-                        val_r[idx] <= 1'b0;
+                        fill_way   <= victim;
+                        val_r[idx * WAYS + victim] <= 1'b0;
                         n_miss     <= n_miss + 32'd1;
                     end else if (q_next == 0)                    // ghi het: doc ngoai vung (neu dang cho) hoac nghi
                         state <= rd_miss ? UNC : IDLE;
                 end
                 FILL: if (m_ack) begin
-                    mem_r[{idx, fill_cnt}] <= fill_data;
+                    mem_r[(idx * WAYS + fill_way) * WORDS + fill_cnt] <= fill_data;
                     if (fill_fwd) n_fwd <= n_fwd + 32'd1;
                     fill_cnt <= fill_cnt + 1'b1;
                     if (fill_cnt == {WB{1'b1}}) begin
-                        tag_r[idx] <= tg;
-                        val_r[idx] <= 1'b1;
+                        tag_r[idx * WAYS + fill_way] <= tg;
+                        val_r[idx * WAYS + fill_way] <= 1'b1;
+                        // khong can danh dau LRU o day: load dang cho luon trung o chu ky ngay sau va danh dau duong nay
                         state <= wb_empty ? IDLE : DRN;          // chu ky sau trung cache -> ready (IDLE va DRN deu phuc vu)
                     end
                 end
