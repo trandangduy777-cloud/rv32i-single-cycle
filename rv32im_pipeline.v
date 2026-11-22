@@ -31,7 +31,8 @@
 // Can bien dich cung rv32i_core.v (de lay module rv32m) va rv32c_decompress.v.
 module rv32im_pipeline #(
     parameter [31:0] RESET_PC = 32'h0000_0000,  // dia chi lenh dau tien sau reset (chia het cho 4, hoac 2 khi ENABLE_C)
-    parameter        ENABLE_C = 0                // 1: ho tro lenh nen 16 bit (mo rong C)
+    parameter        ENABLE_C = 0,               // 1: ho tro lenh nen 16 bit (mo rong C)
+    parameter        MISALIGNED = 0              // 1: load/store lech dia chi chay bang phan cung thay vi trap
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -474,8 +475,11 @@ module rv32im_pipeline #(
     // load/store lech dia chi: chi can 2 bit thap cua dia chi hieu dung (cong 2 bit, khong cho adder 32 bit)
     wire [1:0]  ea_lo = op_a[1:0] + idex_imm[1:0];
     wire [31:0] ea    = op_a + idex_imm;
-    wire ld_misal = idex_load  & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
-    wire st_misal = idex_store & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
+    // MISALIGNED = 1: khong trap, tang MEM tu xu ly (xem phan MEM)
+    wire ld_misal = (MISALIGNED == 0) & idex_load  &
+                    (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
+    wire st_misal = (MISALIGNED == 0) & idex_store &
+                    (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
 
     wire trap_ex = irq_take | idex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal | st_misal;
     wire mret_ex = idex_mret & ~irq_take & ~frz;
@@ -619,60 +623,78 @@ module rv32im_pipeline #(
     // ============================================================
     // MEM
     // ============================================================
-    assign dmem_addr = exmem_result;
+    // Truy cap theo byte: du lieu dich trai byte_off byte tren 64 bit, wstrb 8 bit (4 bit thap: tu chua dia chi,
+    // 4 bit cao: tu ke tiep). Truy cap can chinh hoac lech nhung nam gon trong 1 tu (vd. half o byte 1) chi dung 4 bit
+    // thap: 1 lan truy cap nhu cu. Truy cap vat qua ranh gioi tu (word o byte 1..3, half o byte 3; chi khi
+    // MISALIGNED = 1, neu khong da trap o EX) tach thanh 2 pha o MEM: pha 0 truy cap tu thap, pha 1 tu cao. Pipeline
+    // dong bang (frz) tu pha 0 toi khi pha 1 xong; load giu 32 bit cua pha 0 trong ma_lo roi ghep voi tu cao.
     wire [1:0] byte_off = exmem_result[1:0];
-
-    reg [31:0] st_data;
-    reg [3:0]  st_strb;
+    reg  [63:0] st_wide;
+    reg  [7:0]  st_strb8;
     always @* begin
         case (exmem_funct3[1:0])
-            2'b00: begin
-                st_data = {4{exmem_store_val[7:0]}};
-                st_strb = 4'b0001 << byte_off;
-            end
-            2'b01: begin
-                st_data = {2{exmem_store_val[15:0]}};
-                st_strb = byte_off[1] ? 4'b1100 : 4'b0011;
-            end
-            default: begin
-                st_data = exmem_store_val;
-                st_strb = 4'b1111;
-            end
+            2'b00:   begin st_wide = {56'b0, exmem_store_val[7:0]};  st_strb8 = 8'b0000_0001; end
+            2'b01:   begin st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0011; end
+            default: begin st_wide = {32'b0, exmem_store_val};       st_strb8 = 8'b0000_1111; end
         endcase
+        st_wide  = st_wide << {byte_off, 3'b000};
+        st_strb8 = st_strb8 << byte_off;
     end
+    // so byte cua truy cap (load hoac store) vuot qua tu hien tai
+    wire [7:0] acc_strb8 = (exmem_funct3[1:0] == 2'b00 ? 8'b0000_0001 :
+                            exmem_funct3[1:0] == 2'b01 ? 8'b0000_0011 : 8'b0000_1111) << byte_off;
+    wire       ma_cross  = (MISALIGNED != 0) & exmem_valid & (exmem_load | exmem_store) & (acc_strb8[7:4] != 4'b0000);
+    reg        ma_phase;                                   // 1: dang o pha 1 (tu cao) cua truy cap vat qua tu
+    reg [31:0] ma_lo;                                      // load: tu thap doc o pha 0
+
+    wire [31:0] st_data = ma_phase ? st_wide[63:32] : st_wide[31:0];
+    wire [3:0]  st_strb = ma_phase ? st_strb8[7:4]  : st_strb8[3:0];
+
+    // pha 1: dia chi tu ke tiep (can chinh); pha 0 cua truy cap vat qua tu: dia chi tu thap can chinh
+    assign dmem_addr = ma_phase ? {exmem_result[31:2] + 30'd1, 2'b00} :
+                       ma_cross ? {exmem_result[31:2], 2'b00} : exmem_result;
 
     assign dmem_we    = exmem_valid & exmem_store;
     assign dmem_re    = exmem_valid & exmem_load;
     assign dmem_fence = exmem_valid & exmem_fence;
-    assign frz        = (dmem_we | dmem_re | dmem_fence) & ~dmem_ready;
+    // lenh o MEM xong khi bo nho san sang va (khong vat qua tu, hoac dang o pha cuoi)
+    wire   mem_last   = ~ma_cross | ma_phase;
+    assign frz        = (dmem_we | dmem_re | dmem_fence) & ~(dmem_ready & mem_last);
     assign dmem_wdata = st_data;
     assign dmem_wstrb = dmem_we ? st_strb : 4'b0000;
 
-    reg [31:0] ld_data;
-    reg [7:0]  ld_byte;
-    reg [15:0] ld_half;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)                             ma_phase <= 1'b0;
+        else if (ma_cross & dmem_ready) begin
+            ma_phase <= ~ma_phase;                         // pha 0 xong -> pha 1; pha 1 xong -> ve 0 (lenh roi MEM)
+            if (!ma_phase) ma_lo <= dmem_rdata;
+        end
+    end
+
+    // load: ghep 2 tu (pha 1) hoac 1 tu, dich phai byte_off byte, roi mo rong dau / khong dau
+    wire [63:0] ld_wide = ma_phase ? {dmem_rdata, ma_lo} : {32'b0, dmem_rdata};
+    wire [31:0] ld_sh   = ld_wide >> {byte_off, 3'b000};
+    reg  [31:0] ld_data;
     always @* begin
-        ld_byte = dmem_rdata >> {byte_off, 3'b000};
-        ld_half = byte_off[1] ? dmem_rdata[31:16] : dmem_rdata[15:0];
         case (exmem_funct3)
-            3'b000:  ld_data = {{24{ld_byte[7]}},  ld_byte};
-            3'b001:  ld_data = {{16{ld_half[15]}}, ld_half};
-            3'b100:  ld_data = {24'b0, ld_byte};
-            3'b101:  ld_data = {16'b0, ld_half};
-            default: ld_data = dmem_rdata;
+            3'b000:  ld_data = {{24{ld_sh[7]}},  ld_sh[7:0]};
+            3'b001:  ld_data = {{16{ld_sh[15]}}, ld_sh[15:0]};
+            3'b100:  ld_data = {24'b0, ld_sh[7:0]};
+            3'b101:  ld_data = {16'b0, ld_sh[15:0]};
+            default: ld_data = ld_sh;
         endcase
     end
 
     wire [31:0] mem_val = exmem_load ? ld_data : exmem_result;
-    wire [31:0] st_mask = {{8{st_strb[3]}}, {8{st_strb[2]}}, {8{st_strb[1]}}, {8{st_strb[0]}}};
 
     // ============================================================
     // MEM/WB (cac truong memwb_t* chi de testbench in vet)
     // ============================================================
     reg  [31:0] memwb_pc, memwb_instr;
     reg         memwb_tst;
-    reg  [31:0] memwb_taddr, memwb_tdata;
-    reg  [3:0]  memwb_tstrb;
+    reg  [31:0] memwb_taddr;
+    reg  [63:0] memwb_tdata;                       // store vat qua tu: 64 bit va wstrb 8 bit (xem phan MEM)
+    reg  [7:0]  memwb_tstrb;
     reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
     wire        wb_commit = memwb_valid & memwb_new;   // moi lenh hoan tat dung 1 chu ky (testbench in vet theo day)
 
@@ -693,9 +715,9 @@ module rv32im_pipeline #(
             memwb_pc    <= exmem_pc;
             memwb_instr <= exmem_instr;
             memwb_tst   <= dmem_we;
-            memwb_taddr <= dmem_we ? dmem_addr : 32'd0;
-            memwb_tdata <= dmem_we ? (st_data & st_mask) : 32'd0;
-            memwb_tstrb <= dmem_we ? st_strb : 4'd0;
+            memwb_taddr <= dmem_we ? exmem_result : 32'd0;
+            memwb_tdata <= dmem_we ? st_wide : 64'd0;      // st_wide chi co cac byte duoc ghi (con lai la 0)
+            memwb_tstrb <= dmem_we ? st_strb8 : 8'd0;
         end
     end
 endmodule

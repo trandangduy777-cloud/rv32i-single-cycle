@@ -40,10 +40,11 @@ def lui_addi(rd, val):
 
 
 class Gen:
-    def __init__(self, seed, n_body=300, profile="full"):
+    def __init__(self, seed, n_body=300, profile="full", ma=False):
         """profile: "full" = RV32IM + CSR + trap; "irq" = "full" + CSR ngat mie/mip; "base" = chi RV32I thuan"""
         self.r = random.Random(seed)
         self.n_body = n_body
+        self.ma = ma            # True: load/store lech chay bang phan cung (MISALIGNED = 1), sinh nhieu hon
         self.base = (profile == "base")
         self.csrs = CSR_LIST + ([("mie", 0x304), ("mip", 0x344)] if profile == "irq" else [])
         self.bad_csrs = [0x000, 0x7C0, 0xB00, 0xC00, 0xF11, 0x100, 0x3A0] + ([] if profile == "irq" else [0x304, 0x344])
@@ -294,7 +295,7 @@ class Gen:
         return [enc_b(imm, self.reg(), self.reg(), BR[name], 0b1100011)]
 
     def u_misal_mem(self):
-        # load/store lech dia chi: luon trap (cause 4 / 6, mtval = dia chi)
+        # load/store lech dia chi: trap (cause 4 / 6, mtval = dia chi), hoac chay binh thuong khi ma = True
         r = self.r
         base, off = self.mem_base()
         name = r.choice(["lh", "lhu", "lw", "sh", "sw"])
@@ -324,7 +325,7 @@ class Gen:
         if not self.base:
             makers += [(self.u_muldiv, 8), (self.u_divovf, 1),
                        (self.u_csr, 7), (self.u_mie, 2), (self.u_ecall, 1), (self.u_mret, 1),
-                       (self.u_illegal, 4), (self.u_misaligned, 2), (self.u_misal_mem, 3)]
+                       (self.u_illegal, 4), (self.u_misaligned, 2), (self.u_misal_mem, 12 if self.ma else 3)]
         fns = [m for m, w in makers]
         wts = [w for m, w in makers]
         units = []

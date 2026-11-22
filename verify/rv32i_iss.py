@@ -30,7 +30,8 @@ def s32(v):
 
 
 class ISS:
-    def __init__(self, prog, dmem=None, irq_csrs=False):
+    def __init__(self, prog, dmem=None, irq_csrs=False, misaligned_hw=False):
+        self.ma = misaligned_hw          # True: load/store lech dia chi chay binh thuong (khong trap), giong MISALIGNED = 1
         self.imem = list(prog) + [NOP] * (MEM_WORDS - len(prog))
         self.dmem = list(dmem) + [0] * (MEM_WORDS - len(dmem)) if dmem else [0] * MEM_WORDS
         self.x = [0] * 32
@@ -142,30 +143,42 @@ class ISS:
         elif op == 0b0000011 and f3 in (0, 1, 2, 4, 5):
             name = {0: "lb", 1: "lh", 2: "lw", 4: "lbu", 5: "lhu"}[f3]
             addr = (a + imm_i) & M32
-            word = self.dmem[(addr >> 2) & (MEM_WORDS - 1)]
             off = addr & 3
-            byte = (word >> (8 * off)) & 0xFF
-            half = (word >> 16) & 0xFFFF if (off & 2) else word & 0xFFFF
+            if self.ma:
+                # doc 2 tu lien tiep va lay dung so byte tu vi tri off (co the vat qua tu)
+                w64 = self.dmem[(addr >> 2) & (MEM_WORDS - 1)] | (self.dmem[((addr >> 2) + 1) & (MEM_WORDS - 1)] << 32)
+                v = w64 >> (8 * off)
+                byte, half, word = v & 0xFF, v & 0xFFFF, v & M32
+            else:
+                word = self.dmem[(addr >> 2) & (MEM_WORDS - 1)]
+                byte = (word >> (8 * off)) & 0xFF
+                half = (word >> 16) & 0xFFFF if (off & 2) else word & 0xFFFF
             val = {0: sx(byte, 8), 1: sx(half, 16), 2: word, 4: byte, 5: half}[f3] & M32
             wr = (rd, val)
-            if (f3 in (1, 5) and addr & 1) or (f3 == 2 and addr & 3):
+            if not self.ma and ((f3 in (1, 5) and addr & 1) or (f3 == 2 and addr & 3)):
                 trap = (4, addr)
         elif op == 0b0100011 and f3 in (0, 1, 2):
             name = {0: "sb", 1: "sh", 2: "sw"}[f3]
             addr = (a + imm_s) & M32
             off = addr & 3
-            if f3 == 0:
-                data = (b & 0xFF) * 0x01010101; strb = 1 << off
-            elif f3 == 1:
-                data = (b & 0xFFFF) * 0x00010001; strb = 0xC if (off & 2) else 0x3
+            if self.ma:
+                # du lieu dich trai off byte tren 64 bit, wstrb 8 bit (4 bit cao: tu ke tiep), giong RTL
+                size = {0: 1, 1: 2, 2: 4}[f3]
+                strb = ((1 << size) - 1) << off
+                store = (addr, (b & ((1 << (8 * size)) - 1)) << (8 * off), strb)
             else:
-                data = b; strb = 0xF
-            mask = 0
-            for i in range(4):
-                if strb >> i & 1:
-                    mask |= 0xFF << (8 * i)
-            store = (addr, data & mask, strb)
-            if (f3 == 1 and addr & 1) or (f3 == 2 and addr & 3):
+                if f3 == 0:
+                    data = (b & 0xFF) * 0x01010101; strb = 1 << off
+                elif f3 == 1:
+                    data = (b & 0xFFFF) * 0x00010001; strb = 0xC if (off & 2) else 0x3
+                else:
+                    data = b; strb = 0xF
+                mask = 0
+                for i in range(4):
+                    if strb >> i & 1:
+                        mask |= 0xFF << (8 * i)
+                store = (addr, data & mask, strb)
+            if not self.ma and ((f3 == 1 and addr & 1) or (f3 == 2 and addr & 3)):
                 trap = (6, addr)
         elif op == 0b0010011 and (f3 not in (1, 5) or
                                   (f3 == 1 and f7 == 0) or (f3 == 5 and f7 in (0, 0x20))):
@@ -279,17 +292,20 @@ class ISS:
             line_rd, line_val = 0, 0
         if store:
             addr, data, strb = store
-            line = (f"pc={pc:08x} ins={ins:08x} rd={line_rd} val={line_val:08x} "
-                    f"st=1 addr={addr:08x} data={data:08x} strb={strb:x}")
+            if strb >> 4:                # vat qua tu: in 64 bit / wstrb 8 bit nhu testbench RTL
+                line = (f"pc={pc:08x} ins={ins:08x} rd={line_rd} val={line_val:08x} "
+                        f"st=1 addr={addr:08x} data={data:016x} strb={strb:02x}")
+            else:
+                line = (f"pc={pc:08x} ins={ins:08x} rd={line_rd} val={line_val:08x} "
+                        f"st=1 addr={addr:08x} data={data:08x} strb={strb:x}")
             if addr == TOHOST:
                 self.halted = True
             else:
-                idx = (addr >> 2) & (MEM_WORDS - 1)
-                w = self.dmem[idx]
-                for i in range(4):
+                for i in range(8):
                     if strb >> i & 1:
-                        w = (w & ~(0xFF << (8 * i))) | (data & (0xFF << (8 * i)))
-                self.dmem[idx] = w & M32
+                        idx = ((addr >> 2) + i // 4) & (MEM_WORDS - 1)
+                        sh = 8 * (i % 4)
+                        self.dmem[idx] = (self.dmem[idx] & ~(0xFF << sh) | ((data >> (8 * i)) & 0xFF) << sh) & M32
         else:
             line = (f"pc={pc:08x} ins={ins:08x} rd={line_rd} val={line_val:08x} "
                     f"st=0 addr=00000000 data=00000000 strb=0")

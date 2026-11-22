@@ -15,7 +15,11 @@ module tb_trace_pipe;
     wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready;
 
 `ifdef PIPE_FULL
+`ifdef MA
+    rv32im_pipeline #(.MISALIGNED(1)) dut (    // -DMA: load/store lech dia chi bang phan cung
+`else
     rv32im_pipeline dut (            // RV32IM + CSR + trap
+`endif
 `else
     rv32i_pipeline dut (             // RV32I thuan
 `endif
@@ -98,14 +102,14 @@ module tb_trace_pipe;
     // Bo dem ghi: store xong o MEM truoc khi toi bo nho. Mo hinh kien truc arch[] cap nhat khi store hoan tat (WB);
     // khi FENCE / FENCE.I hoan tat, moi store truoc no phai da toi bo nho (dmem[] khop arch[] o moi dia chi).
     reg [31:0] arch [0:1023];
-    integer    ai, n_fchk = 0;
+    integer    ai, ab, n_fchk = 0;
     always @(posedge clk) begin
         if (rst_n && dut.wb_commit) begin
             if (dut.memwb_tst && dut.memwb_taddr != TOHOST) begin
-                if (dut.memwb_tstrb[0]) arch[dut.memwb_taddr[11:2]][7:0]   = dut.memwb_tdata[7:0];
-                if (dut.memwb_tstrb[1]) arch[dut.memwb_taddr[11:2]][15:8]  = dut.memwb_tdata[15:8];
-                if (dut.memwb_tstrb[2]) arch[dut.memwb_taddr[11:2]][23:16] = dut.memwb_tdata[23:16];
-                if (dut.memwb_tstrb[3]) arch[dut.memwb_taddr[11:2]][31:24] = dut.memwb_tdata[31:24];
+                // store co the vat qua 2 tu (MISALIGNED = 1): wstrb 8 bit, du lieu 64 bit tinh tu tu chua dia chi
+                for (ab = 0; ab < 8; ab = ab + 1)
+                    if ((dut.memwb_tstrb >> ab) & 1)
+                        arch[dut.memwb_taddr[11:2] + ab / 4][8 * (ab % 4) +: 8] = dut.memwb_tdata >> (8 * ab);
             end
             if (dut.memwb_instr[6:0] == 7'b0001111 && dut.memwb_instr[14:13] == 2'b00) begin   // FENCE, FENCE.I
                 for (ai = 0; ai < 1024; ai = ai + 1)
@@ -121,6 +125,8 @@ module tb_trace_pipe;
 `endif
 
     reg rd_w;
+    reg [63:0] t_d;
+    reg [7:0]  t_s;
     // Tang commit (WB): in 1 dong cho moi lenh hoan tat, cung dinh dang voi ISS.
     // Lay mau o canh len: luc nay cac thanh ghi pipeline chua cap nhat (NBA), nen doc dung lenh dang o WB.
     always @(posedge clk) begin
@@ -134,10 +140,17 @@ module tb_trace_pipe;
         if (rst_n && dut.memwb_valid) begin
 `endif
             rd_w = dut.memwb_rd_we && (dut.memwb_rd != 5'd0);
-            $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x",
+            t_d = dut.memwb_tdata; t_s = dut.memwb_tstrb;   // store vat qua tu: in 64 bit / wstrb 8 bit
+            if (t_s[7:4] != 4'b0000)
+                $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x",
                      dut.memwb_pc, dut.memwb_instr,
                      rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
-                     dut.memwb_tst, dut.memwb_taddr, dut.memwb_tdata, dut.memwb_tstrb);
+                     dut.memwb_tst, dut.memwb_taddr, t_d, t_s);
+            else
+                $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x",
+                     dut.memwb_pc, dut.memwb_instr,
+                     rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
+                     dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0]);
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) $finish;
         end
     end

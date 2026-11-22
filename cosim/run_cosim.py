@@ -16,9 +16,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BASE = 0x80000000
 TOHOST = 0x80100000
-SKIP = {"ma_data": "can truy cap lech do phan cung xu ly"}
-# test can mo rong Z (them vao -march va --isa cua Spike; chi chay tren loi co mo rong do)
-ZEXT = {"fence_i": "zifencei"}
+SKIP = {}
+# test can mo rong Z (them vao -march va --isa cua Spike; chi chay tren loi co mo rong do).
+# Zicclsm (load/store lech dia chi bang phan cung, Spike chi cho phep khi co mo rong nay) chi la nhan cho Spike va de
+# chon loi; GCC khong biet ten nay nen bi bo khi bien dich (xem gcc_march).
+ZEXT = {"fence_i": "zifencei", "ma_data": "zicclsm"}
+
+
+def gcc_march(march):
+    return march.replace("_zicclsm", "")
 CACHE_FILES = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_icache.v", "rv32_dcache.v",
                "rv32_bus_arbiter.v"]
 # Zifencei: single-cycle nap moi lenh sau khi lenh truoc xong nen tu nhien dung; pipeline RV32IM xoa cache lenh va
@@ -37,7 +43,13 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC + cache 16x4 2 duong, tre 1-4", "-DPIPE_FULL -DRVC -DCACHE -DCWY=2", CACHE_FILES,
           "rv32imc_zifencei", ["+lat=4", "+seed=3"]),
          ("RV32IMC + cache 4x2 4 duong, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DCWY=4 -DICL=4 -DICW=2 -DDCL=4 -DDCW=2",
-          CACHE_FILES, "rv32imc_zifencei", ["+lat=8", "+seed=11"])]
+          CACHE_FILES, "rv32imc_zifencei", ["+lat=8", "+seed=11"]),
+         # load/store lech dia chi bang phan cung (MISALIGNED = 1): bo nho to hop, va qua cache 2x2 de truy cap vat
+         # qua tu cung vat qua dong cache, va cham bo dem ghi
+         ("RV32IMC lech phan cung", "-DPIPE_FULL -DRVC -DMA", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
+          "rv32imc_zifencei_zicclsm"),
+         ("RV32IMC lech phan cung + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DMA -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
+          CACHE_FILES, "rv32imc_zifencei_zicclsm", ["+lat=8", "+seed=5"])]
 
 
 def exts(march):
@@ -68,7 +80,7 @@ def build_rvtest(src, march, tmp, env):
         ("-c" if "c" in exts(march) else "")
     elf = os.path.join(tmp, name + ".elf")
     macros = os.path.join(os.path.dirname(os.path.dirname(src)), "macros", "scalar")
-    r = sh(GCC + [f"-march={march}", "-fvisibility=hidden", "-I", env, "-I", macros,
+    r = sh(GCC + [f"-march={gcc_march(march)}", "-fvisibility=hidden", "-I", env, "-I", macros,
                   "-T", os.path.join(env, "link.ld"), src, "-o", elf])
     return (name, elf) if r.returncode == 0 else (name, None)
 
@@ -79,7 +91,7 @@ def build_asm(src, march, tmp):
     ld = os.path.join(tmp, "bench80.ld")
     open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
     elf = os.path.join(tmp, name + ".elf")
-    r = sh(GCC + [f"-march={march}", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-T", ld, src, "-o", elf])
+    r = sh(GCC + [f"-march={gcc_march(march)}", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-T", ld, src, "-o", elf])
     if r.returncode:
         print(r.stderr); sys.exit(1)
     return name, elf
@@ -106,7 +118,7 @@ def norm_store(addr, size, value):
     return (addr, size, value & ((1 << (8 * size)) - 1))
 
 
-RTL_RE = re.compile(r"pc=(\w+) ins=(\w+) rd=(\w+) val=(\w+) st=(\w) addr=(\w+) data=(\w+) strb=(\w)")
+RTL_RE = re.compile(r"pc=(\w+) ins=(\w+) rd=(\w+) val=(\w+) st=(\w) addr=(\w+) data=(\w+) strb=(\w+)")  # store vat qua tu: data 64 bit, strb 8 bit
 
 
 def rtl_trace(lines):
@@ -235,6 +247,8 @@ def main():
     # test tu viet: FENCE.I voi ma tu sua (chi chay tren loi co Zifencei); xung dot cache (moi loi)
     progs.append(build_asm(os.path.join(HERE, "tests", "fencei.S"), "rv32i_zifencei", tmp) + ("rv32i_zifencei",))
     progs.append(build_asm(os.path.join(HERE, "tests", "conflict.S"), "rv32i", tmp) + ("rv32i",))
+    # load/store lech dia chi moi do rong, moi vi tri byte, vat qua tu va dong cache (chi loi co lech bang phan cung)
+    progs.append(build_asm(os.path.join(HERE, "tests", "misaligned.S"), "rv32i_zicclsm", tmp) + ("rv32i_zicclsm",))
     progs.append(build_bench("bench", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_m", "rv32im", tmp) + ("rv32im",))
     progs.append(build_bench("bench", "rv32ic", tmp) + ("rv32ic",))
