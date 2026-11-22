@@ -8,12 +8,12 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 |---|---|---|---|---|
 | `rv32i_core.v`: single-cycle | RV32IM + CSR + trap | ≈ 23,0 ns (ngoại suy) * | 1,00 / 7,95 | 28.775 * |
 | `rv32i_pipeline.v`: 5 tầng | RV32I | ≈ 11,98 ns, ≈ 83 MHz | 1,29 / - | 36.466 |
-| `rv32im_pipeline.v`: 5 tầng | RV32IM(C) + CSR + trap + ngắt + WFI | ≈ 13,67 ns, ≈ 73 MHz ** | 1,32 / 5,00 | 51.623 ** |
-| như trên + cache 2 × 256 B, bộ đệm ghi 4 mục | RV32IMC, bộ nhớ có độ trễ | ≈ 18,76 ns, ≈ 53 MHz *** | 1,37-1,49 / 5,13-5,32 | 137.359 *** |
+| `rv32im_pipeline.v`: 5 tầng | RV32IM(C) + CSR + trap + ngắt + WFI, BTB + RAS | ≈ 13,67 ns, ≈ 73 MHz ** | 1,16 / 4,86 (tắt BTB/RAS: 1,32 / 5,00) | 51.623 ** |
+| như trên + cache 2 × 256 B, bộ đệm ghi 4 mục | RV32IMC, bộ nhớ có độ trễ | ≈ 18,76 ns, ≈ 53 MHz *** | 1,20-1,37 / 4,98-5,18 | 137.359 *** |
 
 \* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
-\*\* Bản đầy đủ hiện tại với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC.
-\*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. Số liệu flow đo trước khi thêm bộ đệm ghi; CPI là của bản hiện tại.
+\*\* Bản đầy đủ với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC. Số liệu flow đo trước khi có BTB/RAS (sẽ chạy lại cùng các flow còn lại).
+\*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. Số liệu flow đo trước khi thêm bộ đệm ghi và BTB/RAS; CPI là của bản hiện tại (bộ nhớ trễ tối đa 1 / 4 / 8 chu kỳ).
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
 - **Cache và bộ nhớ có độ trễ**: pipeline RV32IM có bắt tay bộ nhớ (`imem_ready`, `dmem_ready`), cache lệnh và cache dữ liệu set-associative tham số hoá (1 / 2 / 4 đường, pseudo-LRU), bộ đệm ghi có forward vào lần nạp dòng, bộ phân xử bus chung; chạy đúng từng lệnh so với Spike với bộ nhớ trễ ngẫu nhiên 1-8 chu kỳ mỗi từ.
@@ -138,7 +138,7 @@ Mặc định pipeline nối với bộ nhớ tổ hợp (`imem_ready = dmem_rea
   - **Thứ tự**: load ngoài vùng cacheable (thiết bị) ghi hết bộ đệm trước; `FENCE`/`FENCE.I` đóng băng ở MEM tới khi bộ đệm rỗng. Với cache lệnh: bộ phân xử ưu tiên phía dữ liệu và cache dữ liệu giữ `m_req` liên tục khi bộ đệm còn dữ liệu (kể cả chuyển thẳng FILL → DRN, DRN → FILL), nên mọi store vào bộ đệm trước một lần nạp lệnh đều tới bộ nhớ trước lần nạp đó; mã tự sửa + `FENCE.I` vẫn đúng.
 - **`rv32_bus_arbiter.v`**: 2 cache dùng chung 1 bus tới bộ nhớ; ưu tiên cache dữ liệu (lệnh ở MEM đang đóng băng cả pipeline, và để giữ thứ tự với bộ đệm ghi như trên), giữ quyền bus tới khi bộ nhớ trả lời.
 
-Hiệu năng (`cache/perf_cache.py`, bản biên dịch có lệnh nén, cache lệnh và dữ liệu cùng kích thước, mỗi từ trên bus mất ngẫu nhiên 1..N chu kỳ). Cột "trước" là bản không có bộ đệm ghi (commit `39d6a38`, mỗi store chờ bộ nhớ trả lời), đo bằng cùng script:
+Hiệu năng (`cache/perf_cache.py`, bản biên dịch có lệnh nén, cache lệnh và dữ liệu cùng kích thước, mỗi từ trên bus mất ngẫu nhiên 1..N chu kỳ). **Hai bảng dưới đây đo với bộ dự đoán cũ** (trước khi có BTB/RAS, commit `75761f3`) để so riêng tác dụng của bộ đệm ghi và số đường; số liệu với bộ dự đoán hiện tại ở bảng thứ ba. Cột "trước" là bản không có bộ đệm ghi (commit `39d6a38`, mỗi store chờ bộ nhớ trả lời), đo bằng cùng script:
 
 | Cấu hình | `bench` CPI (N = 1 / 4 / 8), trước → sau | `bench_m` CPI (N = 1 / 4 / 8), trước → sau | Trượt I / D (`bench`) |
 |---|---|---|---|
@@ -169,6 +169,20 @@ Theo số đường, cùng dung lượng (bộ đệm ghi 4 mục; thêm `cosim/
 - **Trượt xung đột (`conflict`)**: cache 256 B ánh xạ trực tiếp trượt 520 lần ở phía dữ liệu (`A[i]` và `B[i]` đẩy nhau ra liên tục); 2 đường chỉ còn 24 lần trượt bắt buộc, số chu kỳ giảm 48 % / 60 % / 69 % (N = 1 / 4 / 8), bằng đúng cache ánh xạ trực tiếp lớn gấp 4 lần.
 - **`bench` và `bench_m` gần như không được lợi**, có chỗ còn kém hơn: trượt của 2 benchmark này chủ yếu là trượt dung lượng (tập dữ liệu lớn hơn cache, duyệt vòng), không phải xung đột. Với kiểu duyệt vòng lớn hơn số đường, LRU luôn đẩy ra đúng dòng sắp dùng lại, còn ánh xạ trực tiếp giữ lại được một phần: `bench_m` 16 × 4 có trượt dữ liệu 172 → 198 → 274 khi tăng số đường. Ở 4 × 4, phía dữ liệu giảm trượt (802 → 506) nhưng phía lệnh tăng (853 → 983), CPI chỉ tốt hơn khoảng 3-4 %.
 - Vì vậy mặc định vẫn là ánh xạ trực tiếp; 2 đường đáng dùng khi phần mềm có mảng đặt trùng chỉ số (như `conflict`). Chi phí phần cứng và timing của bản nhiều đường chưa đo bằng flow (sẽ chạy cùng các flow còn lại).
+
+Với bộ dự đoán hiện tại (BTB 16 mục + RAS 4 mục, xem mục BTB, RAS và gshare), bộ đệm ghi 4 mục, CPI ở N = 1 / 4 / 8:
+
+| Cấu hình | `bench` | `bench_m` | `conflict` | Trượt I / D `bench` |
+|---|---|---|---|---|
+| Bộ nhớ lý tưởng | 1,16 | 4,86 | 1,09 | - |
+| 4 × 4, 1 đường | 1,60 / 1,92 / 2,43 | 5,39 / 5,74 / 6,21 | 2,78 / 3,91 / 5,48 | 914 / 802 |
+| 4 × 4, 2 đường | 1,45 / 1,65 / 2,00 | 5,36 / 5,70 / 6,15 | 2,02 / 2,65 / 3,51 | 456 / 628 |
+| 4 × 4, 4 đường | 1,41 / 1,59 / 1,91 | 5,37 / 5,72 / 6,18 | 2,01 / 2,63 / 3,51 | 457 / 506 |
+| 16 × 4, 1 đường | 1,20 / 1,24 / 1,37 | 4,98 / 5,07 / 5,18 | 2,40 / 3,26 / 4,48 | 39 / 136 |
+| 16 × 4, 2 đường | 1,20 / 1,24 / 1,37 | 5,00 / 5,09 / 5,22 | 1,19 / 1,26 / 1,34 | 37 / 136 |
+| 64 × 4, 1 đường | 1,19 / 1,22 / 1,34 | 4,90 / 4,92 / 4,95 | 1,19 / 1,26 / 1,34 | 34 / 106 |
+
+- BTB làm IF nạp ít lệnh nhầm đường hơn, nên số lần trượt cache lệnh cũng đổi: với cache lệnh rất nhỏ (4 × 4) 2 đường, trượt lệnh của `bench` giảm từ 917 (bộ dự đoán cũ) xuống 456, và lần này 2 đường giúp rõ cho `bench` (CPI 1,92 → 1,65 ở N = 4). Với 4 × 4 ánh xạ trực tiếp thì trượt lệnh tăng nhẹ (853 → 914).
 
 Kiểm chứng (`cache/`, `cosim/`):
 - **So vết với ISS trên chương trình ngẫu nhiên qua cache** (`verify/run_verify.py --pipem --cache`): bộ nhớ lệnh và dữ liệu đi qua cache 2 dòng × 2 từ với độ trễ 1-6, nên lệnh CSR, trap, `MRET`, lệnh M... của chương trình ngẫu nhiên rơi vào đúng lúc pipeline đang đóng băng. Đây là chỗ Spike cosim không phủ được: riscv-tests và benchmark gần như không có CSR hay trap ngay sau một load trượt cache. Bộ sinh chương trình đặt thêm 1 lệnh `lw` ngay trước mỗi `MRET` để có tình huống này.
@@ -289,7 +303,7 @@ Bản đầu của pipeline quyết định mọi lệnh nhảy ở EX nên mỗ
 - Đoán sai phát hiện ở EX (so kết quả nhánh với dự đoán đã mang theo qua ID/EX), huỷ 2 lệnh. Đích khi đoán sai chọn theo dự đoán chứ không theo kết quả so sánh, nên tín hiệu `redirect_pc` không nằm sau bộ so sánh.
 - Đích nhảy sớm là `pc + imm` tính đúng ở ID, không dùng BTB hay tag. Vì vậy đoán sai chỉ làm chậm, không bao giờ làm sai kết quả, và không cần so sánh tag 30 bit.
 - Bảng đếm cập nhật trễ 1 chu kỳ qua thanh ghi giữa EX và MEM, để kết quả so sánh nhánh không phải điều khiển enable của 128 flip-flop (cùng bài học với `redirect` trước đây).
-- JALR chưa được dự đoán.
+- JALR chưa được dự đoán ở bản này (pipeline RV32I). Pipeline RV32IM nay có BTB ở IF và RAS cho lệnh trả về, xem mục BTB, RAS và gshare.
 
 Đo bằng `bench/` (5 bài: sắp xếp nổi bọt 48 phần tử, sàng nguyên tố đến 600, CRC32 theo bit trên 128 byte, cộng ma trận 12x12, tìm nhị phân lặp lại; biên dịch bằng `riscv64-unknown-elf-gcc -O2`, RV32I thuần). Checksum 5 bài khớp giữa cả 3 lõi và khớp số nguyên tố đã biết (109 số dưới 600).
 
@@ -314,6 +328,49 @@ Flow 15 ns của RV32IM với `STEPS = 2` (`results/metrics_rv32im_15ns_steps2.j
 
 
 Kiểm chứng phần dự đoán: sinh thêm đơn vị vòng lặp có giới hạn vào bộ chương trình ngẫu nhiên (nếu không, mỗi nhánh chỉ chạy một lần và bảng đếm không bao giờ học), thêm 8 mutation riêng cho dự đoán (đích đoán sai, thiếu một chiều đoán sai, nhảy sớm khi đang stall load-use, nhảy sớm đè lên redirect của EX, nhảy sớm khi lệnh M đóng băng EX, ...). Cả 8 đều bị bắt. Riêng mutation chỉ làm giảm hiệu năng (ví dụ không cập nhật bảng đếm) không thể bị bắt bằng so sánh kết quả, vì thiết kế đã bảo đảm đoán sai không đổi kết quả; hiệu năng được kiểm bằng CPI ở trên.
+
+### BTB, RAS và gshare (pipeline RV32IM)
+
+Bộ dự đoán cũ: bảng đếm 2 bit 64 mục đọc ở ID, nên nhánh đoán "nhảy" và JAL mất 1 chu kỳ, còn JALR (kể cả lệnh trả về) luôn quyết định ở EX, mất 3 chu kỳ. Bộ dự đoán mới (tham số `BTB_N`, `RAS_N`, `GHR_BITS`, `BTB_TAG`; đặt `BTB_N = RAS_N = GHR_BITS = 0` thì trùng từng chu kỳ với bản cũ):
+
+- **IF**: BTB `BTB_N` mục (mặc định 16, ánh xạ trực tiếp theo pc, tag 10 bit) cho biết ở pc đang nạp có lệnh điều khiển đã từng nhảy, đích của nó và loại (nhánh, JAL, JALR, trả về). Nếu trúng và (là JAL/JALR, hoặc là nhánh mà bảng đếm đoán nhảy) thì IF sang đích ngay: nhảy đoán đúng **không mất chu kỳ nào**. Lệnh loại trả về lấy đích từ đỉnh RAS. Bảng đếm đọc ở IF; chỉ số là pc hoặc pc XOR lịch sử toàn cục (`GHR_BITS > 0`, gshare).
+- **ID kiểm lại dự đoán của IF** (BTB có thể trúng nhầm do tag ngắn, hoặc cũ do mã tự sửa): nhánh/JAL có đích BTB khác `pc + imm` thì sửa sang `pc + imm`; lệnh không phải nhảy mà BTB đoán nhảy thì quay về lệnh kế tiếp và xoá mục BTB đó. Khi IF không nhảy: JAL và nhánh đoán nhảy nhảy ở ID như cũ; lệnh trả về (JALR có `rs1` là `ra`/`t0` theo bảng gợi ý của đặc tả) nhảy tới đỉnh RAS ở ID (1 chu kỳ thay vì 3).
+- **EX**: nhánh so hướng như cũ; JALR so đích thật với đích dự đoán (BTB hoặc RAS), khác thì redirect như cũ. Mọi dự đoán sai chỉ làm chậm, không làm sai.
+- **Cập nhật không suy đoán**, trễ 1 chu kỳ, chỉ với lệnh thật sự chạy xong ở EX (không đóng băng, không trap): bảng đếm (theo chỉ số lúc đoán, cần cho gshare), lịch sử toàn cục, BTB (nhánh nhảy, JAL, JALR) và RAS "kiến trúc" (đẩy khi gọi hàm `rd` = `ra`/`t0`, lấy ra khi trả về; đầy thì đè mục cũ nhất).
+- **RAS suy đoán**: bản thứ hai của RAS cập nhật ngay ở ID khi lệnh gọi / trả về rời ID (giải mã chính xác), nên lệnh trả về của hàm ngắn đã thấy địa chỉ vừa đẩy. (Đã thử cho IF đọc thêm trạng thái *sau* thao tác của lệnh đang ở ID, để cả hàm rỗng cũng đoán đúng: số chu kỳ cả 3 benchmark không đổi, mà lại đặt giải mã ở ID lên đường pc → pc của IF, nên bỏ; đột biến bỏ phần chuyển tiếp đó là đột biến duy nhất không bị bắt ở lần chạy đầu.) Mỗi lần EX redirect (đoán sai, trap, `MRET`, ...) các lệnh trẻ hơn bị huỷ và RAS suy đoán được chép lại từ RAS kiến trúc, gồm cả cập nhật đang chờ của chính lệnh redirect, nên lệnh nhầm đường không làm hỏng RAS.
+  - Bản đầu chỉ có RAS cập nhật ở EX. Đột biến "BTB ghi lệnh trả về thành JALR thường" (dùng đích lần trước thay vì RAS) lại làm `bench_call` **nhanh hơn** (JALR đoán sai 1.084 → 898), tức RAS ở IF thường bị cũ. RAS suy đoán giảm xuống 685 (số chu kỳ 72.008 → 70.811).
+
+Benchmark mới `bench/bench_call.c` (vì 2 benchmark cũ gần như không có lời gọi hàm: các hàm `static` bị gộp vào `main` khi `-O2`): fibonacci đệ quy, duyệt cây đệ quy 2 nhánh, gọi qua con trỏ hàm với đích đổi theo dữ liệu, máy trạng thái `switch` dày (bảng nhảy), chuỗi gọi lồng 3 tầng. Chạy trên cả 3 lõi với checksum khớp nhau và khớp Spike.
+
+Kết quả (`bpred/perf_bpred.py`, bản biên dịch có lệnh nén, bộ nhớ tổ hợp):
+
+| Cấu hình BTB / RAS / GHR | `bench` CPI | `bench_m` CPI | `bench_call` CPI | Nhánh đoán sai: `bench`, `bench_m`, `bench_call` | JALR đoán sai (`bench_call`) |
+|---|---|---|---|---|---|
+| 0 / 0 / 0 (bản cũ) | 1,321 | 5,002 | 1,383 | 13,4 %, 13,4 %, 34,1 % | 4.199 / 4.199 |
+| 16 / 0 / 0 | 1,156 | 4,861 | 1,326 | như trên | 4.142 / 4.199 |
+| 0 / 4 / 0 | 1,320 | 5,002 | 1,269 | như trên | 742 / 4.199 |
+| 8 / 4 / 0 | 1,158 | 4,866 | 1,183 | như trên | 685 / 4.199 |
+| **16 / 4 / 0 (mặc định)** | **1,156** | **4,860** | **1,177** | như trên | 685 / 4.199 |
+| 32 / 4 / 0 | 1,154 | 4,860 | 1,144 | như trên | 685 / 4.199 |
+| 64 / 4 / 0 | 1,154 | 4,860 | 1,133 | như trên | 685 / 4.199 |
+| 16 / 2 / 0 | 1,156 | 4,860 | 1,203 | như trên | 1.261 / 4.199 |
+| 16 / 8 / 0 | 1,156 | 4,860 | 1,166 | như trên | 471 / 4.199 |
+| 16 / 16 / 0 | 1,156 | 4,860 | 1,165 | như trên | 437 / 4.199 |
+| 16 / 4 / 4 (gshare) | 1,158 | 4,879 | 1,123 | 13,8 %, 17,0 %, 13,2 % | 685 / 4.199 |
+| 16 / 4 / 6 (gshare) | 1,170 | 4,888 | 1,137 | 15,6 %, 18,7 %, 18,6 % | 685 / 4.199 |
+
+- Mặc định 16 / 4 / 0 so với bản cũ: số chu kỳ giảm 12,5 % (`bench`), 2,8 % (`bench_m`), 14,9 % (`bench_call`). `bench` gần như chỉ còn nhánh đoán sai: 6.435 lần IF nhảy theo BTB, chỉ còn 72 lần ID phải sửa / nhảy muộn (bản cũ 6.206 lần nhảy ở ID, mỗi lần 1 chu kỳ).
+- RAS một mình (0 / 4 / 0, lệnh trả về nhảy ở ID) đã cứu phần lớn lệnh trả về của `bench_call` (JALR đoán sai 4.199 → 742); BTB một mình gần như không giúp JALR (4.142) vì mỗi lệnh `ret` trả về nhiều nơi khác nhau. Kết hợp còn 685, phần còn lại là gọi qua con trỏ hàm có đích đổi liên tục (BTB chỉ nhớ 1 đích cho mỗi lệnh) và đệ quy sâu hơn RAS (RAS 8 mục: 471, 16 mục: 437).
+- **gshare 4 bit** giảm nhánh đoán sai của `bench_call` từ 34,1 % xuống 13,2 % (nhánh phụ thuộc mẫu lặp của máy trạng thái) nhưng làm `bench_m` tệ hơn (13,4 % → 17,0 %): với bảng 64 mục, trộn lịch sử làm các nhánh dẫm lên nhau. Tổng 3 chương trình nhanh hơn 1,6 % (trước khi có RAS suy đoán) nhưng vì đánh đổi này và vì `bench_call` do mình tự viết, mặc định vẫn là bảng đếm theo pc; gshare là tuỳ chọn.
+- BTB 32 / 64 mục chỉ giúp `bench_call` (mã lớn hơn); mặc định giữ 16 mục (khoảng 44 bit mỗi mục: 1 valid, 10 tag, 31 đích, 2 loại). Diện tích và timing chưa đo bằng flow; tra BTB nằm ngay trên đường pc → pc ở IF nên đây là chỗ cần xem kỹ khi chạy flow.
+
+Kiểm chứng:
+- **Cấu hình "ép lỗi"** (`BTB_N = 4`, `BTB_TAG = 1`, `RAS_N = 2`, `GHR_BITS = 2`): BTB trúng nhầm liên tục nên các đường sửa ở ID và EX thực sự chạy. Trên 20 chương trình ngẫu nhiên: 1.081 lần ID sửa BTB trúng nhầm lệnh không phải nhảy, 344 lần sửa đích sai; cấu hình mặc định thì 0 lần (chương trình nhỏ hơn tầm của tag 10 bit), nên chỉ chạy cấu hình mặc định là không đủ. Chạy trong `verify/run_verify.py --pipem --bpstress [--cache]` và là một cấu hình lõi riêng trong so vết Spike (qua cache 2 × 2, trễ 1-6).
+- Bộ sinh chương trình ngẫu nhiên có thêm đơn vị **gọi hàm trong vòng lặp** (`jal t0, F` ... `jalr x0, 0(t0)`), vì trước đây không có cặp gọi / trả về nào (x1 là con trỏ vùng nhớ nên dùng `t0`, cũng là thanh ghi link theo đặc tả).
+- **So vết với Spike**: 110 chương trình khớp trên 11 cấu hình lõi (thêm `bench_call` 2 bản và lõi ép lỗi; RAS 2 mục nên tràn liên tục).
+- **Kiểm hiệu năng đúng từng chu kỳ** (`bpred/perf_bpred.py --check`, chạy trong CI): 3 cấu hình (cũ, mặc định, gshare 4 bit) trên 3 chương trình phải ra đúng số chu kỳ và số lần đoán sai đã ghi. Đột biến chỉ làm chậm không bị so kết quả bắt (thiết kế bảo đảm đoán sai không đổi kết quả); kiểm này bắt được. Số liệu phụ thuộc mã máy của trình biên dịch nên được gắn với phiên bản GCC của CI; GCC khác thì chỉ kiểm tương đối (bản mới phải nhanh hơn bản cũ).
+- **`bpred/mutate_bpred.py`: 19 đột biến, đều bị bắt.** 8 đột biến làm sai kết quả (EX không so đích JALR, ID không sửa đích sai hoặc trúng nhầm, sửa trúng nhầm về đích thay vì lệnh kế tiếp, IF/ID quên cờ đã nhảy, EX coi nhánh IF đã nhảy là đoán không nhảy, JAL không nhảy khi BTB trượt, đích dự đoán ghi xuống EX khác đích đã nhảy theo) bị chương trình ngẫu nhiên ép lỗi bắt; 11 đột biến chỉ làm chậm (BTB không ghi, RAS không đẩy / không lấy ra / đẩy sai địa chỉ, ghi lệnh trả về thành JALR thường, bỏ qua bảng đếm, BTB không so tag, RAS suy đoán không chép lại khi redirect / không lấy ra ở ID, gshare cập nhật sai chỉ số, lịch sử không cập nhật) bị kiểm từng chu kỳ bắt. Đột biến "đích dự đoán khác đích đã nhảy theo" ban đầu được xếp vào loại chỉ làm chậm, nhưng nó làm `bench_call` chạy sai và treo: EX so với một đích không phải đích IF/ID đã thực sự nhảy theo, nên khi trùng hợp bằng đích thật thì lệnh nhầm đường được giữ lại. Thiết kế đúng luôn lấy hai giá trị này từ cùng một tín hiệu; script đo nay báo treo là FAIL thay vì lỗi Python.
+- Sửa kèm: 2 đột biến chung của pipeline và 1 đột biến mở rộng C, 1 đột biến `FENCE.I` trỏ vào mã đã viết lại được cập nhật.
 
 ### Đăng ký redirect ở RV32IM
 
@@ -512,7 +569,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chưa có `mtvec` chế độ vectored, chế độ User
-- JALR chưa được dự đoán; bảng đếm đơn giản, chưa có BTB hay bộ dự đoán lịch sử toàn cục
+- Pipeline RV32I chưa dự đoán JALR; ở RV32IM, BTB chỉ nhớ 1 đích cho mỗi JALR gián tiếp, RAS cập nhật ở EX nên lệnh trả về ngay sau lời gọi có thể đoán sai; gshare dùng chung bảng 64 mục nên dễ dẫm chỉ số
 - Bộ nhân/chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); chưa có bộ nhân song song
 - Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chưa chạy trên Spike và chưa so với Spike khi có ngắt
 - Cache set-associative mặc định tắt (`WAYS = 1`) vì không lợi trên 2 benchmark hiện có; bản có cache không đạt timing 15 ns và dùng flip-flop thay SRAM; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)

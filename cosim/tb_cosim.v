@@ -22,15 +22,28 @@ module tb_cosim;
     wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready, icache_flush;
 
 `ifdef PIPE_FULL
+    // bo du doan nhanh: -DBTBN=<muc> -DRASN=<muc> -DGHRB=<bit> (mac dinh theo rv32im_pipeline.v; 0 0 0 = ban cu)
+`ifndef BTBN
+`define BTBN 16
+`endif
+`ifndef RASN
+`define RASN 4
+`endif
+`ifndef GHRB
+`define GHRB 0
+`endif
+`ifndef BTAG
+`define BTAG 10
+`endif
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
     localparam MA_HW = 0;
 `endif
 `ifdef RVC
-    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1), .MISALIGNED(MA_HW)) dut (
+    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG)) dut (
 `else
-    rv32im_pipeline #(.RESET_PC(BASE), .MISALIGNED(MA_HW)) dut (
+    rv32im_pipeline #(.RESET_PC(BASE), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG)) dut (
 `endif
 `elsif PIPE
     rv32i_pipeline #(.RESET_PC(BASE)) dut (
@@ -195,6 +208,19 @@ module tb_cosim;
     end
 `endif
 
+`ifdef PIPE_FULL
+    // thong ke du doan nhanh: lenh that su chay xong o EX (khong dong bang, khong trap); lan ID sua/nhay som duoc ap;
+    // lan IF nhay theo BTB duoc ap
+    integer n_br = 0, n_brmiss = 0, n_jr = 0, n_jrmiss = 0, n_idr = 0, n_btbt = 0;
+    always @(posedge clk) if (rst_n) begin
+        if (dut.ex_upd && dut.idex_branch) begin n_br = n_br + 1; if (dut.mispredict) n_brmiss = n_brmiss + 1; end
+        if (dut.ex_upd && dut.idex_jalr)   begin n_jr = n_jr + 1; if (dut.jalr_miss)  n_jrmiss = n_jrmiss + 1; end
+        if (!dut.frz && !dut.redirect_q && dut.id_redirect && !dut.ex_stall) n_idr = n_idr + 1;
+        if (!dut.frz && !dut.redirect_q && !(dut.id_redirect && !dut.ex_stall) && !dut.stall && !dut.ex_stall &&
+            dut.imem_ready && dut.if_pred) n_btbt = n_btbt + 1;
+    end
+`endif
+
     always @(posedge clk) begin
         if (rst_n && commit) begin
             rd_w = dut.memwb_rd_we && (dut.memwb_rd != 5'd0);
@@ -209,6 +235,10 @@ module tb_cosim;
                          dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0]);
             n = n + 1;
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
+`ifdef PIPE_FULL
+                $display("BPRED br=%0d brmiss=%0d jalr=%0d jalrmiss=%0d idredir=%0d btbtaken=%0d",
+                         n_br, n_brmiss, n_jr, n_jrmiss, n_idr, n_btbt);
+`endif
 `ifdef CACHE
                 $display("DONE cycles=%0d instr=%0d imiss=%0d dmiss=%0d bus=%0d buscyc=%0d wbfull=%0d fwd=%0d",
                          cyc, n, ic_miss, dc_miss, n_bus, n_bus_cyc, u_dc.n_wbfull, u_dc.n_fwd);

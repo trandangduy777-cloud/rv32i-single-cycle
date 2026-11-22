@@ -40,6 +40,8 @@ jobs:
           python3 run_verify.py --pipem --cache --ways 2 --n 60
           python3 run_verify.py --pipem --ma --n 60
           python3 run_verify.py --pipem --ma --cache --n 60
+          python3 run_verify.py --pipem --bpstress --n 60
+          python3 run_verify.py --pipem --bpstress --cache --n 60
 
       - name: Ngat timer va ngat ngoai (pipeline RV32IM) va mutation test phan ngat
         run: |
@@ -102,7 +104,10 @@ jobs:
           make -j$(nproc)
           make install
 
-      - name: So vet voi Spike (riscv-tests, bench, bench_m; 6 cau hinh loi, co/khong lenh C, co/khong cache)
+      - name: Hieu nang bo du doan nhanh, kiem dung tung chu ky
+        run: python3 bpred/perf_bpred.py --check
+
+      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, test tu viet; 11 cau hinh loi)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
@@ -112,6 +117,7 @@ jobs:
         run: |
           python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
           python3 cache/mutate_cache.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
+          python3 bpred/mutate_bpred.py
 
   mutation:
     if: github.event_name == 'workflow_dispatch'

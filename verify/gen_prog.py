@@ -173,6 +173,30 @@ class Gen:
             return [enc_j(tgt - pc, rd, 0b1101111)]
         return build
 
+    def u_call_loop(self):
+        """Goi ham trong vong lap (cho BTB / RAS / bang dem hoc va doan): link = x5 (t0, cung la thanh ghi link theo
+        dac ta nen RAS day / lay), vi x1 la con tro vung nho.
+            addi L,x0,N ; LOOP: jal x5,F ; jal x0,CONT ; F: k lenh ; jalr x0,0(x5) ; CONT: addi L,L,-1 ; bne L,x0,LOOP
+        Than ham chi gom addi/xor ghi vao thanh ghi khac x0, x1, x5 va L."""
+        r = self.r
+        L = r.choice([x for x in range(6, 32)])
+        N = r.randint(2, 5)
+        k = r.randint(1, 4)
+        regs = [x for x in range(6, 32) if x != L]
+        body = []
+        for _ in range(k):
+            if r.random() < 0.5:
+                body.append(enc_i(r.randint(-2048, 2047) & 0xFFF, r.choice(regs), 0, r.choice(regs), 0b0010011))   # addi
+            else:
+                body.append(enc_r(0, r.choice(regs), r.choice(regs), 4, r.choice(regs), 0b0110011))               # xor
+        return ([enc_i(N, 0, 0, L, 0b0010011),               # addi L, x0, N
+                 enc_j(8, 5, 0b1101111),                       # jal x5, F
+                 enc_j((k + 2) * 4, 0, 0b1101111)] +           # jal x0, CONT
+                body +
+                [enc_i(0, 5, 0, 0, 0b1100111),                 # jalr x0, 0(x5)
+                 enc_i(0xFFF, L, 0, L, 0b0010011),             # addi L, L, -1
+                 enc_b(-(4 + k) * 4, 0, L, 1, 0b1100011)])     # bne L, x0, LOOP
+
     def u_jalr(self):
         t = self.r.randint(2, 31)
         link = self.dst()
@@ -321,6 +345,7 @@ class Gen:
         makers = [(self.u_alu_r, 25), (self.u_alu_i, 20), (self.u_shift, 6), (self.u_lui, 4),
                   (self.u_auipc, 4), (self.u_load, 12), (self.u_store, 10),
                   (self.u_branch, 10), (self.u_loop, 5), (self.u_jal, 4), (self.u_jalr, 4), (self.u_fence, 1),
+                  (self.u_call_loop, 3),
                   (self.u_special_li, 3)]
         if not self.base:
             makers += [(self.u_muldiv, 8), (self.u_divovf, 1),
