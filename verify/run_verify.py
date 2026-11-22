@@ -42,6 +42,8 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
         cmd.append(os.environ.get("RV32_CORE") or os.path.join(HERE, "..", "rv32i_core.v"))
         if MA:                          # load/store lech dia chi bang phan cung (MISALIGNED = 1)
             cmd[2:2] = ["-DMA"]
+        if BPSTRESS:                    # bo du doan nho, tag 1 bit (xem tb_trace_pipe.v)
+            cmd[2:2] = ["-DBPSTRESS"]
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
@@ -54,6 +56,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
 CACHE = False                           # --cache: chay pipeline RV32IM qua cache voi bo nho tre ngau nhien
 WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 1 = anh xa truc tiep, 2 = 1 tap 2 duong)
 MA = False                              # --ma: pipeline RV32IM voi MISALIGNED = 1, ISS cung khong trap khi lech
+BPSTRESS = False                        # --bpstress: BTB 4 muc tag 1 bit, RAS 2 muc, gshare 2 bit
 _seed = [0]
 
 
@@ -259,7 +262,12 @@ M_CORE_MUTATIONS = [
 # Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
 PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
                                                              "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
-                                                             "P: SH sai byte-enable")] + [
+                                                             "P: SH sai byte-enable",
+                                                             "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID")] + [
+    # bo du doan RV32IM (BTB / RAS, xem bpred/): ID sua hoac nhay som qua id_fix_tgt / id_fix_seq / id_late
+    ("B: ID nhay som khi dang stall load-use", "assign id_redirect = ifid_valid & ~stall & (id_fix_tgt | id_fix_seq | id_late);",
+     "assign id_redirect = ifid_valid & (id_fix_tgt | id_fix_seq | id_late);"),
+    ("B: JAL khong nhay o ID (khi BTB chua co)", "wire id_late    = ~ifid_bp & (is_jal |", "wire id_late    = ~ifid_bp & (1'b0 |"),
     # pipeline RV32IM: dich "chay tiep" la pc_next (pc + 2 voi lenh nen, pc + 4 voi lenh 32 bit)
     ("B: doan sai nhay ve dich nham", "(idex_pred_taken ? pc_next : pc_imm)", "(idex_pred_taken ? pc_imm : pc_next)"),
     ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= redirect_pc_q;"),
@@ -356,8 +364,11 @@ if __name__ == "__main__":
     ap.add_argument("--ways", type=int, default=1, choices=[1, 2], help="voi --cache: so duong cua cache 2 dong")
     ap.add_argument("--ma", action="store_true",
                     help="voi --pipem: load/store lech dia chi bang phan cung (MISALIGNED = 1), sinh nhieu truy cap lech")
+    ap.add_argument("--bpstress", action="store_true",
+                    help="voi --pipem: bo du doan nho (BTB 4 muc tag 1 bit, RAS 2, gshare 2): trung nham BTB lien tuc")
     a = ap.parse_args()
     CACHE = a.cache and a.pipem
+    BPSTRESS = a.bpstress and a.pipem
     WAYS = a.ways
     MA = a.ma and a.pipem
     if a.pipem:

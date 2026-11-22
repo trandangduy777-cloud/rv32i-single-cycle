@@ -1,5 +1,6 @@
 #!/bin/sh
-# Bien dich benchmark: bench.hex (RV32I thuan, chay duoc tren ca 3 loi) va bench_m.hex (RV32IM, nang lenh nhan/chia)
+# Bien dich benchmark: bench.hex (RV32I thuan, chay duoc tren ca 3 loi), bench_m.hex (RV32IM, nang lenh nhan/chia),
+# bench_call.hex (RV32I, nhieu goi ham / nhay gian tiep)
 # Can riscv64-unknown-elf-gcc
 set -e
 cd "$(dirname "$0")"
@@ -18,3 +19,4 @@ PY
 }
 build bench rv32i
 build bench_m rv32im
+build bench_call rv32i

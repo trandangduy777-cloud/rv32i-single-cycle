@@ -49,7 +49,10 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC lech phan cung", "-DPIPE_FULL -DRVC -DMA", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
           "rv32imc_zifencei_zicclsm"),
          ("RV32IMC lech phan cung + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DMA -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
-          CACHE_FILES, "rv32imc_zifencei_zicclsm", ["+lat=8", "+seed=5"])]
+          CACHE_FILES, "rv32imc_zifencei_zicclsm", ["+lat=8", "+seed=5"]),
+         # bo du doan "ep loi": BTB 4 muc tag 1 bit (trung nham lien tuc), RAS 2 muc, gshare 2 bit, qua cache 2x2
+         ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2 -DBTBN=4 "
+          "-DRASN=2 -DGHRB=2 -DBTAG=1", CACHE_FILES, "rv32imc_zifencei", ["+lat=6", "+seed=9"])]
 
 
 def exts(march):
@@ -253,6 +256,8 @@ def main():
     progs.append(build_bench("bench_m", "rv32im", tmp) + ("rv32im",))
     progs.append(build_bench("bench", "rv32ic", tmp) + ("rv32ic",))
     progs.append(build_bench("bench_m", "rv32imc", tmp) + ("rv32imc",))
+    progs.append(build_bench("bench_call", "rv32i", tmp) + ("rv32i",))
+    progs.append(build_bench("bench_call", "rv32ic", tmp) + ("rv32ic",))
     if a.only:
         progs = [p for p in progs if a.only in p[0]]
 

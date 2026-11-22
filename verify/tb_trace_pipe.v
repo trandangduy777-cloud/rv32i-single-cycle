@@ -15,10 +15,18 @@ module tb_trace_pipe;
     wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready;
 
 `ifdef PIPE_FULL
+`ifdef BPSTRESS   // bo du doan nho, tag 1 bit: BTB trung nham lien tuc, RAS tran, gshare 2 bit (kiem cac duong sua o ID/EX)
+`ifdef MA
+    rv32im_pipeline #(.MISALIGNED(1), .BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2)) dut (
+`else
+    rv32im_pipeline #(.BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2)) dut (
+`endif
+`else
 `ifdef MA
     rv32im_pipeline #(.MISALIGNED(1)) dut (    // -DMA: load/store lech dia chi bang phan cung
 `else
     rv32im_pipeline dut (            // RV32IM + CSR + trap
+`endif
 `endif
 `else
     rv32i_pipeline dut (             // RV32I thuan

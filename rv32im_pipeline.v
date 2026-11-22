@@ -32,7 +32,12 @@
 module rv32im_pipeline #(
     parameter [31:0] RESET_PC = 32'h0000_0000,  // dia chi lenh dau tien sau reset (chia het cho 4, hoac 2 khi ENABLE_C)
     parameter        ENABLE_C = 0,               // 1: ho tro lenh nen 16 bit (mo rong C)
-    parameter        MISALIGNED = 0              // 1: load/store lech dia chi chay bang phan cung thay vi trap
+    parameter        MISALIGNED = 0,             // 1: load/store lech dia chi chay bang phan cung thay vi trap
+    // Du doan nhanh (xem phan "Du doan nhanh"): BTB_N = 0 va RAS_N = 0 va GHR_BITS = 0 la bo du doan cu (bang dem o ID)
+    parameter        BTB_N      = 16,            // so muc BTB (luy thua 2, 0 = khong co): du doan dich ngay o IF
+    parameter        RAS_N      = 4,             // so muc ngan xep dia chi tra ve (0 = khong co)
+    parameter        GHR_BITS   = 0,             // > 0: gshare (lich su toan cuc GHR_BITS bit XOR voi pc); 0: theo pc
+    parameter        BTB_TAG    = 10             // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -86,6 +91,9 @@ module rv32im_pipeline #(
     reg  [31:0] ifid_pc, ifid_instr;
     reg  [31:0] ifid_raw;                  // lenh goc (16 bit nen hoac 32 bit): cho mtval va vet
     reg         ifid_c;                    // lenh o ID la lenh nen 16 bit
+    reg         ifid_bp, ifid_bhit, ifid_ctr;  // du doan cua IF cho lenh o ID (xem "Du doan nhanh")
+    reg  [31:0] ifid_bpt;
+    reg  [5:0]  ifid_pidx;
 
     assign imem_addr = pc;
 
@@ -109,15 +117,15 @@ module rv32im_pipeline #(
         end else if (redirect_q) begin
             pc         <= redirect_pc_q;
             ifid_valid <= 1'b0;                // huy lenh vua doc nham duong
-        end else if (id_redirect & ~ex_stall) begin   // nhay som o ID: huy lenh vua doc tuan tu o IF
-            pc         <= id_target;
+        end else if (id_redirect & ~ex_stall) begin   // ID sua / nhay som: huy lenh vua doc o IF
+            pc         <= id_redir_pc;
             ifid_valid <= 1'b0;
         end else if (stall | ex_stall) begin
             // ID hoac EX dang dung: giu lenh o IF/ID
         end else if (!imem_ready) begin       // cache lenh chua tra: giu pc, dua bong bay vao ID
             ifid_valid <= 1'b0;
         end else begin
-            pc         <= pc + (if_c ? 32'd2 : 32'd4);
+            pc         <= if_pred ? if_ptgt : pc + (if_c ? 32'd2 : 32'd4);   // BTB doan nhay: sang dich ngay
             ifid_valid <= 1'b1;
         end
     end
@@ -130,6 +138,11 @@ module rv32im_pipeline #(
             ifid_instr <= if_dec;             // lenh nen khong hop le -> 0 (cung bi bo giai ma 32 bit bao illegal)
             ifid_raw   <= if_c ? {16'd0, imem_data[15:0]} : imem_data;
             ifid_c     <= if_c;
+            ifid_bp    <= if_pred;           // IF da nhay theo BTB
+            ifid_bpt   <= if_ptgt;
+            ifid_bhit  <= btb_hit;
+            ifid_ctr   <= if_ctr;            // huong do bang dem doan (doc o IF)
+            ifid_pidx  <= if_pidx;
         end
     end
 
@@ -210,15 +223,107 @@ module rv32im_pipeline #(
     wire uses_rs1 = ~(is_lui | is_auipc | is_jal);
     wire uses_rs2 = is_reg | is_branch | is_store;
 
-    // ---- Du doan nhanh o ID ----
+    // ---- Du doan nhanh ----
+    // IF: BTB (BTB_N muc, anh xa truc tiep theo pc, tag 10 bit) cho biet o pc dang nap co lenh dieu khien da tung nhay
+    //     va dich cua no. Neu trung BTB va (lenh la JAL/JALR, hoac la nhanh ma bang dem doan "nhay"), IF sang dich ngay
+    //     trong chu ky sau: nhay doan dung khong mat chu ky nao. Lenh tra ve (loai RET) lay dich tu dinh RAS.
+    //     Bang dem 2 bit (BHT, 64 muc) doc o IF; chi so = pc (GHR_BITS = 0) hoac pc XOR lich su toan cuc (gshare).
+    // ID: giai ma xong nen kiem tra lai du doan cua IF (BTB co the trung nham do tag ngan, hoac cu):
+    //     - IF da nhay, lenh la nhanh/JAL ma dich BTB khac pc + imm: sua sang pc + imm (mat 1 chu ky).
+    //     - IF da nhay, lenh khong phai lenh dieu khien: quay ve lenh ke tiep, xoa muc BTB do.
+    //     - IF khong nhay: JAL nhay o ID; nhanh ma bang dem doan "nhay" nhay o ID; lenh tra ve (JALR rs1 = ra/t0,
+    //       theo bang goi y cua dac ta) nhay toi dinh RAS o ID. Moi truong hop mat 1 chu ky (nhu ban cu).
+    // EX: nhanh: so huong voi du doan (dich nhay da dung tu ID). JALR: so dich that voi dich du doan (BTB hoac RAS);
+    //     khac, hoac khong co du doan, thi redirect nhu cu. Vi vay du doan sai chi lam cham, khong lam sai.
+    // Cap nhat (tre 1 chu ky qua EX/MEM, chi lenh that su chay o EX: khong dong bang, khong trap):
+    //     bang dem va GHR theo ket qua nhanh; BTB ghi khi nhanh nhay, JAL, JALR; RAS day khi goi ham (rd = ra/t0),
+    //     lay ra khi tra ve. RAS cap nhat o EX (khong suy doan) nen khong can phuc hoi khi doan sai.
     localparam BHT_BITS = 6;                                  // 64 muc x 2 bit
+    localparam PCB      = (ENABLE_C != 0) ? 1 : 2;            // bit thap nhat cua pc dung lam chi so
+    localparam BTB_B    = (BTB_N > 1) ? $clog2(BTB_N) : 1;
+    localparam TAGB     = BTB_TAG;
+    localparam RAS_B    = (RAS_N > 1) ? $clog2(RAS_N) : 1;
+    localparam GB       = (GHR_BITS > 0) ? GHR_BITS : 1;
+    localparam [1:0] T_BR = 2'd0, T_JAL = 2'd1, T_JALR = 2'd2, T_RET = 2'd3;
+
     reg  [1:0]  bht [0:(1<<BHT_BITS)-1];                      // 00/01: khong nhay, 10/11: nhay
-    // voi lenh nen, hai nhanh co the nam trong cung 1 tu: chi so lay tu bit 1
-    wire [BHT_BITS-1:0] bht_idx = (ENABLE_C != 0) ? ifid_pc[BHT_BITS:1] : ifid_pc[BHT_BITS+1:2];
-    wire        id_pred_taken = legal_branch & bht[bht_idx][1];
+    reg  [GB-1:0] ghr;                                        // lich su nhanh toan cuc (cap nhat o EX)
+
+    // BTB
+    reg              btb_v   [0:BTB_N-1];
+    reg [TAGB-1:0]   btb_tag [0:BTB_N-1];
+    reg [31:1]       btb_tgt [0:BTB_N-1];
+    reg [1:0]        btb_typ [0:BTB_N-1];
+    // RAS: 2 ban, moi ban la ngan xep vong (cnt = so muc hop le, bao hoa o RAS_N; top = vi tri dinh; day khi day thi
+    // de len muc cu nhat).
+    //  - ban kien truc (a_*): cap nhat o EX (tre 1 chu ky), chi theo lenh that su chay xong: luon dung.
+    //  - ban suy doan (s_*): cap nhat o ID khi lenh goi / tra ve roi ID (giai ma chinh xac), nen lenh tra ve nap ngay
+    //    sau lenh goi da thay dia chi moi. Moi lan EX redirect (doan sai, trap, ...) cac lenh tre hon bi huy, ban suy
+    //    doan duoc chep lai tu ban kien truc (gom ca cap nhat dang cho cua chinh lenh redirect). Du doan dung ban suy doan.
+    localparam RN = (RAS_N > 0) ? RAS_N : 1;
+    reg [31:1]       a_ras [0:RN-1];
+    reg [RAS_B:0]    a_cnt;
+    reg [RAS_B-1:0]  a_top;
+    reg [31:1]       s_ras [0:RN-1];
+    reg [RAS_B:0]    s_cnt;
+    reg [RAS_B-1:0]  s_top;
+    wire             ras_ok  = (RAS_N > 0) && (s_cnt != 0);         // cho ID: trang thai truoc lenh o ID
+    wire [31:0]      ras_val = (RAS_N > 0) ? {s_ras[s_top], 1'b0} : 32'd0;
+
+    // ---- IF ----
+    wire [BTB_B-1:0] if_bi  = pc[PCB +: BTB_B];
+    wire [TAGB-1:0]  if_bt  = pc[PCB + BTB_B +: TAGB];
+    wire             btb_hit = (BTB_N > 0) && btb_v[if_bi] && (btb_tag[if_bi] == if_bt);
+    wire [1:0]       if_typ = btb_typ[if_bi];
+    wire [BHT_BITS-1:0] if_pidx = pc[PCB +: BHT_BITS] ^ ((GHR_BITS > 0) ? ghr : {GB{1'b0}});
+    wire             if_ctr = bht[if_pidx][1];
+    wire             if_pred = btb_hit & ((if_typ != T_BR) | if_ctr) & ((if_typ != T_RET) | if_ras_ok);
+    wire [31:0]      if_ptgt = (if_typ == T_RET) ? if_ras_val : {btb_tgt[if_bi], 1'b0};
+
+    // ---- ID ----
+    wire link_rd  = (rd == 5'd1) | (rd == 5'd5);
+    wire link_rs1 = (rs1 == 5'd1) | (rs1 == 5'd5);
+    wire id_ret   = legal_jalr & link_rs1 & ~(link_rd & (rd == rs1));     // bang goi y: lay ra RAS
+    wire id_ctl   = is_jal | legal_branch | legal_jalr;
+    wire [31:0] id_seq = ifid_pc + (ifid_c ? 32'd2 : 32'd4);
     assign id_target   = ifid_pc + imm;                       // imm da chon imm_b / imm_j theo opcode
+    wire id_fix_tgt = ifid_bp & (is_jal | legal_branch) & (ifid_bpt != id_target);   // BTB dich sai
+    wire id_fix_seq = ifid_bp & ~id_ctl;                                             // BTB trung nham
+    wire id_late    = ~ifid_bp & (is_jal | (legal_branch & ifid_ctr) | (id_ret & ras_ok & (RAS_N > 0)));
+    wire id_pred_taken = legal_branch & (ifid_bp | ifid_ctr);
+    // du doan dich cua JALR mang xuong EX: tu BTB (IF) hoac RAS (ID)
+    wire        id_jp_v = legal_jalr & (ifid_bp | (id_ret & ras_ok & (RAS_N > 0)));
+    wire [31:0] id_jp_t = ifid_bp ? ifid_bpt : ras_val;
     // khi EX cung redirect thi redirect (EX) thang nho thu tu uu tien trong khoi IF, nen khong can dieu kien them o day
-    assign id_redirect = ifid_valid & ~stall & (is_jal | id_pred_taken);
+    assign id_redirect = ifid_valid & ~stall & (id_fix_tgt | id_fix_seq | id_late);
+    wire [31:0] id_redir_pc = id_fix_seq ? id_seq : (legal_jalr ? ras_val : id_target);
+    wire        id_btb_inv  = ifid_valid & ~stall & id_fix_seq;
+
+    // ---- RAS suy doan: cap nhat khi lenh roi ID trong chu ky nay ----
+    wire id_go   = ifid_valid & ~stall & ~ex_stall & ~frz & ~redirect_q;
+    wire s_push  = id_go & (is_jal | legal_jalr) & link_rd;
+    wire s_pop   = id_go & id_ret;
+    reg  [RAS_B:0]   s_cnt_n;
+    reg  [RAS_B-1:0] s_top_n;
+    reg              s_we;
+    reg  [RAS_B-1:0] s_widx;
+    always @* begin
+        s_cnt_n = s_cnt; s_top_n = s_top; s_we = 1'b0; s_widx = s_top;
+        if (s_pop & s_push) begin                           // tra ve roi goi ngay (coroutine): thay dinh
+            s_we = 1'b1; if (s_cnt == 0) s_cnt_n = 1;
+        end else if (s_push) begin
+            s_we = 1'b1; s_widx = s_top + {{(RAS_B-1){1'b0}}, (s_cnt != 0)};
+            s_top_n = s_widx; if (s_cnt != RAS_N) s_cnt_n = s_cnt + 1'b1;
+        end else if (s_pop && s_cnt != 0) begin
+            if (s_cnt != 1) s_top_n = s_top - 1'b1;
+            s_cnt_n = s_cnt - 1'b1;
+        end
+    end
+    // IF doc trang thai hien tai cua RAS suy doan. Da thu cho IF doc trang thai SAU thao tac cua lenh dang o ID
+    // (chuyen tiep dia chi vua day): so chu ky cua ca 3 benchmark khong doi (chi co loi khi ham rong, lenh dau tien la
+    // lenh tra ve) ma lai dat giai ma o ID len duong pc -> pc cua IF, nen bo.
+    wire        if_ras_ok  = ras_ok;
+    wire [31:0] if_ras_val = ras_val;
 
     // register file 31 x 32, doc combinational, ghi o WB, bypass WB -> ID
     reg  [31:0] regs [1:31];
@@ -235,6 +340,9 @@ module rv32im_pipeline #(
     // Lenh o EX o chu ky ngay sau redirect la lenh nham duong (da vao EX truoc khi redirect duoc ap): vo hieu bang redirect_q.
     wire        idex_valid = idex_valid_r & ~redirect_q;
     reg         idex_pred_taken;                              // du doan cua nhanh dang o EX
+    reg         idex_jp_v;                                    // JALR o EX co du doan dich (BTB/RAS) hay khong
+    reg  [31:0] idex_jp_t;
+    reg  [5:0]  idex_pidx;                                    // chi so bang dem luc du doan (gshare: kem lich su)
     reg  [31:0] idex_pc, idex_instr, idex_rs1_val, idex_rs2_val, idex_imm;
     reg  [4:0]  idex_rs1, idex_rs2, idex_rd;
     reg  [2:0]  idex_funct3;
@@ -278,14 +386,14 @@ module rv32im_pipeline #(
             idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
             idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
             idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0;
-            idex_pred_taken <= 1'b0;
+            idex_pred_taken <= 1'b0; idex_jp_v <= 1'b0;
         end else if (ex_stall | frz) begin
             // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX
         end else begin
             // redirect_q chi dieu khien idex_valid_r; stall (tin hieu som) xoa cac co con lai
             idex_valid_r <= ifid_valid & ~redirect_q & ~stall;
             if (stall) begin
-                idex_pred_taken <= 1'b0;
+                idex_pred_taken <= 1'b0; idex_jp_v <= 1'b0;
                 idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
                 idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0;
                 idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
@@ -294,6 +402,7 @@ module rv32im_pipeline #(
                 idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0;
             end else begin
                 idex_pred_taken <= id_pred_taken;
+                idex_jp_v       <= id_jp_v;
                 idex_lui_r     <= is_lui & ifid_valid;
                 idex_auipc_r   <= is_auipc & ifid_valid;
                 idex_jal_r     <= is_jal & ifid_valid;
@@ -328,6 +437,8 @@ module rv32im_pipeline #(
             idex_pc      <= ifid_pc;
             idex_instr   <= ifid_raw;      // chi dung cho dia chi CSR (lenh 32 bit), mtval va vet
             idex_c       <= ifid_c;
+            idex_jp_t    <= id_jp_t;
+            idex_pidx    <= ifid_pidx;
             idex_rs1_val <= rf_rs1;
             idex_rs2_val <= rf_rs2;
             idex_imm     <= imm;
@@ -499,12 +610,15 @@ module rv32im_pipeline #(
     // doan sai: nhanh thuc te khac du doan. Dich khi doan sai: doan "nhay" -> chay tiep pc+4; doan "khong nhay" -> pc+imm.
     // JAL da nhay o ID nen khong con redirect o EX. redirect_pc khong phu thuoc ket qua so sanh nhanh.
     wire mispredict    = idex_branch & (take_branch ^ idex_pred_taken);
+    // JALR: dich du doan (BTB o IF hoac RAS o ID) dung thi khong redirect
+    wire jalr_ok       = idex_jp_v & (idex_jp_t == jalr_target);
+    wire jalr_miss     = idex_jalr & ~jalr_ok;
     // FENCE.I: moi store cu hon da xong (store o MEM chua xong thi pipeline dang dong bang), nen xoa cache lenh ngay
     // va nap lai tu lenh ke tiep; cac lenh sau FENCE.I da nap vao IF/ID bi huy boi redirect
     wire fencei_ex     = idex_fencei_r & idex_valid & ~irq_take & ~frz;
     assign icache_flush = fencei_ex;
     // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
-    assign redirect    = (trap_ex | mret_ex | idex_jalr | mispredict | fencei_ex) & ~frz;
+    assign redirect    = (trap_ex | mret_ex | jalr_miss | mispredict | fencei_ex) & ~frz;
     assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
                          mret_ex ? {mepc_r, 2'b00}  :
                          fencei_ex ? pc_next :
@@ -579,21 +693,81 @@ module rv32im_pipeline #(
                             (idex_load | idex_store) ? (op_a + idex_imm) :
                                                       alu_out;
 
-    // cap nhat bang dem tre 1 chu ky: EX ghi ket qua nhanh vao thanh ghi, tang MEM moi sua bang
+    // cap nhat bo du doan tre 1 chu ky: EX ghi ket qua vao thanh ghi, chu ky sau moi sua bang (xem "Du doan nhanh")
+    wire ex_upd   = idex_valid & ~frz & ~trap_ex;             // lenh thuc su chay xong o EX trong chu ky nay
+    wire ex_lrd   = (idex_rd == 5'd1) | (idex_rd == 5'd5);
+    wire ex_lrs1  = (idex_rs1 == 5'd1) | (idex_rs1 == 5'd5);
+    wire ex_pop   = idex_jalr & ex_lrs1 & ~(ex_lrd & (idex_rd == idex_rs1));
+    wire ex_push  = (idex_jal | idex_jalr) & ex_lrd;
     reg                 exmem_bupd, exmem_btaken;
     reg [BHT_BITS-1:0]  exmem_bidx;
+    reg                 up_btb, up_inv, up_pop, up_push;
+    // trang thai tiep theo cua RAS kien truc (cap nhat dang cho up_pop / up_push), dung chung khi chep sang ban suy doan
+    reg  [RAS_B:0]      a_cnt_n;
+    reg  [RAS_B-1:0]    a_top_n, a_widx;
+    reg                 a_we;
+    always @* begin
+        a_cnt_n = a_cnt; a_top_n = a_top; a_we = 1'b0; a_widx = a_top;
+        if (up_pop & up_push) begin
+            a_we = 1'b1; if (a_cnt == 0) a_cnt_n = 1;
+        end else if (up_push) begin
+            a_we = 1'b1; a_widx = a_top + {{(RAS_B-1){1'b0}}, (a_cnt != 0)};
+            a_top_n = a_widx; if (a_cnt != RAS_N) a_cnt_n = a_cnt + 1'b1;
+        end else if (up_pop && a_cnt != 0) begin
+            if (a_cnt != 1) a_top_n = a_top - 1'b1;
+            a_cnt_n = a_cnt - 1'b1;
+        end
+    end
+    reg [BTB_B-1:0]     up_bi, inv_bi;
+    reg [TAGB-1:0]      up_bt;
+    reg [31:1]          up_tgt, up_link;
+    reg [1:0]           up_typ;
     integer bi;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             exmem_bupd <= 1'b0; exmem_btaken <= 1'b0; exmem_bidx <= {BHT_BITS{1'b0}};
             for (bi = 0; bi < (1<<BHT_BITS); bi = bi + 1) bht[bi] <= 2'b01;      // khoi dau: yeu, khong nhay
+            for (bi = 0; bi < BTB_N; bi = bi + 1) btb_v[bi] <= 1'b0;
+            ghr <= {GB{1'b0}};
+            up_btb <= 1'b0; up_inv <= 1'b0; up_pop <= 1'b0; up_push <= 1'b0;
+            a_cnt <= 0; a_top <= {RAS_B{1'b0}}; s_cnt <= 0; s_top <= {RAS_B{1'b0}};
         end else begin
             exmem_bupd   <= idex_valid & idex_branch & ~frz;      // dong bang: nhanh se duoc dem khi chay tiep
             exmem_btaken <= take_branch;
-            exmem_bidx   <= (ENABLE_C != 0) ? idex_pc[BHT_BITS:1] : idex_pc[BHT_BITS+1:2];
+            exmem_bidx   <= idex_pidx;                             // chi so luc du doan (gshare can lich su luc do)
             if (exmem_bupd) begin
                 if (exmem_btaken) begin if (bht[exmem_bidx] != 2'b11) bht[exmem_bidx] <= bht[exmem_bidx] + 2'd1; end
                 else              begin if (bht[exmem_bidx] != 2'b00) bht[exmem_bidx] <= bht[exmem_bidx] - 2'd1; end
+            end
+            if (GHR_BITS > 0 && ex_upd && idex_branch) ghr <= {ghr, take_branch};
+            // BTB: ghi khi nhanh nhay, JAL, JALR; xoa muc trung nham do ID bao (ghi cua EX thang neu cung muc)
+            up_btb  <= ex_upd & ((idex_branch & take_branch) | idex_jal | idex_jalr);
+            up_bi   <= idex_pc[PCB +: BTB_B];
+            up_bt   <= idex_pc[PCB + BTB_B +: TAGB];
+            up_tgt  <= idex_jalr ? jalr_target[31:1] : pc_imm[31:1];
+            up_typ  <= idex_branch ? T_BR : idex_jal ? T_JAL : (ex_pop ? T_RET : T_JALR);
+            up_inv  <= id_btb_inv & ~frz & ~ex_stall;
+            inv_bi  <= ifid_pc[PCB +: BTB_B];
+            if (BTB_N > 0) begin
+                if (up_inv) btb_v[inv_bi] <= 1'b0;
+                if (up_btb) begin
+                    btb_v[up_bi] <= 1'b1; btb_tag[up_bi] <= up_bt; btb_tgt[up_bi] <= up_tgt; btb_typ[up_bi] <= up_typ;
+                end
+            end
+            // RAS kien truc (theo lenh da chay xong o EX) va RAS suy doan (theo ID, chep lai tu kien truc khi EX redirect)
+            up_pop  <= ex_upd & ex_pop;
+            up_push <= ex_upd & ex_push;
+            up_link <= pc_next[31:1];
+            if (RAS_N > 0) begin
+                a_cnt <= a_cnt_n; a_top <= a_top_n;
+                if (a_we) a_ras[a_widx] <= up_link;
+                if (redirect_q) begin
+                    s_cnt <= a_cnt_n; s_top <= a_top_n;
+                    for (bi = 0; bi < RN; bi = bi + 1) s_ras[bi] <= (a_we && a_widx == bi) ? up_link : a_ras[bi];
+                end else begin
+                    s_cnt <= s_cnt_n; s_top <= s_top_n;
+                    if (s_we) s_ras[s_widx] <= id_seq[31:1];
+                end
             end
         end
     end

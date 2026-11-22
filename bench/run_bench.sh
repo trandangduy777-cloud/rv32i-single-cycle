@@ -23,5 +23,8 @@ run "pipeline RV32I"  -DPIPE       bench/bench.hex   rv32i_pipeline.v
 run "pipeline RV32IM" -DPIPE_FULL  bench/bench.hex   rv32im_pipeline.v rv32i_core.v
 run "single-cycle"    ""           bench/bench_m.hex rv32i_core.v
 run "pipeline RV32IM" -DPIPE_FULL  bench/bench_m.hex rv32im_pipeline.v rv32i_core.v
+run "single-cycle"    ""           bench/bench_call.hex rv32i_core.v
+run "pipeline RV32I"  -DPIPE       bench/bench_call.hex rv32i_pipeline.v
+run "pipeline RV32IM" -DPIPE_FULL  bench/bench_call.hex rv32im_pipeline.v rv32i_core.v
 [ $fail -eq 0 ] && echo "Checksum khop giua cac loi" || echo "CO LOI"
 exit $fail
