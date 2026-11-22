@@ -1,0 +1,17 @@
+{
+  "DESIGN_NAME": "rv32imc_cached_top",
+  "VERILOG_FILES": [
+    "dir::flow/rv32imc_cached_top.v",
+    "dir::rv32im_pipeline.v",
+    "dir::rv32i_core.v",
+    "dir::rv32c_decompress.v",
+    "dir::rv32_icache.v",
+    "dir::rv32_dcache.v",
+    "dir::rv32_bus_arbiter.v"
+  ],
+  "CLOCK_PORT": "clk",
+  "CLOCK_PERIOD": 15,
+  "FP_CORE_UTIL": 40,
+  "PL_TARGET_DENSITY_PCT": 50,
+  "RUN_LINTER": true
+}
