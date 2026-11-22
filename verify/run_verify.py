@@ -41,7 +41,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
         cmd[2:2] = ["-DPIPE_FULL"]
         cmd.append(os.environ.get("RV32_CORE") or os.path.join(HERE, "..", "rv32i_core.v"))
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
-            cmd[2:2] = ["-DCACHE"]
+            cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -50,6 +50,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
 
 
 CACHE = False                           # --cache: chay pipeline RV32IM qua cache voi bo nho tre ngau nhien
+WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 1 = anh xa truc tiep, 2 = 1 tap 2 duong)
 _seed = [0]
 
 
@@ -344,8 +345,10 @@ if __name__ == "__main__":
     ap.add_argument("--only", default=None, help="chi chay cac loi co ten chua chuoi nay (dung voi --mutate)")
     ap.add_argument("--cache", action="store_true",
                     help="voi --pipem: lenh/du lieu qua cache 2x2, bo nho tre ngau nhien 1..6 chu ky")
+    ap.add_argument("--ways", type=int, default=1, choices=[1, 2], help="voi --cache: so duong cua cache 2 dong")
     a = ap.parse_args()
     CACHE = a.cache and a.pipem
+    WAYS = a.ways
     if a.pipem:
         a.pipe = True
     if a.rtl is None:

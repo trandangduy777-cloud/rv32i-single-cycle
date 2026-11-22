@@ -37,15 +37,18 @@ module tb_trace_pipe;
     localparam TOHOST = 32'h0000_1000;
 
 `ifdef CACHE
+`ifndef CWY
+`define CWY 1
+`endif
     wire        ic_req, dc_req, dc_we;
     wire [31:0] ic_addr, dc_addr, dc_wdata, ic_miss, dc_miss;
     wire [3:0]  dc_wstrb;
     reg         ic_ack = 1'b0, dc_ack = 1'b0;
     reg  [31:0] ic_rdata, dc_rdata;
-    rv32_icache #(.LINES(2), .WORDS(2)) u_ic (
+    rv32_icache #(.LINES(2), .WORDS(2), .WAYS(`CWY)) u_ic (
         .clk(clk), .rst_n(rst_n), .addr(imem_addr), .data(imem_data), .ready(imem_ready), .flush(1'b0),
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(ic_rdata), .n_miss(ic_miss));
-    rv32_dcache #(.LINES(2), .WORDS(2), .CMASK(32'hFFFF_F000), .CBASE(32'h0000_0000)) u_dc (
+    rv32_dcache #(.LINES(2), .WORDS(2), .WAYS(`CWY), .CMASK(32'hFFFF_F000), .CBASE(32'h0000_0000)) u_dc (
         .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .fence(dmem_fence), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(dmem_rdata), .ready(dmem_ready),
         .m_req(dc_req), .m_we(dc_we), .m_addr(dc_addr), .m_wdata(dc_wdata), .m_wstrb(dc_wstrb),

@@ -32,7 +32,12 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC + cache 16x4, tre 1-4", "-DPIPE_FULL -DRVC -DCACHE", CACHE_FILES, "rv32imc_zifencei",
           ["+lat=4", "+seed=1"]),
          ("RV32IMC + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2", CACHE_FILES,
-          "rv32imc_zifencei", ["+lat=8", "+seed=7"])]
+          "rv32imc_zifencei", ["+lat=8", "+seed=7"]),
+         # cache set-associative cung dung luong: 2 duong, va 4 duong trong 1 tap duy nhat (thay the lien tuc)
+         ("RV32IMC + cache 16x4 2 duong, tre 1-4", "-DPIPE_FULL -DRVC -DCACHE -DCWY=2", CACHE_FILES,
+          "rv32imc_zifencei", ["+lat=4", "+seed=3"]),
+         ("RV32IMC + cache 4x2 4 duong, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DCWY=4 -DICL=4 -DICW=2 -DDCL=4 -DDCW=2",
+          CACHE_FILES, "rv32imc_zifencei", ["+lat=8", "+seed=11"])]
 
 
 def exts(march):
@@ -186,6 +191,10 @@ def compare(ref, dut):
         return f"so lenh khac nhau: Spike {len(ref)}, RTL {len(dut)}"
     if not ref or ref[-1][4] is None or ref[-1][4][0] != TOHOST:
         return "khong ket thuc bang ghi TOHOST"
+    # moi chuong trinh (riscv-tests, benchmark, test tu viet) ghi 1 vao TOHOST khi tu kiem dat; gia tri khac la
+    # chuong trinh tu bao loi, ke ca khi Spike va RTL cung sai giong nhau
+    if ref[-1][4][2] != 1:
+        return f"chuong trinh tu bao loi: TOHOST = {ref[-1][4][2]:#x}"
     return None
 
 
@@ -223,8 +232,9 @@ def main():
             if elf is None:
                 print(f"loi bien dich {name}"); sys.exit(1)
             progs.append((name, elf, m))
-    # test tu viet: FENCE.I voi ma tu sua (chi chay tren loi co Zifencei)
+    # test tu viet: FENCE.I voi ma tu sua (chi chay tren loi co Zifencei); xung dot cache (moi loi)
     progs.append(build_asm(os.path.join(HERE, "tests", "fencei.S"), "rv32i_zifencei", tmp) + ("rv32i_zifencei",))
+    progs.append(build_asm(os.path.join(HERE, "tests", "conflict.S"), "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_m", "rv32im", tmp) + ("rv32im",))
     progs.append(build_bench("bench", "rv32ic", tmp) + ("rv32ic",))

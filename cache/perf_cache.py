@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Do hieu nang cua pipeline RV32IMC voi cache: so chu ky, CPI, so lan truot cache theo kich thuoc cache va do tre
-bo nho, va so muc bo dem ghi cua cache du lieu, tren bench va bench_m (ban co lenh nen).
+bo nho, so duong (cung dung luong) va so muc bo dem ghi cua cache du lieu, tren bench, bench_m (ban co lenh nen) va cosim/tests/conflict.S (hai mang
+cach nhau dung dung luong cache: truot xung dot).
 Moc so sanh: bo nho ly tuong (to hop, khong cache).
 Do tre "toi da N": moi tu tren bus mat ngau nhien 1..N chu ky (trung binh khoang (N+1)/2).
 Dung (tu thu muc goc repo): python3 cache/perf_cache.py   (can riscv64-unknown-elf-gcc, iverilog)
@@ -15,15 +16,18 @@ import run_cosim as rc  # noqa: E402
 BASE = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"]
 CACHE = BASE + ["rv32_icache.v", "rv32_dcache.v", "rv32_bus_arbiter.v"]
 CFGS = [("ly tuong (khong cache)", ["-DPIPE_FULL", "-DRVC"], BASE)] + [
-    (f"cache {l}x{w}, bo dem ghi {q}", ["-DPIPE_FULL", "-DRVC", "-DCACHE", f"-DICL={l}", f"-DICW={w}", f"-DDCL={l}",
-                                         f"-DDCW={w}", f"-DDWB={q}"], CACHE)
-    for l, w, q in ((4, 4, 4), (16, 4, 1), (16, 4, 2), (16, 4, 4), (16, 4, 8), (64, 4, 4))]
+    (f"cache {l}x{w} {y} duong, bo dem ghi {q}", ["-DPIPE_FULL", "-DRVC", "-DCACHE", f"-DICL={l}", f"-DICW={w}",
+                                                  f"-DDCL={l}", f"-DDCW={w}", f"-DDWB={q}", f"-DCWY={y}"], CACHE)
+    for l, w, y, q in ((4, 4, 1, 4), (4, 4, 2, 4), (4, 4, 4, 4),
+                       (16, 4, 1, 1), (16, 4, 1, 2), (16, 4, 1, 4), (16, 4, 1, 8), (16, 4, 2, 4), (16, 4, 4, 4),
+                       (64, 4, 1, 4), (64, 4, 2, 4))]
 LATS = [1, 4, 8]
 
 
 def main():
     tmp = tempfile.mkdtemp(prefix="perf_")
-    progs = [rc.build_bench("bench", "rv32ic", tmp), rc.build_bench("bench_m", "rv32imc", tmp)]
+    progs = [rc.build_bench("bench", "rv32ic", tmp), rc.build_bench("bench_m", "rv32imc", tmp),
+             rc.build_asm(os.path.join(ROOT, "cosim", "tests", "conflict.S"), "rv32i", tmp)]
     for _, elf in progs:
         rc.to_hex(elf, elf[:-4] + ".hex")
     print("| Chuong trinh | Cau hinh | Do tre toi da | Chu ky | CPI | Truot I / D | Bo dem day (chu ky) | Tu forward |")

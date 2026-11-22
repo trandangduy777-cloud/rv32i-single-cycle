@@ -2,7 +2,8 @@
 """Mutation test cho cache va co che dong bang pipeline: moi dot bien phai bi bo kiem chung tuong ung bat duoc.
 
 - Dot bien trong rv32_icache.v / rv32_dcache.v (ca bo dem ghi) / rv32_bus_arbiter.v: chay cache/tb_cache_random.v
-  (3 cau hinh cache / bo dem ghi, 3 seed moi cau hinh, do tre 1..6). Phai co it nhat 1 lan bao FAIL hoac het thoi gian.
+  (5 cau hinh: anh xa truc tiep, 2 duong, 4 duong trong 1 tap; 3 seed moi cau hinh, do tre 1..6); testbench co mo
+  hinh thay the doc lap nen bat ca dot bien chi lam sai chinh sach thay the (du lieu van dung). Phai co it nhat 1 lan bao FAIL hoac het thoi gian.
 - Dot bien trong rv32im_pipeline.v (bat tay bo nho, dong bang, FENCE.I), 2 bo kiem chung:
   "cosim": cosim/run_cosim.py voi 2 cau hinh co cache tren bench va bench_m (co va khong co lenh nen);
   "rand":  verify/run_verify.py --pipem --cache (40 chuong trinh ngau nhien co CSR, trap, MRET... qua cache 2 x 2,
@@ -21,7 +22,7 @@ ROOT = os.path.dirname(HERE)
 MUTATIONS = [
     # ---- cache lenh ----
     ("icache: khong so tag", "rv32_icache.v",
-     "wire hit0 = val_r[i0] & (tag_r[i0] == t0);", "wire hit0 = val_r[i0];", "tb"),
+     "if (val_r[s0 * WAYS + q] && tag_r[s0 * WAYS + q] == t0)", "if (val_r[s0 * WAYS + q])", "tb"),
     ("icache: bo qua tu thu hai khi addr[1] = 1", "rv32_icache.v",
      "assign ready = (state == IDLE) & hit0 & (~need1 | hit1);", "assign ready = (state == IDLE) & hit0;", "tb"),
     ("icache: cua so lenh nen lay sai nua tu", "rv32_icache.v",
@@ -29,21 +30,49 @@ MUTATIONS = [
     ("icache: flush khi dang nap van danh dau valid", "rv32_icache.v",
      "<= ~(fill_kill | flush);", "<= 1'b1;", "tb"),
     ("icache: nap sai thu tu tu trong dong", "rv32_icache.v",
-     "mem_r[{fill_line[IB+WB-1:WB], fill_cnt}] <= m_rdata;",
-     "mem_r[{fill_line[IB+WB-1:WB], ~fill_cnt}] <= m_rdata;", "tb"),
+     "mem_r[(fill_set * WAYS + fill_way) * WORDS + fill_cnt] <= m_rdata;",
+     "mem_r[(fill_set * WAYS + fill_way) * WORDS + ~fill_cnt] <= m_rdata;", "tb"),
     # ---- cache du lieu ----
     ("dcache: khong so tag", "rv32_dcache.v",
-     "wire          hit = cacheable & val_r[idx] & (tag_r[idx] == tg);",
-     "wire          hit = cacheable & val_r[idx];", "tb"),
+     "if (val_r[idx * WAYS + q] && tag_r[idx * WAYS + q] == tg)", "if (val_r[idx * WAYS + q])", "tb"),
     ("dcache: store trung cache khong cap nhat dong", "rv32_dcache.v",
-     "if (hit) mem_r[w[IB+WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);", ";", "tb"),
+     "if (hit) mem_r[(idx * WAYS + hway) * WORDS + w[WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);", ";", "tb"),
     ("dcache: store cap nhat ca tu, bo qua wstrb", "rv32_dcache.v",
-     "if (hit) mem_r[w[IB+WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);",
-     "if (hit) mem_r[w[IB+WB-1:0]] <= wdata;", "tb"),
+     "if (hit) mem_r[(idx * WAYS + hway) * WORDS + w[WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);",
+     "if (hit) mem_r[(idx * WAYS + hway) * WORDS + w[WB-1:0]] <= wdata;", "tb"),
     ("dcache: vung khong cacheable van luu cache", "rv32_dcache.v",
      "wire          cacheable = ((addr & CMASK) == CBASE);", "wire          cacheable = 1'b1;", "tb"),
     ("dcache: bus ghi khong theo wstrb", "rv32_dcache.v",
      "assign m_wstrb = (state == DRN) ? q_strb[q_head] : 4'b1111;", "assign m_wstrb = 4'b1111;", "tb"),
+    # ---- set-associative va thay the pseudo-LRU (bat bang tb_cache_random.v: du lieu sai, hoac lech mo hinh thay the) ----
+    ("icache: so tag cua duong 0 cho moi duong", "rv32_icache.v",
+     "if (val_r[s0 * WAYS + q] && tag_r[s0 * WAYS + q] == t0)", "if (val_r[s0 * WAYS + q] && tag_r[s0 * WAYS] == t0)", "tb"),
+    ("icache: nap vao duong 0 thay vi duong bi thay", "rv32_icache.v",
+     "mem_r[(fill_set * WAYS + fill_way) * WORDS + fill_cnt] <= m_rdata;",
+     "mem_r[(fill_set * WAYS) * WORDS + fill_cnt] <= m_rdata;", "tb"),
+    ("icache: luon thay duong 0", "rv32_icache.v",
+     "victim = plru_victim(plru_m);", "victim = {AB{1'b0}};", "tb"),
+    ("icache: khong uu tien duong con trong", "rv32_icache.v",
+     "if (!val_r[miss_set * WAYS + qv]) victim = qv;", "if (1'b0) victim = qv;", "tb"),
+    ("icache: trung khong cap nhat LRU", "rv32_icache.v",
+     "if (hit0) plru_r[s0] <= plru_touch(plru_r[s0], way0);", "if (1'b0) plru_r[s0] <= plru_touch(plru_r[s0], way0);", "tb"),
+    ("icache: nan nhan khong tinh lan trung cua chinh chu ky", "rv32_icache.v",
+     "if (hit0 && s0 == miss_set)          plru_m = plru_touch(plru_m, way0);", ";", "tb"),
+    ("icache: cay LRU danh dau sai phia", "rv32_icache.v",
+     "if (w < lo + half) begin plru_touch[node] = 1'b1;", "if (w < lo + half) begin plru_touch[node] = 1'b0;", "tb"),
+    ("dcache: luon thay duong 0", "rv32_dcache.v",
+     "victim = plru_victim(plru_r[idx]);", "victim = {AB{1'b0}};", "tb"),
+    ("dcache: store trung khong cap nhat LRU", "rv32_dcache.v",
+     "if (ld_hit | (push & hit)) plru_r[idx]", "if (ld_hit) plru_r[idx]", "tb"),
+    ("dcache: store trung ghi vao duong 0", "rv32_dcache.v",
+     "if (hit) mem_r[(idx * WAYS + hway) * WORDS + w[WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);",
+     "if (hit) mem_r[(idx * WAYS) * WORDS + w[WB-1:0]] <= (cdata & ~wmask) | (wdata & wmask);", "tb"),
+    ("dcache: load trung khong cap nhat LRU", "rv32_dcache.v",
+     "if (ld_hit | (push & hit)) plru_r[idx]", "if (push & hit) plru_r[idx]", "tb"),
+    ("dcache: bat dau nap xoa valid nham duong 0", "rv32_dcache.v",
+     "val_r[idx * WAYS + victim] <= 1'b0;      // dong cu bi thay", "val_r[idx * WAYS] <= 1'b0;", "tb"),
+    ("dcache: chon nan nhan theo cay nguoc chieu", "rv32_dcache.v",
+     "node = b[node] ? 2 * node + 2 : 2 * node + 1;", "node = b[node] ? 2 * node + 1 : 2 * node + 2;", "tb"),
     # ---- bo dem ghi cua cache du lieu ----
     ("bo dem ghi: nap dong khong forward store dang treo", "rv32_dcache.v",
      "fill_data = (fill_data & ~fmask) | (q_data[fs] & fmask);", "fill_data = fill_data;", "tb"),
@@ -111,7 +140,8 @@ MUTATIONS = [
      "        end else begin\n            exmem_valid     <= idex_valid & ~ex_stall;", "cosim"),
 ]
 
-TB_CFGS = [["-DL=4", "-DW=2"], ["-DL=2", "-DW=8"], ["-DL=16", "-DW=4", "-DQ=2"]]
+TB_CFGS = [["-DL=4", "-DW=2"], ["-DL=2", "-DW=8"], ["-DL=16", "-DW=4", "-DQ=2"], ["-DL=8", "-DW=2", "-DWY=2"],
+           ["-DL=4", "-DW=2", "-DWY=4"]]
 
 
 def run_tb(rep):

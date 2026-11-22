@@ -6,7 +6,8 @@
 // -DPIPE_FULL, -DPIPE_FULL -DRVC (pipeline RV32IM co ENABLE_C = 1).
 // Them -DCACHE (chi voi PIPE_FULL): loi noi qua rv32_icache + rv32_dcache + rv32_bus_arbiter toi bo nho chung co do tre
 // ngau nhien 1..(+lat) chu ky moi tu (+seed). Vung cacheable 0x8000_0000-0x8003_FFFF; TOHOST di thang qua bus.
-// Kich thuoc cache: -DICL/-DICW/-DDCL/-DDCW (so dong / so tu moi dong), mac dinh 16 x 4; bo dem ghi: -DDWB (mac dinh 4 muc).
+// Kich thuoc cache: -DICL/-DICW/-DDCL/-DDCW (so dong / so tu moi dong), mac dinh 16 x 4; bo dem ghi: -DDWB (mac dinh 4 muc);
+// so duong cua ca 2 cache: -DCWY (mac dinh 1, anh xa truc tiep; tong so dong giu nguyen).
 // Tham so: +prog=<file hex> [+lat=<do tre toi da>] [+seed=<so>]
 module tb_cosim;
     reg clk = 0;
@@ -61,16 +62,19 @@ module tb_cosim;
 `ifndef DWB
 `define DWB 4
 `endif
+`ifndef CWY
+`define CWY 1
+`endif
     wire        ic_req, ic_ack, dc_req, dc_we, dc_ack, m_req, m_we;
     wire [31:0] ic_addr, dc_addr, dc_wdata, m_addr, m_wdata, ic_miss, dc_miss;
     wire [3:0]  dc_wstrb, m_wstrb;
     reg         m_ack = 1'b0;
     reg  [31:0] m_rdata;
 
-    rv32_icache #(.LINES(`ICL), .WORDS(`ICW)) u_ic (
+    rv32_icache #(.LINES(`ICL), .WORDS(`ICW), .WAYS(`CWY)) u_ic (
         .clk(clk), .rst_n(rst_n), .addr(imem_addr), .data(imem_data), .ready(imem_ready), .flush(icache_flush),
         .m_req(ic_req), .m_addr(ic_addr), .m_ack(ic_ack), .m_rdata(m_rdata), .n_miss(ic_miss));
-    rv32_dcache #(.LINES(`DCL), .WORDS(`DCW), .WBUF(`DWB), .CMASK(32'hFFFC_0000), .CBASE(BASE)) u_dc (
+    rv32_dcache #(.LINES(`DCL), .WORDS(`DCW), .WAYS(`CWY), .WBUF(`DWB), .CMASK(32'hFFFC_0000), .CBASE(BASE)) u_dc (
         .clk(clk), .rst_n(rst_n), .addr(dmem_addr), .re(dmem_re), .we(dmem_we), .fence(dmem_fence), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(dmem_rdata), .ready(dmem_ready),
         .m_req(dc_req), .m_we(dc_we), .m_addr(dc_addr), .m_wdata(dc_wdata), .m_wstrb(dc_wstrb),
