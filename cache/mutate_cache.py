@@ -9,6 +9,7 @@
   "rand":  verify/run_verify.py --pipem --cache (40 chuong trinh ngau nhien co CSR, trap, MRET... qua cache 2 x 2,
            bo nho tre 1..6), so voi ISS Python; testbench con kiem moi FENCE hoan tat thi bo nho da nhan moi store
            truoc no. Phai co it nhat 1 chuong trinh lech hoac treo.
+  "ma":    nhu "rand" nhung voi --ma (MISALIGNED = 1, nhieu load/store lech dia chi, ISS cung khong trap).
 
 Moi dot bien chay tren mot ban sao cua repo trong thu muc tam.
 Dung (tu thu muc goc repo): python3 cache/mutate_cache.py <thu_muc_riscv-tests> [--spike <duong dan spike>]
@@ -103,8 +104,8 @@ MUTATIONS = [
      "tb"),
     # ---- pipeline: bat tay bo nho ----
     ("pipeline: khong dong bang khi load cho bo nho", "rv32im_pipeline.v",
-     "assign frz        = (dmem_we | dmem_re | dmem_fence) & ~dmem_ready;",
-     "assign frz        = (dmem_we | dmem_fence) & ~dmem_ready;", "cosim"),
+     "assign frz        = (dmem_we | dmem_re | dmem_fence) & ~(dmem_ready & mem_last);",
+     "assign frz        = (dmem_we | dmem_fence) & ~(dmem_ready & mem_last);", "cosim"),
     ("pipeline: bo qua imem_ready", "rv32im_pipeline.v",
      "end else if (!imem_ready) begin", "end else if (1'b0) begin", "cosim"),
     ("pipeline: wb_commit lap lai trong luc dong bang", "rv32im_pipeline.v",
@@ -124,11 +125,34 @@ MUTATIONS = [
     ("pipeline: MRET chay ca khi dong bang", "rv32im_pipeline.v",
      "wire mret_ex = idex_mret & ~irq_take & ~frz;", "wire mret_ex = idex_mret & ~irq_take;", "rand"),
     ("pipeline: FENCE khong cho bo dem ghi", "rv32im_pipeline.v",
-     "assign frz        = (dmem_we | dmem_re | dmem_fence) & ~dmem_ready;",
-     "assign frz        = (dmem_we | dmem_re) & ~dmem_ready;", "rand"),
+     "assign frz        = (dmem_we | dmem_re | dmem_fence) & ~(dmem_ready & mem_last);",
+     "assign frz        = (dmem_we | dmem_re) & ~(dmem_ready & mem_last);", "rand"),
     ("pipeline: FENCE khong duoc dua xuong MEM", "rv32im_pipeline.v",
      "exmem_fence     <= idex_fence_r & idex_valid & ~ex_stall & ~trap_ex;",
      "exmem_fence     <= 1'b0;", "rand"),
+    # ---- load/store lech dia chi bang phan cung (MISALIGNED = 1): chuong trinh ngau nhien --ma qua cache ----
+    ("lech: pha 1 khong sang tu ke tiep", "rv32im_pipeline.v",
+     "{exmem_result[31:2] + 30'd1, 2'b00}", "{exmem_result[31:2], 2'b00}", "ma"),
+    ("lech: khong giu tu thap cua pha 0", "rv32im_pipeline.v",
+     "if (!ma_phase) ma_lo <= dmem_rdata;", ";", "ma"),
+    ("lech: ghep 2 tu nguoc thu tu", "rv32im_pipeline.v",
+     "ma_phase ? {dmem_rdata, ma_lo}", "ma_phase ? {ma_lo, dmem_rdata}", "ma"),
+    ("lech: store pha 1 dung wstrb cua pha 0", "rv32im_pipeline.v",
+     "wire [3:0]  st_strb = ma_phase ? st_strb8[7:4]  : st_strb8[3:0];",
+     "wire [3:0]  st_strb = ma_phase ? st_strb8[3:0]  : st_strb8[3:0];", "ma"),
+    ("lech: store pha 1 dung du lieu cua pha 0", "rv32im_pipeline.v",
+     "wire [31:0] st_data = ma_phase ? st_wide[63:32] : st_wide[31:0];",
+     "wire [31:0] st_data = ma_phase ? st_wide[31:0] : st_wide[31:0];", "ma"),
+    ("lech: khong dong bang o pha 0", "rv32im_pipeline.v",
+     "wire   mem_last   = ~ma_cross | ma_phase;", "wire   mem_last   = 1'b1;", "ma"),
+    ("lech: chi tach word, half o byte 3 khong tach", "rv32im_pipeline.v",
+     "(acc_strb8[7:4] != 4'b0000);", "(acc_strb8[7:4] != 4'b0000) & (exmem_funct3[1:0] == 2'b10);", "ma"),
+    ("lech: pha khong ve 0 sau pha 1", "rv32im_pipeline.v",
+     "ma_phase <= ~ma_phase;", "ma_phase <= 1'b1;", "ma"),
+    ("lech: load lech van trap", "rv32im_pipeline.v",
+     "wire ld_misal = (MISALIGNED == 0) & idex_load  &", "wire ld_misal = idex_load  &", "ma"),
+    ("lech: store lech van trap", "rv32im_pipeline.v",
+     "wire st_misal = (MISALIGNED == 0) & idex_store &", "wire st_misal = idex_store &", "ma"),
     # ---- FENCE.I (Zifencei): kiem bang cosim/tests/fencei.S (ma tu sua) ----
     ("FENCE.I khong xoa cache lenh", "rv32im_pipeline.v",
      "    assign icache_flush = fencei_ex;", "    assign icache_flush = 1'b0;", "cosim", "tests-"),
@@ -178,10 +202,10 @@ def run_cosim(rep, a, only="bench", core="cache"):
     return (True, fail) if r.returncode and fail else (False, "cosim PASS")
 
 
-def run_rand(rep):
+def run_rand(rep, extra=()):
     try:
         r = subprocess.run([sys.executable, os.path.join(rep, "verify", "run_verify.py"), "--pipem", "--cache",
-                            "--n", "40"], capture_output=True, text=True, timeout=1800)
+                            "--n", "40", *extra], capture_output=True, text=True, timeout=1800)
     except subprocess.TimeoutExpired:
         return True, "treo"
     out = r.stdout + r.stderr
@@ -195,7 +219,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("riscv_tests")
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
-    ap.add_argument("--kind", choices=["tb", "cosim", "rand", "all"], default="all", help="chi chay mot nhom dot bien")
+    ap.add_argument("--kind", choices=["tb", "cosim", "rand", "ma", "all"], default="all", help="chi chay mot nhom dot bien")
     a = ap.parse_args()
     killed, bad = 0, 0
     muts = [m for m in MUTATIONS if a.kind in ("all", m[4])]
@@ -214,6 +238,8 @@ def main():
         elif how == "cosim":
             # FENCE.I: chay test tu sua ma tren moi loi pipeline RV32IM (co va khong co cache)
             caught, detail = run_cosim(rep, a, only[0], "RV32IM") if only else run_cosim(rep, a)
+        elif how == "ma":
+            caught, detail = run_rand(rep, ("--ma",))
         else:
             caught, detail = run_rand(rep)
         if caught is None:

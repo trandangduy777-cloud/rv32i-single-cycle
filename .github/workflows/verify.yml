@@ -38,6 +38,8 @@ jobs:
           python3 run_verify.py --pipem --n 60
           python3 run_verify.py --pipem --cache --n 60
           python3 run_verify.py --pipem --cache --ways 2 --n 60
+          python3 run_verify.py --pipem --ma --n 60
+          python3 run_verify.py --pipem --ma --cache --n 60
 
       - name: Ngat timer va ngat ngoai (pipeline RV32IM) va mutation test phan ngat
         run: |

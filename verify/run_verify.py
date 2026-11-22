@@ -40,6 +40,8 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
     if full_pipe:                       # rv32im_pipeline can module rv32m trong rv32i_core.v
         cmd[2:2] = ["-DPIPE_FULL"]
         cmd.append(os.environ.get("RV32_CORE") or os.path.join(HERE, "..", "rv32i_core.v"))
+        if MA:                          # load/store lech dia chi bang phan cung (MISALIGNED = 1)
+            cmd[2:2] = ["-DMA"]
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
@@ -51,6 +53,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
 
 CACHE = False                           # --cache: chay pipeline RV32IM qua cache voi bo nho tre ngau nhien
 WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 1 = anh xa truc tiep, 2 = 1 tap 2 duong)
+MA = False                              # --ma: pipeline RV32IM voi MISALIGNED = 1, ISS cung khong trap khi lech
 _seed = [0]
 
 
@@ -81,7 +84,7 @@ def check_one(vvp, prog_words, dmem_words, tmp, tag, irq_csrs=False):
     write_hex(p, prog_words + [0x13] * (1024 - len(prog_words)))
     write_hex(d, dmem_words)
     rtl_lines, timeout = run_rtl(vvp, p, d)
-    iss = ISS(prog_words, dmem_words, irq_csrs)
+    iss = ISS(prog_words, dmem_words, irq_csrs, misaligned_hw=MA)
     iss_lines, halted = iss.run()
     if timeout or not halted:
         return ("TIMEOUT", None), iss.coverage
@@ -104,7 +107,7 @@ def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=Fa
         fails.append(("directed", res))
     # chuong trinh ngau nhien
     for s in range(seed0, seed0 + n):
-        words, dmem = Gen(s, length, profile).build()
+        words, dmem = Gen(s, length, profile, ma=MA).build()
         res, c = check_one(vvp, words, dmem, tmp, f"s{s}", full_pipe)
         for k, v in c.items():
             cov[k] = cov.get(k, 0) + v
@@ -255,7 +258,8 @@ M_CORE_MUTATIONS = [
 
 # Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
 PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
-                                                             "B: doan sai nhay ve dich nham")] + [
+                                                             "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
+                                                             "P: SH sai byte-enable")] + [
     # pipeline RV32IM: dich "chay tiep" la pc_next (pc + 2 voi lenh nen, pc + 4 voi lenh 32 bit)
     ("B: doan sai nhay ve dich nham", "(idex_pred_taken ? pc_next : pc_imm)", "(idex_pred_taken ? pc_imm : pc_next)"),
     ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= redirect_pc_q;"),
@@ -287,10 +291,14 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: M khong dong bang ID/EX", "end else if (ex_stall | frz) begin\n            // lenh M dang chay", "end else if (frz) begin\n            // lenh M dang chay"),
     ("X: M khong nhan bong bay o EX/MEM", "exmem_valid     <= idex_valid & ~ex_stall;", "exmem_valid     <= idex_valid;"),
     ("X: M dung toan hang chua forward", ".a(op_a), .b(op_b),", ".a(idex_rs1_val), .b(idex_rs2_val),"),
-    ("X: LH/SH lech khong trap", "wire ld_misal = idex_load  & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) |",
-     "wire ld_misal = idex_load  & (((idex_funct3[1:0] == 2'b01) & 1'b0) |"),
-    ("X: SW lech chi kiem tra bit 0", "wire st_misal = idex_store & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));",
-     "wire st_misal = idex_store & (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & ea_lo[0]));"),
+    ("X: LH/SH lech khong trap", "wire ld_misal = (MISALIGNED == 0) & idex_load  &\n                    (((idex_funct3[1:0] == 2'b01) & ea_lo[0])",
+     "wire ld_misal = (MISALIGNED == 0) & idex_load  &\n                    (((idex_funct3[1:0] == 2'b01) & 1'b0)"),
+    ("X: SW lech chi kiem tra bit 0", "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));\n\n",
+     "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & ea_lo[0]));\n\n"),
+    # tang MEM viet lai theo byte (64 bit / wstrb 8 bit) tu khi co MISALIGNED: thay 2 dot bien chung voi RV32I
+    ("P: LB khong mo rong dau", "3'b000:  ld_data = {{24{ld_sh[7]}},  ld_sh[7:0]};", "3'b000:  ld_data = {24'b0, ld_sh[7:0]};"),
+    ("P: SH sai byte-enable", "st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0011;",
+     "st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0110;"),
     ("X: store lech van ghi bo nho", "exmem_store     <= idex_store & ~ex_stall & ~trap_ex;", "exmem_store     <= idex_store & ~ex_stall;"),
     ("X: load lech van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~(trap_ex & ~ld_misal);"),
     ("X: store lech sai cause (4)", "else if (st_misal)      begin trap_cause = 32'd6;", "else if (st_misal)      begin trap_cause = 32'd4;"),
@@ -346,9 +354,12 @@ if __name__ == "__main__":
     ap.add_argument("--cache", action="store_true",
                     help="voi --pipem: lenh/du lieu qua cache 2x2, bo nho tre ngau nhien 1..6 chu ky")
     ap.add_argument("--ways", type=int, default=1, choices=[1, 2], help="voi --cache: so duong cua cache 2 dong")
+    ap.add_argument("--ma", action="store_true",
+                    help="voi --pipem: load/store lech dia chi bang phan cung (MISALIGNED = 1), sinh nhieu truy cap lech")
     a = ap.parse_args()
     CACHE = a.cache and a.pipem
     WAYS = a.ways
+    MA = a.ma and a.pipem
     if a.pipem:
         a.pipe = True
     if a.rtl is None:
