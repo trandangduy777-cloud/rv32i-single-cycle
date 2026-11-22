@@ -15,3 +15,4 @@ gls/build/
 
 # Benchmark: build.sh tao lai *.bin; bench.hex va bench_m.hex duoc giu de chay khong can trinh bien dich
 bench/*.bin
+coremark/eembc/

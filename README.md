@@ -16,6 +16,7 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 \*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. Số liệu flow đo trước khi thêm bộ đệm ghi và BTB/RAS; CPI là của bản hiện tại (bộ nhớ trễ tối đa 1 / 4 / 8 chu kỳ).
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân/chia lặp 2 bit mỗi chu kỳ.
+- **CoreMark**: 1,91 CoreMark/MHz (pipeline RV32IMC, `-O2`, mô phỏng, CRC đúng chuẩn, so từng lệnh với Spike); 32 % số chu kỳ là chờ bộ nhân/chia lặp.
 - **Cache và bộ nhớ có độ trễ**: pipeline RV32IM có bắt tay bộ nhớ (`imem_ready`, `dmem_ready`), cache lệnh và cache dữ liệu set-associative tham số hoá (1 / 2 / 4 đường, pseudo-LRU), bộ đệm ghi có forward vào lần nạp dòng, bộ phân xử bus chung; chạy đúng từng lệnh so với Spike với bộ nhớ trễ ngẫu nhiên 1-8 chu kỳ mỗi từ.
 - **Lệnh nén C** (tham số `ENABLE_C` của pipeline RV32IM): giải nén ở IF nên ID/EX/MEM/WB không đổi; mã của benchmark nhỏ đi khoảng 29 % mà số chu kỳ giữ nguyên. Bộ giải nén được so với GNU objdump trên toàn bộ 49.152 mã lệnh 16 bit.
 - **Ngắt**: ngắt timer, ngắt phần mềm (khối `mtime`/`mtimecmp`/`msip` kiểu CLINT) và ngắt ngoài cho pipeline RV32IM, nhận chính xác ở tầng EX, cùng lệnh `WFI`; testbench riêng cho ngắt xen vào giữa vòng lặp nhân/chia/load/store hơn 300 lần, kèm 16 đột biến phần ngắt và WFI đều bị bắt.
@@ -60,7 +61,9 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `config.json` | Cấu hình LibreLane (`CLOCK_PERIOD` = 24 ns) |
 | `metrics.json` | Số liệu flow của single-cycle RV32I (24 ns) |
 | `results/` | Số liệu flow của các lõi pipeline (`metrics_*.json`), mỗi file ứng với một dòng trong bảng so sánh |
-| `bench/` | Benchmark C: `bench.c` (RV32I thuần) và `bench_m.c` (nặng nhân/chia), `run_bench.sh` in số chu kỳ và CPI |
+| `bench/` | Benchmark C: `bench.c` (RV32I thuần), `bench_m.c` (nặng nhân/chia) và `bench_call.c` (gọi hàm, nhảy gián tiếp), `run_bench.sh` in số chu kỳ và CPI |
+| `bpred/` | Bộ dự đoán nhánh: đo theo cấu hình BTB / RAS / gshare, kiểm hiệu năng đúng từng chu kỳ, mutation test (xem mục BTB, RAS và gshare) |
+| `coremark/` | Port CoreMark (`port/`) và script build + chạy + kiểm CRC trên các lõi (xem mục CoreMark) |
 | `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
 | `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike) |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
@@ -295,6 +298,35 @@ Xem sóng bằng `gtkwave rv32i_core.vcd`.
 ## Chạy flow
 Chạy LibreLane với `config.json` trong môi trường có sẵn PDK IHP SG13G2 (ví dụ image `isaiassh/unic-cass-tools`). Kết quả nằm trong thư mục `runs/` do LibreLane sinh ra.
 
+## CoreMark
+
+CoreMark của EEMBC (mã nguồn lấy từ GitHub ở commit ghim `1f483d5`, không đưa vào repo) chạy trên các lõi bằng mô phỏng RTL. Port cho lõi này ở `coremark/port/` (dựa trên bản barebones, giấy phép Apache-2.0):
+- Lõi không có bộ đếm thời gian: `start_time()` / `stop_time()` ghi 1 / 2 vào một ô nhớ, testbench ghi lại số chu kỳ lúc 2 lệnh store đó hoàn tất. CoreMark/MHz = số vòng × 10⁶ / số chu kỳ phần đo.
+- `ee_printf` ghi vào một vùng đệm trong RAM, testbench in ra khi kết thúc. Vì chỉ là các store vào RAM nên Spike chạy y hệt: **CoreMark 1 vòng được so từng lệnh với Spike** (337.723 lệnh, khớp trên cả 10 cấu hình lõi có M).
+- **Đây không phải kết quả nộp chính thức**: quy định cần chạy ít nhất 10 giây, mô phỏng chỉ chạy 5 vòng, nên CoreMark tự báo lỗi "phải chạy ít nhất 10 giây". Tính đúng đắn được kiểm bằng CRC: `seedcrc` 0xe9f5, `crclist` 0xe714, `crcmatrix` 0x1fd7, `crcstate` 0x8e3a phải đúng giá trị chuẩn của lần chạy hiệu năng, và lỗi 10 giây là lỗi duy nhất được phép (`coremark/run_coremark.py`, có trong CI).
+
+Kết quả (5 vòng, GCC 13.2 `-O2`, bộ nhớ tổ hợp trừ khi ghi khác):
+
+| Lõi | `-march` | CoreMark/MHz | CPI | Chu kỳ mất ở pipeline: lệnh M / chờ bộ nhớ / redirect EX / load-use / nhảy ở ID |
+|---|---|---|---|---|
+| Single-cycle | rv32im | 1,604 | 1,990 | - (lệnh M mất 34 chu kỳ) |
+| Pipeline RV32I (nhân/chia bằng phần mềm libgcc) | rv32i | 0,996 | 1,345 | - |
+| Pipeline RV32IM, bộ dự đoán cũ | rv32im | 1,785 | 1,788 | 845.640 / 0 / 38.846 / 101.639 / 188.021 |
+| Pipeline RV32IM, BTB 16 + RAS 4 | rv32im | **1,907** | 1,674 | 845.640 / 0 / 28.756 / 101.639 / 26.369 |
+| Pipeline RV32IMC, BTB 16 + RAS 4 | rv32imc | 1,910 | 1,671 | 845.640 / 0 / 25.322 / 101.639 / 30.672 |
+| Như trên + cache 2 × 256 B, bộ nhớ trễ 1-4 | rv32imc | 1,176 | 2,713 | 845.640 / 662.290 / 25.322 / 100.599 / 30.626 |
+| Như trên + cache 2 × 4 KB, bộ nhớ trễ 1-4 | rv32imc | 1,894 | 1,685 | 845.640 / 2.264 / 25.322 / 101.636 / 30.672 |
+| Pipeline RV32IM, `-O3 -funroll-loops` | rv32im | 2,045 | 1,742 | 845.640 / 0 / 24.713 / 101.347 / 26.436 |
+
+- **Lệnh M chiếm 32 % số chu kỳ** (845.640 / 2.621.781): bộ nhân/chia lặp 2 bit mỗi chu kỳ mất khoảng 17-19 chu kỳ mỗi lệnh, mà CoreMark (phần ma trận) nhân rất nhiều. Nếu lệnh M không tốn thêm chu kỳ nào thì giới hạn trên là khoảng 2,8 CoreMark/MHz ở `-O2`; đây là lý do của mục tiếp theo trong kế hoạch (bộ nhân song song).
+- BTB + RAS tăng 6,8 % (1,785 → 1,907), chủ yếu nhờ bỏ được khoảng 160 nghìn lần nhảy ở ID (mỗi lần 1 chu kỳ).
+- Cache 256 B quá nhỏ cho CoreMark (mã và dữ liệu lớn hơn nhiều), chờ bộ nhớ chiếm 662 nghìn chu kỳ; cache 4 KB thì chỉ còn 2.264 chu kỳ chờ, kém bộ nhớ lý tưởng 0,8 %.
+- So sánh tham khảo với số liệu công bố của lõi khác (khác trình biên dịch, cờ và hệ thống bộ nhớ nên chỉ để định vị, không phải so trực tiếp): Ibex 0,904 (micro, RV32EC), 2,47 (small, RV32IMC, nhân 3 chu kỳ), 3,13 (maxperf, nhân 1 chu kỳ) theo README của Ibex; VexRiscv 2,30 (full, RV32IM) và 2,57 (full max perf) theo README của VexRiscv. Bài báo về Ibex ở CARRV 2021 cho thấy riêng cờ biên dịch đã làm CoreMark/MHz của cùng một lõi thay đổi từ 2,07 (`-O2`) lên 2,35 (`-O3` + unroll). Lõi này hiện ở mức 1,9-2,0, thấp hơn Ibex small chủ yếu vì bộ nhân lặp.
+
+```
+python3 coremark/run_coremark.py [--iter 5] [--quick] [--opt "-O3 -funroll-loops"] [--only <tên lõi>]
+```
+
 ## Dự đoán nhánh và CPI
 
 Bản đầu của pipeline quyết định mọi lệnh nhảy ở EX nên mỗi lệnh nhảy thực hiện đều mất 2 chu kỳ. Bản hiện tại thêm bộ dự đoán ở tầng ID:
@@ -520,16 +552,17 @@ riscv-tests chỉ tự báo PASS/FAIL ở cuối, và ISS Python do chính mình
 
 | Lõi | Chương trình | Số lệnh khớp Spike |
 |---|---|---|
-| Single-cycle (RV32IM) | 53 (rv32ui, rv32um, bench, bench_m, `fencei.S`, `conflict.S`) | 65.974 |
-| Pipeline RV32I | 42 (rv32ui, bench, `conflict.S`) | 48.694 |
-| Pipeline RV32IM | 53 | 65.974 |
-| Pipeline RV32IM, `ENABLE_C = 1` | 105 (gồm cả các bản biên dịch có C) | 128.003 |
-| Như trên + cache 16 × 4, bộ nhớ trễ 1-4 | 105 | 128.003 |
-| Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 105 | 128.003 |
-| Như trên + cache 16 × 4 2 đường, bộ nhớ trễ 1-4 | 105 | 128.003 |
-| Như trên + cache 4 × 2 4 đường (1 tập), bộ nhớ trễ 1-8 | 105 | 128.003 |
-| Pipeline RV32IMC, `MISALIGNED = 1` (Spike `..._zicclsm`) | 108 (thêm `rv32ui-ma_data` 2 bản và `misaligned.S`) | 151.822 |
-| Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 108 | 151.822 |
+| Single-cycle (RV32IM) | 55 (rv32ui, rv32um, bench, bench_m, bench_call, CoreMark 1 vòng, `fencei.S`, `conflict.S`) | 463.855 |
+| Pipeline RV32I | 43 (rv32ui, bench, bench_call, `conflict.S`) | 108.852 |
+| Pipeline RV32IM | 55 | 463.855 |
+| Pipeline RV32IM, `ENABLE_C = 1` | 108 (gồm cả các bản biên dịch có C) | 586.042 |
+| Như trên + cache 16 × 4, bộ nhớ trễ 1-4 | 108 | 586.042 |
+| Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 108 | 586.042 |
+| Như trên + cache 16 × 4 2 đường, bộ nhớ trễ 1-4 | 108 | 586.042 |
+| Như trên + cache 4 × 2 4 đường (1 tập), bộ nhớ trễ 1-8 | 108 | 586.042 |
+| Pipeline RV32IMC, `MISALIGNED = 1` (Spike `..._zicclsm`) | 111 (thêm `rv32ui-ma_data` 2 bản và `misaligned.S`) | 609.861 |
+| Như trên + cache 2 × 2, bộ nhớ trễ 1-8 | 111 | 609.861 |
+| Pipeline RV32IMC, bộ dự đoán ép lỗi (BTB 4 mục tag 1 bit, RAS 2, gshare 2) + cache 2 × 2, trễ 1-6 | 108 | 586.042 |
 
 Ngoài ra `rv32ui/fence_i` (bản thường và bản có C) và `cosim/tests/fencei.S` (428 lệnh) chạy trên mọi lõi có Zifencei (xem mục Cache).
 

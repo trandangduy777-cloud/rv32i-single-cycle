@@ -217,6 +217,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("riscv_tests", nargs="?", default="riscv-tests")
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
+    ap.add_argument("--no-coremark", action="store_true", help="bo CoreMark (can lay ma nguon tu GitHub)")
     ap.add_argument("--only", default="", help="chi chay chuong trinh co ten chua chuoi nay (vd. --only=-c)")
     ap.add_argument("--core", default="", help="chi chay loi co ten chua chuoi nay (vd. --core=RV32IMC)")
     ap.add_argument("--stop-on-fail", action="store_true", help="dung o chuong trinh lech dau tien (mutation test)")
@@ -258,6 +259,12 @@ def main():
     progs.append(build_bench("bench_m", "rv32imc", tmp) + ("rv32imc",))
     progs.append(build_bench("bench_call", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_call", "rv32ic", tmp) + ("rv32ic",))
+    # CoreMark 1 vong (ma nguon EEMBC lay tu GitHub, port o coremark/port): so tung lenh, khoang 313 nghin lenh
+    if not a.no_coremark:
+        sys.path.insert(0, os.path.join(ROOT, "coremark"))
+        import run_coremark as cm
+        cm.fetch_src()
+        progs.append(("coremark", cm.build("rv32im", 1, tmp)[0], "rv32im"))
     if a.only:
         progs = [p for p in progs if a.only in p[0]]
 
