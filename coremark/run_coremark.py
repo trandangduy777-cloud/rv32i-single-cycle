@@ -57,18 +57,21 @@ def fetch_src():
     sh(["git", "-C", SRC, "checkout", "-q", SRC_COMMIT])
 
 
-def build(march, iters, tmp):
-    """-> duong dan .hex cua CoreMark bien dich cho march, dat o BASE (giong cosim/run_cosim.py)"""
+def build(march, iters, tmp, crt0=None, inc=()):
+    """-> duong dan .hex cua CoreMark bien dich cho march, dat o BASE (giong cosim/run_cosim.py).
+    crt0 / inc: crt0 khac (vd. cosim/irq/crt0_irq.S chay duoi bao ngat) va thu muc include them."""
     ld = os.path.join(tmp, "cm.ld")
     open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
-    elf = os.path.join(tmp, f"coremark_{march}_{iters}.elf")
+    elf = os.path.join(tmp, f"coremark_{march}_{iters}{'_' + os.path.basename(crt0)[:-2] if crt0 else ''}.elf")
     flags = f"{OPT} -march={march}"
     src = [os.path.join(SRC, f) for f in ("core_list_join.c", "core_main.c", "core_matrix.c", "core_state.c", "core_util.c")]
     src += [os.path.join(HERE, "port", f) for f in ("core_portme.c", "ee_printf.c")]
-    r = sh(GCC + [f"-march={march}"] + OPT.split() + ["-fno-builtin", "-I", SRC, "-I", os.path.join(HERE, "port"),
+    gm = march + ("_zicsr" if crt0 else "")                   # crt0 co ngat dung lenh CSR
+    r = sh(GCC + [f"-march={gm}"] + OPT.split() + ["-fno-builtin", "-I", SRC, "-I", os.path.join(HERE, "port")] +
+                 [x for d in inc for x in ("-I", d)] + [
                   f"-DITERATIONS={iters}", "-DPERFORMANCE_RUN=1", f'-DFLAGS_STR="{flags}"',
                   f"-DSTACK_TOP=0x{BASE + 0x37000:x}", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-T", ld,
-                  os.path.join(ROOT, "bench", "crt0.S")] + src + ["-lgcc", "-o", elf])
+                  crt0 or os.path.join(ROOT, "bench", "crt0.S")] + src + ["-lgcc", "-o", elf])
     if r.returncode:
         sys.exit(r.stderr)
     hexf = elf[:-4] + ".hex"
