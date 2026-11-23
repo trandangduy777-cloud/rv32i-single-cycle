@@ -379,7 +379,10 @@ endmodule
 //                   Pipeline dung PREP = 1: toan hang di qua mux forwarding nen khong duoc dat them bo cong dao dau phia sau.
 // STEPS: so bit xu ly moi chu ky (1, 2 hoac 4). Bo nhan/chia lap lai buoc 1 bit STEPS lan trong mot chu ky,
 // nen lenh M mat 32/STEPS chu ky lap thay vi 32; doi lai duong to hop dai gap STEPS lan.
-module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
+// MUL_LAT: 0 = nhan lap nhu chia (32 / STEPS chu ky); 1 = nhan song song xong ngay trong chu ky nhan lenh (done to hop);
+// 2 = nhan song song 2 tang: chu ky 1 tao tich rieng Booth + cay Wallace roi chot (sum, carry), chu ky 2 cong cuoi.
+// Chia (DIV/DIVU/REM/REMU) luon lap.
+module rv32m #(parameter PREP = 0, parameter STEPS = 1, parameter MUL_LAT = 0) (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        req,
@@ -389,9 +392,9 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
     output wire        done,
     output reg  [31:0] result
 );
-    localparam IDLE = 2'd0, RUN = 2'd1, FIN = 2'd2, PRE = 2'd3;
+    localparam IDLE = 3'd0, RUN = 3'd1, FIN = 3'd2, PRE = 3'd3, MW = 3'd4;
 
-    reg [1:0]  state;
+    reg [2:0]  state;
     reg [4:0]  cnt;
     reg [2:0]  op;
     reg [63:0] p;          // nhan: {tich cao, so nhan}; chia: {du, so bi chia/thuong}
@@ -441,7 +444,22 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
             p_next = op[2] ? div_step(p_next, m) : mul_step(p_next, m);
     end
 
-    assign done = (state == FIN);
+    // ---- nhan song song (MUL_LAT = 1 / 2): toan hang 33 bit co dau theo MUL / MULH / MULHSU / MULHU ----
+    wire        fast_mul = (MUL_LAT != 0) & ~funct3[2];          // lenh nhan di nhanh song song
+    wire        fsa = (funct3[1:0] == 2'b01 | funct3[1:0] == 2'b10) & a[31];   // MULH, MULHSU: a co dau
+    wire        fsb = (funct3[1:0] == 2'b01) & b[31];                           // MULH: b co dau
+    wire [65:0] f_s, f_c;
+    // co lap toan hang: cay nhan chi thay doi khi co lenh nhan o IDLE (giam chuyen mach vo ich, va mo phong nhanh hon)
+    wire        f_go = (MUL_LAT != 0) & (state == IDLE) & req & fast_mul;
+    rv32_mul_csa #(.W(33)) u_csa (.a(f_go ? {fsa, a} : 33'd0), .b(f_go ? {fsb, b} : 33'd0), .sum(f_s), .carry(f_c));
+    reg  [65:0] mw_s, mw_c;                                       // MUL_LAT = 2: chot sau cay Wallace
+    reg  [1:0]  mw_op;
+    wire [65:0] f_p  = (MUL_LAT == 2) ? (mw_s + mw_c) : (f_s + f_c);
+    wire [1:0]  f_op = (MUL_LAT == 2) ? mw_op : funct3[1:0];
+    wire [31:0] f_res = (f_op == 2'b00) ? f_p[31:0] : f_p[63:32];
+    wire        f_now = (MUL_LAT == 1) & f_go;                                  // xong trong chu ky nay
+
+    assign done = (state == FIN) | (state == MW) | f_now;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -456,7 +474,14 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
             sb_r    <= 1'b0;
         end else begin
             case (state)
-                IDLE: if (req) begin
+                IDLE: if (req & fast_mul) begin
+                    if (MUL_LAT == 2) begin                  // tang 1: chot sum / carry, chu ky sau cong cuoi
+                        mw_s  <= f_s;
+                        mw_c  <= f_c;
+                        mw_op <= funct3[1:0];
+                        state <= MW;
+                    end                                      // MUL_LAT = 1: xong ngay (f_now), giu IDLE
+                end else if (req) begin
                     op  <= funct3;
                     cnt <= 5'd0;
                     state <= PREP ? PRE : RUN;
@@ -496,13 +521,15 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
                     cnt <= cnt + 5'd1;
                     if (cnt == LAST) state <= FIN;
                 end
-                default: state <= IDLE;                  // FIN: lenh da hoan tat
+                default: state <= IDLE;                  // FIN / MW: lenh da hoan tat
             endcase
         end
     end
 
     wire [63:0] p_neg = ~p + 64'd1;
     always @* begin
+        if (f_now | (state == MW)) result = f_res;
+        else
         case (op)
             3'b000:  result = p[31:0];                                   // MUL
             3'b001,
@@ -513,5 +540,104 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1) (
             3'b110:  result = neg_rem ? (~p[63:32] + 32'd1) : p[63:32];  // REM
             default: result = p[63:32];                                  // REMU
         endcase
+    end
+endmodule
+// Bo nhan song song co dau W x W bit (tu viet): ma hoa Booth co so 4 + cay cong luu nho (Wallace, bo cong 3:2).
+// - a, b la so co dau W bit (RV32: W = 33, bit 32 la bit dau mo rong theo MUL / MULH / MULHSU / MULHU).
+// - Booth co so 4: b duoc chia thanh N = ceil((W+1)/2) nhom 3 bit (b[2i+1], b[2i], b[2i-1], b[-1] = 0), moi nhom chon
+//   mot hang tich rieng trong {0, +-a, +-2a} dich trai 2i bit: so hang tich rieng giam mot nua so voi nhan tung bit.
+// - Hang am lay bu 1 (~x) thay vi bu 2: phan "+1" con thieu duoc gom vao mot hang hieu chinh rieng (bit 2i = 1 neu hang
+//   i am), nen tao hang tich rieng khong can bo cong nao.
+// - N + 1 hang (moi hang 2W bit, mo rong dau day du) duoc rut gon bang cac tang bo cong 3:2 (sum = x^y^z,
+//   carry = maj(x,y,z) << 1) toi khi con 2 hang: tong va nho. Tich = sum + carry (lay 2W bit thap).
+// - Mo-dun chi la phan to hop; viec dat thanh ghi (1 hay 2 chu ky) do rv32m trong rv32i_core.v quyet dinh.
+module rv32_mul_csa #(
+    parameter W = 33
+) (
+    input  wire [W-1:0]   a,
+    input  wire [W-1:0]   b,
+    output reg  [2*W-1:0] sum,
+    output reg  [2*W-1:0] carry
+);
+    localparam N  = (W + 2) / 2;          // so nhom Booth (W le: (W+1)/2; W chan: W/2 + 1 de bit dau nam trong nhom cuoi)
+    localparam R  = N + 1;                // so hang: N hang tich rieng + 1 hang hieu chinh
+    localparam P  = 2 * W;
+
+    // so hang sau moi tang rut gon 3:2 (hang thua chuyen thang xuong) va so tang can de con 2 hang
+    function integer rows_at(input integer lv);
+        integer r, j;
+        begin
+            r = R;
+            for (j = 0; j < lv; j = j + 1) r = 2 * (r / 3) + r % 3;
+            rows_at = r;
+        end
+    endfunction
+    function integer n_levels(input integer dummy);
+        integer r, j;
+        begin
+            r = R; j = 0;
+            while (r > 2) begin r = 2 * (r / 3) + r % 3; j = j + 1; end
+            n_levels = j;
+        end
+    endfunction
+    localparam LV = n_levels(0);
+
+    // tang 0: tao hang tich rieng (to hop thuan, khong bo cong)
+    reg [P-1:0] row0 [0:R-1];
+    reg [2*N:0] bb;                       // b mo rong dau toi 2N bit, kem b[-1] = 0 o bit 0
+    reg [P-1:0] am, a2m;                  // a va 2a mo rong dau 2W bit
+    reg [2:0]   grp;
+    reg [P-1:0] pp, corr;
+    reg         neg;
+    integer     i;
+    always @* begin
+        bb   = {{(2*N-W){b[W-1]}}, b, 1'b0};
+        am   = {{W{a[W-1]}}, a};
+        a2m  = am << 1;
+        corr = {P{1'b0}};
+        for (i = 0; i < N; i = i + 1) begin
+            grp = bb[2 * i +: 3];                        // {b[2i+1], b[2i], b[2i-1]}
+            case (grp)
+                3'b001, 3'b010: begin pp = am;  neg = 1'b0; end   // +a
+                3'b011:         begin pp = a2m; neg = 1'b0; end   // +2a
+                3'b100:         begin pp = a2m; neg = 1'b1; end   // -2a
+                3'b101, 3'b110: begin pp = am;  neg = 1'b1; end   // -a
+                default:        begin pp = {P{1'b0}}; neg = 1'b0; end   // 0
+            endcase
+            row0[i] = (neg ? ~pp : pp) << (2 * i);      // bu 1, phan +1 dua vao hang hieu chinh
+            corr    = corr | ({{(P-1){1'b0}}, neg} << (2 * i));
+        end
+        row0[N] = corr;
+    end
+
+    // cac tang rut gon: t[l] chua cac hang cua tang l (R hang x P bit, chi dung rows_at(l) hang dau)
+    wire [R*P-1:0] t [0:LV];
+    genvar l, g;
+    generate
+        for (g = 0; g < R; g = g + 1) begin : lv0
+            assign t[0][g*P +: P] = row0[g];
+        end
+        for (l = 0; l < LV; l = l + 1) begin : lv
+            localparam RIN = rows_at(l);
+            localparam NG  = RIN / 3;                    // so bo cong 3:2 o tang nay
+            for (g = 0; g < NG; g = g + 1) begin : csa
+                wire [P-1:0] x = t[l][(3*g)*P +: P];
+                wire [P-1:0] y = t[l][(3*g+1)*P +: P];
+                wire [P-1:0] z = t[l][(3*g+2)*P +: P];
+                assign t[l+1][(2*g)*P +: P]   = x ^ y ^ z;
+                assign t[l+1][(2*g+1)*P +: P] = ((x & y) | (x & z) | (y & z)) << 1;
+            end
+            for (g = 3 * NG; g < RIN; g = g + 1) begin : pass
+                assign t[l+1][(2*NG + g - 3*NG)*P +: P] = t[l][g*P +: P];
+            end
+            for (g = 2 * NG + RIN - 3 * NG; g < R; g = g + 1) begin : unused
+                assign t[l+1][g*P +: P] = {P{1'b0}};
+            end
+        end
+    endgenerate
+
+    always @* begin
+        sum   = t[LV][0 +: P];
+        carry = t[LV][P +: P];
     end
 endmodule

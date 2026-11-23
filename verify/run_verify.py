@@ -44,6 +44,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
             cmd[2:2] = ["-DMA"]
         if BPSTRESS:                    # bo du doan nho, tag 1 bit (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DBPSTRESS"]
+        cmd[2:2] = [f"-DMULLAT={MUL_LAT}"]   # bo nhan cua pipeline RV32IM
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
@@ -57,6 +58,7 @@ CACHE = False                           # --cache: chay pipeline RV32IM qua cach
 WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 1 = anh xa truc tiep, 2 = 1 tap 2 duong)
 MA = False                              # --ma: pipeline RV32IM voi MISALIGNED = 1, ISS cung khong trap khi lech
 BPSTRESS = False                        # --bpstress: BTB 4 muc tag 1 bit, RAS 2 muc, gshare 2 bit
+MUL_LAT = 2                             # --mul-lat: bo nhan 0 lap, 1 song song 1 chu ky, 2 song song 2 tang
 _seed = [0]
 
 
@@ -65,7 +67,10 @@ def run_rtl(vvp, prog, dmem=None):
     if CACHE:
         _seed[0] += 1
         cmd += ["+lat=6", f"+seed={_seed[0]}"]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:   # mo phong qua 120 giay (vd. RTL loi chay vong vo han in vet lien tuc): coi la treo
+        return [], True
     lines = [l for l in r.stdout.splitlines() if l.startswith("pc=")]
     timeout = "TIMEOUT" in r.stdout
     return lines, timeout
@@ -316,6 +321,7 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
 
 
 def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=False):
+    global MUL_LAT
     src = open(rtl).read()
     caught = skipped = 0
     muts = [m for m in (PIPEM_MUTATIONS if full_pipe else PIPE_MUTATIONS if pipe else MUTATIONS) if not only or only.lower() in m[0].lower()]
@@ -336,12 +342,17 @@ def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=F
             open(cpath, "w").write(core_src.replace(old, new, 1))
             open(mpath, "w").write(src)
             os.environ["RV32_CORE"] = cpath
+            # cac mutation "M:" nham vao bo nhan/chia lap; voi MUL_LAT != 0 lenh nhan di bo nhan song song (co
+            # mutation rieng o mul/mutate_mul.py) nen chay voi MUL_LAT = 0 de duong nhan lap thuc su duoc dung
+            saved_lat, MUL_LAT = MUL_LAT, 0
         else:
             open(mpath, "w").write(src.replace(old, new, 1))
         try:
             cov, fails = run_suite(mpath, n, length, seed0, tmp, verbose=False, pipe=pipe, full_pipe=full_pipe)
         finally:
             os.environ.pop("RV32_CORE", None)
+            if is_core:
+                MUL_LAT = saved_lat
         ok = len(fails) > 0
         caught += ok
         print(f"  [{'BAT DUOC' if ok else 'BO SOT  '}] {name} ({len(fails)}/{n + 1} chuong trinh loi)")
@@ -366,7 +377,9 @@ if __name__ == "__main__":
                     help="voi --pipem: load/store lech dia chi bang phan cung (MISALIGNED = 1), sinh nhieu truy cap lech")
     ap.add_argument("--bpstress", action="store_true",
                     help="voi --pipem: bo du doan nho (BTB 4 muc tag 1 bit, RAS 2, gshare 2): trung nham BTB lien tuc")
+    ap.add_argument("--mul-lat", type=int, default=2, choices=[0, 1, 2], help="voi --pipem: kieu bo nhan")
     a = ap.parse_args()
+    MUL_LAT = a.mul_lat
     CACHE = a.cache and a.pipem
     BPSTRESS = a.bpstress and a.pipem
     WAYS = a.ways

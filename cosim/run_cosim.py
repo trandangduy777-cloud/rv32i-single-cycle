@@ -51,6 +51,11 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC lech phan cung + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DMA -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
           CACHE_FILES, "rv32imc_zifencei_zicclsm", ["+lat=8", "+seed=5"]),
          # bo du doan "ep loi": BTB 4 muc tag 1 bit (trung nham lien tuc), RAS 2 muc, gshare 2 bit, qua cache 2x2
+         # 2 kieu bo nhan con lai (mac dinh MUL_LAT = 2): lap nhu ban cu, va song song xong trong 1 chu ky
+         ("RV32IMC nhan lap", "-DPIPE_FULL -DRVC -DMULLAT=0", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
+          "rv32imc_zifencei"),
+         ("RV32IMC nhan 1 chu ky + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DMULLAT=1 -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
+          CACHE_FILES, "rv32imc_zifencei", ["+lat=8", "+seed=13"]),
          ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2 -DBTBN=4 "
           "-DRASN=2 -DGHRB=2 -DBTAG=1", CACHE_FILES, "rv32imc_zifencei", ["+lat=6", "+seed=9"])]
 

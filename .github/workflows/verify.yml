@@ -12,7 +12,7 @@ on:
 jobs:
   simulate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +42,16 @@ jobs:
           python3 run_verify.py --pipem --ma --cache --n 60
           python3 run_verify.py --pipem --bpstress --n 60
           python3 run_verify.py --pipem --bpstress --cache --n 60
+          python3 run_verify.py --pipem --mul-lat 0 --n 60
+          python3 run_verify.py --pipem --mul-lat 1 --n 60
+          python3 run_verify.py --pipem --mul-lat 1 --cache --n 60
+
+      - name: Bo nhan song song (Booth + cay CSA), thu het moi cap o 3-10 bit, gia tri bien + ngau nhien o 33 bit
+        run: |
+          for w in 3 4 5 8 9 10 33; do
+            iverilog -g2012 -DW=$w -o mul.vvp mul/tb_mul.v rv32i_core.v
+            vvp -n mul.vvp +n=20000 | tee mul.log && grep -q "\[MUL\] PASS" mul.log
+          done
 
       - name: Ngat timer va ngat ngoai (pipeline RV32IM) va mutation test phan ngat
         run: |
@@ -110,17 +120,18 @@ jobs:
       - name: CoreMark 1 vong tren pipeline RV32IM / RV32IMC (kiem CRC chuan, in CoreMark/MHz)
         run: python3 coremark/run_coremark.py --iter 1 --quick
 
-      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 11 cau hinh loi)
+      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 13 cau hinh loi)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
 
-      - name: Mutation test mo rong C va cache (chi khi bam Run workflow)
+      - name: Mutation test mo rong C, cache, du doan nhanh, bo nhan (chi khi bam Run workflow)
         if: github.event_name == 'workflow_dispatch'
         run: |
           python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
           python3 cache/mutate_cache.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
           python3 bpred/mutate_bpred.py
+          python3 mul/mutate_mul.py
 
   mutation:
     if: github.event_name == 'workflow_dispatch'
