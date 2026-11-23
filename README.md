@@ -70,6 +70,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike) |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
+| `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca` hoặc số bước), in một dòng kết quả mỗi bước |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
