@@ -139,7 +139,8 @@ int main(int argc, char** argv) {
             s->mip->backdoor_write_with_mask(IRQ_MASK, r.mip & IRQ_MASK);
             p.step(1);
             s->mip->backdoor_write_with_mask(IRQ_MASK, 0);
-            reg_t mc = (uint32_t)s->mcause->read(), me = (uint32_t)s->mepc->read(), tv = (uint32_t)s->mtvec->read() & ~(reg_t)3;
+            reg_t mc = (uint32_t)s->mcause->read(), me = (uint32_t)s->mepc->read(), mt = (uint32_t)s->mtvec->read();
+            reg_t tv = (mt & ~(reg_t)3) + ((mt & 1) ? 4 * (r.cause & 0x3f) : 0);   // mtvec vectored
             if (s->minstret->read() != ins0 || mc != (reg_t)r.cause || me != r.epc || (uint32_t)s->pc != tv) {
                 snprintf(buf, sizeof buf, "Spike khong nhan ngat giong RTL (mstatus=%08lx mie=%08lx): mcause %08lx (RTL %08x), "
                          "mepc %08lx (RTL %08x), pc %08lx (mtvec %08lx)", (long)s->mstatus->read(), (long)s->mie->read(),

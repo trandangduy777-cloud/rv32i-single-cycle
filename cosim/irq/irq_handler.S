@@ -90,7 +90,12 @@ h_fail:
 // cai dat ngat: mtvec, mscratch, LFSR, mtimecmp = mtime + 60, bat MEIE | MTIE | MSIE va mstatus.MIE.
 // Dung t0, t1.
 irq_setup:
+#ifdef VEC
+    la      t0, vtable                # mtvec vectored: bang 12 muc, moi muc nhay toi handler
+    ori     t0, t0, 1
+#else
     la      t0, handler
+#endif
     csrw    mtvec, t0
     la      t0, hsave
     csrw    mscratch, t0
@@ -108,6 +113,17 @@ irq_setup:
     csrw    mie, t0
     csrsi   mstatus, 8
     ret
+
+#ifdef VEC
+    .balign 64
+vtable:                             // muc 0: exception, 3 / 7 / 11: ngat phan mem / timer / ngoai
+    .option push
+    .option norvc                   // moi muc dung 4 byte
+    .rept 12
+    j       handler
+    .endr
+    .option pop
+#endif
 
     .data
     .balign 4

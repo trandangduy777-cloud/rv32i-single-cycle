@@ -27,6 +27,12 @@ EXTRA = [
     ("ngat timer bao nham la ngat phan mem",
      "trap_cause = irq_meip ? 32'h8000_000B : (irq_msip ? 32'h8000_0003 : 32'h8000_0007);",
      "trap_cause = irq_meip ? 32'h8000_000B : 32'h8000_0003;"),
+    ("mtvec vectored: khong cong ma nguyen nhan",
+     "wire [31:2] trap_base  = (irq_take & mtvec_vec) ? mtvec_r + {26'd0, trap_cause[3:0]} : mtvec_r;",
+     "wire [31:2] trap_base  = mtvec_r;"),
+    ("mtvec vectored: exception cung nhay theo ma nguyen nhan",
+     "wire [31:2] trap_base  = (irq_take & mtvec_vec) ? mtvec_r + {26'd0, trap_cause[3:0]} : mtvec_r;",
+     "wire [31:2] trap_base  = mtvec_vec ? mtvec_r + {26'd0, trap_cause[3:0]} : mtvec_r;"),
 ]
 
 

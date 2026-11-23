@@ -37,13 +37,13 @@ def exts(march):
     return rc.exts(march)
 
 
-def build_storm(march, tmp, ma=False):
-    name = f"irq_storm-{march.split('_')[0][4:]}" + ("-ma" if ma else "")
+def build_storm(march, tmp, ma=False, vec=False):
+    name = f"irq_storm-{march.split('_')[0][4:]}" + ("-ma" if ma else "") + ("-vec" if vec else "")
     elf = os.path.join(tmp, name + ".elf")
     ld = os.path.join(tmp, "irq80.ld")
     open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
     r = rc.sh(rc.GCC + [f"-march={rc.gcc_march(march)}_zicsr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE] +
-              (["-DMA"] if ma else []) + ["-T", ld, os.path.join(HERE, "irq_storm.S"), "-o", elf])
+              (["-DMA"] if ma else []) + (["-DVEC"] if vec else []) + ["-T", ld, os.path.join(HERE, "irq_storm.S"), "-o", elf])
     if r.returncode:
         sys.exit(r.stderr)
     return name, elf
@@ -97,6 +97,7 @@ def main():
 
     progs = [build_storm("rv32im", tmp) + ("rv32im",), build_storm("rv32imc", tmp) + ("rv32imc",),
              build_storm("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
+             build_storm("rv32imc", tmp, vec=True) + ("rv32imc",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),
