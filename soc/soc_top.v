@@ -6,7 +6,8 @@ module soc_top #(
     parameter        ROM_INIT    = "",                    // file hex (moi dong 1 tu 32 bit), de trong = nap tu testbench
     parameter [15:0] UART_DIV    = 16'd434,               // 50 MHz / 115200
     parameter        MTIME_PRESC = 1,
-    parameter        GPIO_N      = 16
+    parameter        GPIO_N      = 16,
+    parameter        UART_RX_DEPTH = 8                    // FIFO nhan cua UART
 ) (
     input  wire              clk,
     input  wire              rst_n,
@@ -34,23 +35,24 @@ module soc_top #(
         .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
     );
 
-    wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, bus_err;
-    wire [31:0] rom_rd, ram_rd, clint_rd, uart_rd, gpio_rd, sys_rd, rom_idata;
+    wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err;
+    wire [31:0] rom_rd, ram_rd, clint_rd, uart_rd, gpio_rd, sys_rd, rom_idata, ram_idata;
 
     soc_bus #(.ROM_AW(ROM_AW), .RAM_AW(RAM_AW)) u_bus (
         .daddr(dmem_addr), .dwe(dmem_we), .dre(dmem_re),
         .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys),
         .rom_rd(rom_rd), .ram_rd(ram_rd), .clint_rd(clint_rd), .uart_rd(uart_rd), .gpio_rd(gpio_rd), .sys_rd(sys_rd),
-        .rdata(dmem_rdata), .bus_err(bus_err), .iaddr(imem_addr), .i_sel_rom(i_sel_rom)
+        .rdata(dmem_rdata), .bus_err(bus_err), .iaddr(imem_addr), .i_sel_rom(i_sel_rom), .i_sel_ram(i_sel_ram)
     );
 
     soc_rom #(.WORDS(ROM_WORDS), .INIT_FILE(ROM_INIT)) u_rom (
         .i_addr(imem_addr), .i_data(rom_idata), .d_addr(dmem_addr), .d_data(rom_rd)
     );
-    assign imem_data = i_sel_rom ? rom_idata : 32'd0;
+    assign imem_data = i_sel_rom ? rom_idata : i_sel_ram ? ram_idata : 32'd0;
 
     soc_ram #(.WORDS(RAM_WORDS)) u_ram (
-        .clk(clk), .sel(sel_ram), .addr(dmem_addr), .we(dmem_we), .wstrb(dmem_wstrb), .wdata(dmem_wdata), .rdata(ram_rd)
+        .clk(clk), .sel(sel_ram), .addr(dmem_addr), .we(dmem_we), .wstrb(dmem_wstrb), .wdata(dmem_wdata), .rdata(ram_rd),
+        .i_addr(imem_addr), .i_data(ram_idata)
     );
 
     rv32_mtimer #(.PRESCALE(MTIME_PRESC)) u_clint (
@@ -58,7 +60,7 @@ module soc_top #(
         .wdata(dmem_wdata), .rdata(clint_rd), .irq(irq_timer), .msip(irq_soft)
     );
 
-    soc_uart #(.DEFAULT_DIV(UART_DIV)) u_uart (
+    soc_uart #(.DEFAULT_DIV(UART_DIV), .RX_DEPTH(UART_RX_DEPTH)) u_uart (
         .clk(clk), .rst_n(rst_n), .sel(sel_uart), .addr(dmem_addr[4:2]), .we(dmem_we), .re(dmem_re), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(uart_rd), .rx(uart_rx), .tx(uart_tx), .irq(irq_uart)
     );

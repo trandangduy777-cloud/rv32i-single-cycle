@@ -17,6 +17,10 @@ $YOSYS -q -l syn.log -p "read_verilog $SRC; hierarchy -top soc_top; synth -top s
     abc -liberty $LIB -D 15000 -script abc.script -dont_use sg13g2_sighold -dont_use sg13g2_lgcp_1 -dont_use sg13g2_slgcp_1; \
     opt_clean; hilomap -singleton -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO; \
     tee -q -o stat.txt stat -liberty $LIB -top soc_top"
+# tong dien tich khi flatten (cho phep toi uu xuyen ranh gioi module; so nay moi so duoc voi synth/run_synth_sta.sh)
+$YOSYS -q -l syn_flat.log -p "read_verilog $SRC; hierarchy -top soc_top; synth -flatten -top soc_top; dfflibmap -liberty $LIB; \
+    abc -liberty $LIB -D 15000 -script abc.script -dont_use sg13g2_sighold -dont_use sg13g2_lgcp_1 -dont_use sg13g2_slgcp_1; \
+    opt_clean; tee -q -o stat_flat.txt stat -liberty $LIB -top soc_top"
 python3 - <<'PY'
 import re
 t = open('stat.txt').read()
@@ -37,6 +41,9 @@ for k, c in subs["soc_top"]:
     if c in own: rows.append((re.sub(r"\$paramod[^\\]*\\", "", c).split("\\")[0].split("=")[0], incl(c)))
 out = ["%-24s %10.1f um2  %5.1f %%" % (n, a, 100 * a / top) for n, a in sorted(rows, key=lambda r: -r[1])]
 out.append("TONG soc_top (khong gom ROM/RAM): %.1f um2" % top)
+import re as _re
+fm = _re.search(r"Chip area for (?:top )?module '.?soc_top': ([0-9.]+)", open("stat_flat.txt").read())
+if fm: out.append("TONG soc_top khi flatten (khong gom ROM/RAM): %.1f um2" % float(fm.group(1)))
 open('area.txt', 'w').write("\n".join(out) + "\n")
 print("\n".join(out))
 PY

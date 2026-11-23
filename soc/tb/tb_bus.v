@@ -10,12 +10,12 @@ module tb_bus;
     endtask
 
     reg [31:0] daddr = 0, iaddr = 0; reg dwe = 0, dre = 0;
-    wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, bus_err; wire [31:0] rdata;
+    wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err; wire [31:0] rdata;
     soc_bus #(.ROM_AW(14), .RAM_AW(14)) bus (
         .daddr(daddr), .dwe(dwe), .dre(dre), .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .sel_uart(sel_uart),
         .sel_gpio(sel_gpio), .sel_sys(sel_sys), .rom_rd(32'h1111_0001), .ram_rd(32'h2222_0002), .clint_rd(32'h3333_0003),
         .uart_rd(32'h4444_0004), .gpio_rd(32'h5555_0005), .sys_rd(32'h6666_0006), .rdata(rdata), .bus_err(bus_err),
-        .iaddr(iaddr), .i_sel_rom(i_sel_rom));
+        .iaddr(iaddr), .i_sel_rom(i_sel_rom), .i_sel_ram(i_sel_ram));
 
     // mo hinh tham chieu: vung (0 = khong co) va gia tri doc
     function [2:0] region(input [31:0] a);
@@ -44,15 +44,17 @@ module tb_bus;
             if (bus_err !== (r == 0 || r == 1)) begin errors = errors + 1; $display("[BUS] LOI bus_err ghi %h", a); end
             dwe = 0; #1;
             if (bus_err !== 1'b0) begin errors = errors + 1; $display("[BUS] LOI bus_err khi khong truy cap %h", a); end
+            if (i_sel_ram !== (a >= 32'h1000_0000 && a < 32'h1000_4000)) begin errors = errors + 1; $display("[BUS] LOI i_sel_ram %h", a); end
             if (i_sel_rom !== (a < 32'h4000)) begin errors = errors + 1; $display("[BUS] LOI i_sel_rom %h", a); end
         end
     endtask
 
     // ---- ROM, RAM, SYSCON that ----
+    reg [31:0] ram_ia = 0; wire [31:0] ram_id;
     reg [31:0] ra_i = 0, ra_d = 0; wire [31:0] rom_i, rom_d;
     soc_rom #(.WORDS(16)) rom (.i_addr(ra_i), .i_data(rom_i), .d_addr(ra_d), .d_data(rom_d));
     reg ram_sel = 0, ram_we = 0; reg [31:0] ram_addr = 0, ram_wd = 0; reg [3:0] ram_ws = 0; wire [31:0] ram_rd;
-    soc_ram #(.WORDS(16)) ram (.clk(clk), .sel(ram_sel), .addr(ram_addr), .we(ram_we), .wstrb(ram_ws), .wdata(ram_wd), .rdata(ram_rd));
+    soc_ram #(.WORDS(16)) ram (.clk(clk), .sel(ram_sel), .addr(ram_addr), .we(ram_we), .wstrb(ram_ws), .wdata(ram_wd), .rdata(ram_rd), .i_addr(ram_ia), .i_data(ram_id));
     reg ss = 0, sw = 0; reg [4:2] sa = 0; reg [3:0] sws = 0; reg [31:0] swd = 0; wire [31:0] srd; reg berr = 0; wire ev; wire [31:0] ec;
     soc_syscon sys (.clk(clk), .rst_n(rst_n), .sel(ss), .addr(sa), .we(sw), .wstrb(sws), .wdata(swd), .rdata(srd), .bus_err(berr), .exit_valid(ev), .exit_code(ec));
 
@@ -106,6 +108,12 @@ module tb_bus;
             @(negedge clk); ram_sel = 0; ram_we = 0;
             k = (seed[15:12]) * 4; ram_addr = k; #1;
             check("ram doc", ram_rd, {bytes[k+3], bytes[k+2], bytes[k+1], bytes[k]});
+        end
+
+        // ---- RAM: cong lenh chia het cho 2 (lenh nen vat qua ranh gioi tu, vat vong o cuoi mang) ----
+        for (j = 0; j < 64; j = j + 2) begin
+            ram_ia = j; #1;
+            check("ram lenh", ram_id, {bytes[(j+3)%64], bytes[(j+2)%64], bytes[(j+1)%64], bytes[j]});
         end
 
         // ---- SYSCON ----

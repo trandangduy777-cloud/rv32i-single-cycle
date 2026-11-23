@@ -7,7 +7,7 @@ D16
 X
 drop=1 cleared=0
 R1
-st=00000007 keep=1 got=a
+st=00000007 cnt=8 keep=1 got=a rest=bcdefgh
 ovr_clr=0 valid=0
 R2
 ferr=1 byte=Q

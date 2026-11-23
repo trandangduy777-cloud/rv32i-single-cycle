@@ -18,7 +18,7 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 12 cau hinh" "bo nhan: 
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (13 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
-       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (99 mutant)")
+       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (117 mutant)")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
