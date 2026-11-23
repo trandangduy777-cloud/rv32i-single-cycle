@@ -60,6 +60,7 @@ MA = False                              # --ma: pipeline RV32IM voi MISALIGNED =
 BPSTRESS = False                        # --bpstress: BTB 4 muc tag 1 bit, RAS 2 muc, gshare 2 bit
 MUL_LAT = 2                             # --mul-lat: bo nhan 0 lap, 1 song song 1 chu ky, 2 song song 2 tang
 _seed = [0]
+_hung = [False]                          # co chuong trinh mo phong qua 120 giay
 
 
 def run_rtl(vvp, prog, dmem=None):
@@ -70,6 +71,7 @@ def run_rtl(vvp, prog, dmem=None):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:   # mo phong qua 120 giay (vd. RTL loi chay vong vo han in vet lien tuc): coi la treo
+        _hung[0] = True
         return [], True
     lines = [l for l in r.stdout.splitlines() if l.startswith("pc=")]
     timeout = "TIMEOUT" in r.stdout
@@ -100,7 +102,9 @@ def check_one(vvp, prog_words, dmem_words, tmp, tag, irq_csrs=False):
     return (("FAIL", diff) if diff else ("PASS", None)), iss.coverage
 
 
-def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=False):
+def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=False, stop_on_hang=False):
+    """stop_on_hang: (mutation) dung ngay khi mot chuong trinh treo qua 120 giay, khoi cho tung chuong trinh con lai"""
+    _hung[0] = False
     vvp = os.path.join(tmp, "sim.vvp")
     compile_rtl(rtl, vvp, "tb_trace_pipe.v" if pipe else "tb_trace.v", full_pipe)
     # pipeline RV32IM co them CSR ngat mie/mip; single-cycle thi hai dia chi nay la CSR khong ton tai
@@ -122,6 +126,8 @@ def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=Fa
         instr_total += len(words)
         if res[0] != "PASS":
             fails.append((f"seed {s}", res))
+            if stop_on_hang and _hung[0]:
+                break
     return cov, fails
 
 
@@ -348,14 +354,16 @@ def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=F
         else:
             open(mpath, "w").write(src.replace(old, new, 1))
         try:
-            cov, fails = run_suite(mpath, n, length, seed0, tmp, verbose=False, pipe=pipe, full_pipe=full_pipe)
+            cov, fails = run_suite(mpath, n, length, seed0, tmp, verbose=False, pipe=pipe, full_pipe=full_pipe,
+                                   stop_on_hang=True)
         finally:
             os.environ.pop("RV32_CORE", None)
             if is_core:
                 MUL_LAT = saved_lat
         ok = len(fails) > 0
         caught += ok
-        print(f"  [{'BAT DUOC' if ok else 'BO SOT  '}] {name} ({len(fails)}/{n + 1} chuong trinh loi)")
+        print(f"  [{'BAT DUOC' if ok else 'BO SOT  '}] {name} ({len(fails)}/{n + 1} chuong trinh loi"
+              + (", dung som vi treo" if _hung[0] else "") + ")", flush=True)
     print(f"Bat duoc {caught}/{len(muts)} loi chen co y" + (f" ({skipped} bi bo qua, coi la that bai)" if skipped else ""))
     return caught == len(muts)
 

@@ -1,5 +1,5 @@
 # Kiem chung tu dong moi lan push: testbench tu kiem tra, so vet voi ISS tren chuong trinh ngau nhien, ngat,
-# so tung lenh voi Spike (job cosim),
+# so tung lenh voi Spike (job cosim), chung minh hinh thuc bo nhan (job formal),
 # bo test ISA chinh thuc riscv-tests va benchmark (so checksum giua cac loi).
 # Mutation test chay lau (10-20 phut) nen chi chay khi bam "Run workflow" trong tab Actions.
 name: verify
@@ -80,6 +80,17 @@ jobs:
 
       - name: Benchmark (CPI, so checksum giua cac loi)
         run: sh bench/run_bench.sh
+
+  formal:
+    # Chung minh hinh thuc bo nhan song song 33 bit (tach bo de, yosys + z3) kem doi chung am.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cai yosys (YoWASP) va z3
+        run: pip install yowasp-yosys==0.71.0.0.post1285 z3-solver==5.4.1.0
+      - name: Chung minh bo nhan (L1-L4, dai so, doi chung am)
+        run: python3 mul/formal/run_formal.py
 
   cosim:
     # So tung lenh voi Spike. Spike duoc build tu ma nguon (ghim phien ban) va luu cache giua cac lan chay.

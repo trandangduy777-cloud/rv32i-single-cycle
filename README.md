@@ -17,7 +17,7 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân song song 2 chu kỳ, bộ chia lặp 2 bit mỗi chu kỳ.
 - **CoreMark**: 2,75 CoreMark/MHz (pipeline RV32IMC, `-O2`, mô phỏng, CRC đúng chuẩn, so từng lệnh với Spike), tăng 44 % so với 1,91 khi còn bộ nhân lặp.
-- **Bộ nhân song song**: Booth radix-4 + cây CSA, 1 hoặc 2 chu kỳ (tham số), thử hết mọi cặp toán hạng ở 3-10 bit, 18 đột biến đều bị bắt.
+- **Bộ nhân song song**: Booth radix-4 + cây CSA, 1 hoặc 2 chu kỳ (tham số), chứng minh hình thức đúng với mọi cặp toán hạng 33 bit (tách bổ đề, yosys + z3), 18 đột biến đều bị bắt.
 - **Cache và bộ nhớ có độ trễ**: pipeline RV32IM có bắt tay bộ nhớ (`imem_ready`, `dmem_ready`), cache lệnh và cache dữ liệu set-associative tham số hoá (1 / 2 / 4 đường, pseudo-LRU), bộ đệm ghi có forward vào lần nạp dòng, bộ phân xử bus chung; chạy đúng từng lệnh so với Spike với bộ nhớ trễ ngẫu nhiên 1-8 chu kỳ mỗi từ.
 - **Lệnh nén C** (tham số `ENABLE_C` của pipeline RV32IM): giải nén ở IF nên ID/EX/MEM/WB không đổi; mã của benchmark nhỏ đi khoảng 29 % mà số chu kỳ giữ nguyên. Bộ giải nén được so với GNU objdump trên toàn bộ 49.152 mã lệnh 16 bit.
 - **Ngắt**: ngắt timer, ngắt phần mềm (khối `mtime`/`mtimecmp`/`msip` kiểu CLINT) và ngắt ngoài cho pipeline RV32IM, nhận chính xác ở tầng EX, cùng lệnh `WFI`; testbench riêng cho ngắt xen vào giữa vòng lặp nhân/chia/load/store hơn 300 lần, kèm 16 đột biến phần ngắt và WFI đều bị bắt.
@@ -63,12 +63,13 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `metrics.json` | Số liệu flow của single-cycle RV32I (24 ns) |
 | `results/` | Số liệu flow của các lõi pipeline (`metrics_*.json`), mỗi file ứng với một dòng trong bảng so sánh |
 | `bench/` | Benchmark C: `bench.c` (RV32I thuần), `bench_m.c` (nặng nhân/chia) và `bench_call.c` (gọi hàm, nhảy gián tiếp), `run_bench.sh` in số chu kỳ và CPI |
-| `mul/` | Bộ nhân song song: testbench thử hết / biên / ngẫu nhiên `tb_mul.v`, mutation test `mutate_mul.py` (xem mục Bộ nhân song song) |
+| `mul/` | Bộ nhân song song: chứng minh hình thức `formal/`, testbench thử hết / biên / ngẫu nhiên `tb_mul.v`, mutation test `mutate_mul.py` (xem mục Bộ nhân song song) |
 | `bpred/` | Bộ dự đoán nhánh: đo theo cấu hình BTB / RAS / gshare, kiểm hiệu năng đúng từng chu kỳ, mutation test (xem mục BTB, RAS và gshare) |
 | `coremark/` | Port CoreMark (`port/`) và script build + chạy + kiểm CRC trên các lõi (xem mục CoreMark) |
 | `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
 | `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike) |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
+| `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
@@ -95,20 +96,29 @@ CoreMark cho thấy 32 % số chu kỳ là chờ bộ nhân/chia lặp, phần l
 
 Kiểm chứng:
 - `mul/tb_mul.v`: **thử hết mọi cặp** (a, b) ở W = 3, 4, 5, 8, 9, 10 (tới 1.048.576 cặp ở W = 10; W chẵn và lẻ đi hai nhánh khác nhau của cách mở rộng dấu), và ở W = 33 thử 302.704 cặp: mọi cặp trong 52 giá trị biên (0, ±1, lớn nhất, nhỏ nhất, một bit 1, một bit 0, xen kẽ bit; 2.704 cặp) cộng 300.000 cặp ngẫu nhiên. CI chạy hết W ≤ 10 và 20.000 cặp ngẫu nhiên ở W = 33.
-- Chứng minh hình thức tương đương với phép nhân (yosys SAT) không xong trong thời gian hợp lý từ W = 12 (bài toán nhân vốn khó cho SAT), nên không dùng; vì cây được sinh bằng cùng một đoạn `generate`, thử hết ở W nhỏ kèm thử biên/ngẫu nhiên ở W = 33 là bằng chứng chính.
+- **Chứng minh hình thức ở đúng 33 bit** (`mul/formal/run_formal.py`, yosys + z3, khoảng 1,5 phút). Chứng minh nguyên khối "cây = phép nhân" không xong từ W = 12 (bài toán nhân vốn khó cho SAT), nên bộ nhân được tách thành 3 module con (`rv32_booth_pp`, `rv32_csa_tree`, `rv32_csa32`) và chứng minh theo từng bổ đề, không bổ đề nào phải giải phép nhân bit-vector:
+  - L1: bộ cộng 3:2 giữ tổng, `s + c = x + y + z (mod 2^66)`.
+  - L2: cây 18 hàng giữ tổng, `sum + carry = tổng các hàng`, với bộ cộng 3:2 thay bằng mô hình trừu tượng (mọi cặp s, c có tổng đúng, gồm cả bộ cộng thật theo L1); bổ đề này kiểm phần nối dây của cây.
+  - L3: với từng nhóm i = 0..16, hàng Booth i cộng bit hiệu chỉnh của nó bằng `d_i · A · 4^i (mod 2^66)`, trong đó `d_i = −2·b[2i+1] + b[2i] + b[2i−1]` được tính lại bằng số học chứ không chép bảng chọn của RTL; hàng hiệu chỉnh không có bit lạ.
+  - Đại số (`algebra.py`, z3 trên số nguyên): cộng các đẳng thức trên được `Σ d_i · A · 4^i`; đẳng thức Booth `Σ d_i · 4^i = B` cho `Σ d_i · A · 4^i = A · B`; và `|A · B| < 2^65` nên tích vừa 66 bit có dấu. Kết luận: `sum + carry = a × b` chính xác với **mọi** cặp 33 bit có dấu.
+  - L4: phần nối vào `rv32m` (chọn dấu cho `MULH`/`MULHSU`/`MULHU`, chọn nửa kết quả, operand isolation, thời điểm `done`) đúng đặc tả RISC-V với cả `MUL_LAT = 1` và `2`: từ trạng thái rảnh, mọi lệnh nhân với mọi toán hạng cho đúng kết quả ở đúng chu kỳ. Bộ nhân thay bằng định lý ở trên, phép nhân trong cả mô hình và đặc tả thay bằng một hàm không diễn giải (đúng với mọi hàm thì đúng với phép nhân thật), nên solver không phải giải phép nhân.
+  - **Đối chứng âm**: 16 bản RTL cố ý sai (lấy từ danh sách đột biến) và 4 mệnh đề đại số sai gần giống đều bị báo sai, để chắc các bổ đề không đạt "suông".
+  - Phạm vi: chứng minh không phủ phép chia (vẫn là bộ lặp cũ, kiểm bằng so vết và đột biến) và không phủ ghép `rv32m` vào pipeline (forwarding, đóng băng), phần đó vẫn dựa vào so vết với ISS và Spike.
 - Trong lõi: so vết với ISS (`run_verify.py --pipem --mul-lat 0/1/2`, có và không có cache), riscv-tests, và so vết với Spike thêm 2 cấu hình (`MUL_LAT = 0`, `MUL_LAT = 1` + cache 2 đường với bộ nhớ trễ 1-8).
 - `mul/mutate_mul.py`: 18 đột biến, đều bị bắt. 9 đột biến ở cây (chọn sai ±2a trong Booth, quên dấu âm, mất hoặc đặt lệch hàng hiệu chỉnh, bộ cộng 3:2 sai tổng hoặc nhớ không dịch, không mở rộng dấu, mất hàng thừa giữa các tầng) bị `tb_mul` bắt ngay ở W = 8; 9 đột biến ở phần nối vào `rv32m` (dấu của `MULH`/`MULHSU`, chọn nửa kết quả của `MULHU`, không chốt loại lệnh ở tầng 2, báo xong sớm, sai trạng thái của operand isolation, đưa nhầm lệnh chia vào bộ nhân, đường 1 chu kỳ) bị so vết với ISS bắt. Các đột biến cũ của bộ nhân/chia lặp trong `run_verify.py --pipem --mutate` nay chạy với `MUL_LAT = 0`, vì với bộ nhân song song lệnh nhân không còn đi qua bộ lặp (lần đầu chạy lại, đột biến "MUL sai dấu kết quả" lọt chính vì lý do này).
 
-Ước lượng tổng hợp (yosys, cổng logic chung AND/OR/XOR/MUX, không phải thư viện cell thật và không qua flow; số mức logic không tính tải dây nên chỉ để so tương đối):
+Tổng hợp với thư viện cell thật và STA trước P&R (`synth/run_synth_sta.sh`): pipeline RV32IMC (`flow/rv32imc_top.v`), yosys 0.71 + ABC (chèn buffer, chỉnh cỡ cell), thư viện IHP SG13G2 góc chậm 1,08 V 125 °C, OpenSTA 3.2.0, chu kỳ 15 ns, trễ vào/ra 20 % như mặc định của LibreLane, bỏ đường reset (flow dựng cây buffer riêng):
 
-| Module `rv32m` (`PREP = 1`, `STEPS = 2`) | Số cổng | Đường dài nhất (mức logic) |
-|---|---|---|
-| `MUL_LAT = 0` (chỉ bộ lặp) | 2.345 | 139 |
-| `MUL_LAT = 1` | 8.884 | 139 |
-| `MUL_LAT = 2` | 8.989 | 135 |
-| Riêng cây Booth + CSA 33 × 33 (chưa có bộ cộng cuối) | 6.014 | 23 |
+| Pipeline RV32IMC | Số cell | Diện tích cell | Slack ở 15 ns | Đường tới hạn |
+|---|---|---|---|---|
+| `MUL_LAT = 0` (nhân lặp) | 21.772 | 315.357 µm² | −1,135 ns | `ifid_instr` → `pc` (nhảy sớm ở ID) |
+| `MUL_LAT = 1` | 27.584 | 368.819 µm² (+17,0 %) | −1,985 ns | `redirect_q` → bộ nhân → `exmem_result` |
+| `MUL_LAT = 2` (mặc định) | 28.021 | 377.265 µm² (+19,6 %) | +0,023 ns | `ifid_instr` → `pc` |
 
-- Bộ nhân làm `rv32m` lớn gấp khoảng 3,8 lần. Đường dài nhất của cả 3 bản vẫn là bước chia 2 bit (2 bộ trừ 33 bit nối tiếp), không phải bộ nhân: cây CSA chỉ 23 mức, nên đường tới hạn của bộ nhân là bộ cộng cuối 66 bit. Với `MUL_LAT = 2` bộ cộng đó đứng riêng một chu kỳ; với `MUL_LAT = 1` cây + bộ cộng + mux kết quả + forwarding nằm trong một chu kỳ, dễ thành đường tới hạn của lõi. Chưa chạy flow (để cuối kế hoạch), nên chưa có số liệu timing thật.
+- `MUL_LAT = 1` đưa bộ nhân lên đường tới hạn: đường từ EX tới `exmem_result` dài 10,0 ns ở bản lặp, lên 16,8 ns khi cây CSA + bộ cộng 66 bit nằm trong một chu kỳ.
+- `MUL_LAT = 2` thì bộ nhân không còn là đường tới hạn: tầng 1 (forwarding → Booth → cây CSA → thanh ghi) 8,3 ns, dư 6,5 ns; tầng 2 (bộ cộng 66 bit → chọn kết quả → `exmem_result`) 12,9 ns, dư 1,9 ns. Đây là lý do chọn `MUL_LAT = 2` làm mặc định (chỉ kém bản 1 chu kỳ 2,6 % CoreMark).
+- Bộ nhân làm diện tích cell tăng khoảng 20 % (123 flop chốt sum/carry, phần còn lại là cây Booth + CSA và bộ cộng).
+- Cách đọc: bản lặp và bản 2 chu kỳ có **cùng** đường tới hạn nhưng chênh nhau 1,16 ns, tức sai số của tổng hợp trước P&R cỡ 1 ns; không nên hiểu là bản 2 chu kỳ nhanh hơn. ABC chèn buffer thô hơn resizer của OpenROAD (bi quan), còn không có ký sinh dây (lạc quan). Lần flow trước của bản RV32IMC (chưa có BTB/RAS) đạt slack +1,33 ns ở 15 ns sau P&R. Vì vậy bảng này chỉ dùng để so tương đối giữa các cấu hình; số liệu timing và diện tích thật vẫn chờ flow LibreLane.
 
 Hiệu năng (pipeline RV32IM(C), BTB 16 + RAS 4, bộ nhớ tổ hợp):
 
@@ -359,7 +369,7 @@ Kết quả (5 vòng, GCC 13.2 `-O2`, bộ nhớ tổ hợp trừ khi ghi khác)
 | Pipeline RV32IM, nhân lặp, `-O3 -funroll-loops` (đo trước khi có bộ nhân song song) | rv32im | 2,045 | 1,742 | 845.640 / 0 / 24.713 / 101.347 / 26.436 |
 
 - **Bộ nhân song song tăng CoreMark 44 %** (1,907 → 2,743 ở RV32IM; 1,910 → 2,750 ở RV32IMC). Với bộ nhân lặp, lệnh M chiếm 32 % số chu kỳ (845.640 / 2.621.781, khoảng 17-19 chu kỳ mỗi lệnh nhân, phần ma trận của CoreMark nhân rất nhiều). Bản 2 chu kỳ chỉ còn 46.980 chu kỳ chờ (1 chu kỳ mỗi lệnh nhân, 2,6 % số chu kỳ); bản 1 chu kỳ về 0 và đạt 2,822, đúng bằng giới hạn trên ước tính trước đó (khoảng 2,8). Bản 1 chu kỳ có 0 chu kỳ chờ lệnh M, tức phần đo của CoreMark `-O2` không có lệnh chia.
-- Mặc định chọn `MUL_LAT = 2`: chỉ kém bản 1 chu kỳ 2,6 % CoreMark, nhưng bộ cộng 66 bit đứng riêng một chu kỳ thay vì nối sau cây CSA và trước forwarding (xem mục Bộ nhân song song). Việc chọn này sẽ kiểm lại bằng flow.
+- Mặc định chọn `MUL_LAT = 2`: chỉ kém bản 1 chu kỳ 2,6 % CoreMark, nhưng bộ cộng 66 bit đứng riêng một chu kỳ thay vì nối sau cây CSA và trước forwarding (xem mục Bộ nhân song song). STA trước P&R xác nhận: bản 1 chu kỳ đưa bộ nhân lên đường tới hạn (slack −1,99 ns ở 15 ns), bản 2 chu kỳ thì không.
 - BTB + RAS tăng 6,8 % (1,785 → 1,907), chủ yếu nhờ bỏ được khoảng 160 nghìn lần nhảy ở ID (mỗi lần 1 chu kỳ).
 - Cache 256 B quá nhỏ cho CoreMark (mã và dữ liệu lớn hơn nhiều), chờ bộ nhớ chiếm 662 nghìn chu kỳ; cache 4 KB thì chỉ còn 2.264 chu kỳ chờ, kém bộ nhớ lý tưởng 1,3 %.
 - So sánh tham khảo với số liệu công bố của lõi khác (khác trình biên dịch, cờ và hệ thống bộ nhớ nên chỉ để định vị, không phải so trực tiếp): Ibex 0,904 (micro, RV32EC), 2,47 (small, RV32IMC, nhân 3 chu kỳ), 3,13 (maxperf, nhân 1 chu kỳ) theo README của Ibex; VexRiscv 2,30 (full, RV32IM) và 2,57 (full max perf) theo README của VexRiscv. Bài báo về Ibex ở CARRV 2021 cho thấy riêng cờ biên dịch đã làm CoreMark/MHz của cùng một lõi thay đổi từ 2,07 (`-O2`) lên 2,35 (`-O3` + unroll). Với bộ nhân song song, lõi này ở mức 2,74-2,82, cao hơn Ibex small (nhân 3 chu kỳ) và thấp hơn Ibex maxperf; khoảng cách còn lại chủ yếu là load-use (101.639 chu kỳ, 5,6 %) và nhánh đoán sai.
@@ -648,7 +658,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chưa có `mtvec` chế độ vectored, chế độ User
 - Pipeline RV32I chưa dự đoán JALR; ở RV32IM, BTB chỉ nhớ 1 đích cho mỗi JALR gián tiếp, RAS cập nhật ở EX nên lệnh trả về ngay sau lời gọi có thể đoán sai; gshare dùng chung bảng 64 mục nên dễ dẫm chỉ số
-- Bộ chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); bộ nhân song song chỉ có ở pipeline RV32IM, chưa qua flow nên chưa có số liệu timing và diện tích thật; tương đương hình thức của bộ nhân chỉ được thử hết ở độ rộng nhỏ, không chứng minh ở 33 bit
+- Bộ chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); bộ nhân song song chỉ có ở pipeline RV32IM và mới có tổng hợp + STA trước P&R, chưa qua flow; chứng minh hình thức của bộ nhân không phủ phép chia và phần ghép vào pipeline
 - Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chưa chạy trên Spike và chưa so với Spike khi có ngắt
 - Cache set-associative mặc định tắt (`WAYS = 1`) vì không lợi trên 2 benchmark hiện có; bản có cache không đạt timing 15 ns và dùng flip-flop thay SRAM; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
 - Lệnh nén C chỉ có ở pipeline RV32IM; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2
