@@ -1,0 +1,8 @@
+strash
+dch -f
+map -D 15000
+topo
+buffer -p
+upsize -D 15000
+dnsize -D 15000
+stime -p

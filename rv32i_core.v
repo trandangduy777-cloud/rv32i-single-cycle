@@ -544,46 +544,39 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1, parameter MUL_LAT = 0) (
 endmodule
 // Bo nhan song song co dau W x W bit (tu viet): ma hoa Booth co so 4 + cay cong luu nho (Wallace, bo cong 3:2).
 // - a, b la so co dau W bit (RV32: W = 33, bit 32 la bit dau mo rong theo MUL / MULH / MULHSU / MULHU).
-// - Booth co so 4: b duoc chia thanh N = ceil((W+1)/2) nhom 3 bit (b[2i+1], b[2i], b[2i-1], b[-1] = 0), moi nhom chon
-//   mot hang tich rieng trong {0, +-a, +-2a} dich trai 2i bit: so hang tich rieng giam mot nua so voi nhan tung bit.
+// - Booth co so 4 (rv32_booth_pp): b duoc chia thanh N = floor((W+2)/2) nhom 3 bit (b[2i+1], b[2i], b[2i-1], b[-1] = 0),
+//   moi nhom chon mot hang tich rieng trong {0, +-a, +-2a} dich trai 2i bit: so hang giam mot nua so voi nhan tung bit.
 // - Hang am lay bu 1 (~x) thay vi bu 2: phan "+1" con thieu duoc gom vao mot hang hieu chinh rieng (bit 2i = 1 neu hang
 //   i am), nen tao hang tich rieng khong can bo cong nao.
-// - N + 1 hang (moi hang 2W bit, mo rong dau day du) duoc rut gon bang cac tang bo cong 3:2 (sum = x^y^z,
-//   carry = maj(x,y,z) << 1) toi khi con 2 hang: tong va nho. Tich = sum + carry (lay 2W bit thap).
-// - Mo-dun chi la phan to hop; viec dat thanh ghi (1 hay 2 chu ky) do rv32m trong rv32i_core.v quyet dinh.
+// - N + 1 hang (moi hang 2W bit, mo rong dau day du) duoc rut gon bang cay bo cong 3:2 (rv32_csa_tree, rv32_csa32:
+//   sum = x^y^z, carry = maj(x,y,z) << 1) toi khi con 2 hang: tong va nho. Tich = sum + carry (lay 2W bit thap).
+// - Tach thanh 3 module con de chung minh hinh thuc tung phan (xem mul/formal): bo nhan nguyen khoi 33 bit qua kho cho SAT.
+// - Mo-dun chi la phan to hop; viec dat thanh ghi (1 hay 2 chu ky) do rv32m quyet dinh.
 module rv32_mul_csa #(
     parameter W = 33
 ) (
     input  wire [W-1:0]   a,
     input  wire [W-1:0]   b,
-    output reg  [2*W-1:0] sum,
-    output reg  [2*W-1:0] carry
+    output wire [2*W-1:0] sum,
+    output wire [2*W-1:0] carry
+);
+    localparam N = (W + 2) / 2;
+    localparam P = 2 * W;
+    wire [(N+1)*P-1:0] rows;
+    rv32_booth_pp #(.W(W)) u_pp (.a(a), .b(b), .rows(rows));
+    rv32_csa_tree #(.R(N + 1), .P(P)) u_tree (.rows(rows), .sum(sum), .carry(carry));
+endmodule
+
+// Tao N hang tich rieng (hang i o bit [i*P +: P]) va hang hieu chinh (hang N). Tong cac hang = a * b (mod 2^P).
+module rv32_booth_pp #(
+    parameter W = 33
+) (
+    input  wire [W-1:0]                     a,
+    input  wire [W-1:0]                     b,
+    output reg  [((W+2)/2+1)*2*W-1:0]       rows
 );
     localparam N  = (W + 2) / 2;          // so nhom Booth (W le: (W+1)/2; W chan: W/2 + 1 de bit dau nam trong nhom cuoi)
-    localparam R  = N + 1;                // so hang: N hang tich rieng + 1 hang hieu chinh
     localparam P  = 2 * W;
-
-    // so hang sau moi tang rut gon 3:2 (hang thua chuyen thang xuong) va so tang can de con 2 hang
-    function integer rows_at(input integer lv);
-        integer r, j;
-        begin
-            r = R;
-            for (j = 0; j < lv; j = j + 1) r = 2 * (r / 3) + r % 3;
-            rows_at = r;
-        end
-    endfunction
-    function integer n_levels(input integer dummy);
-        integer r, j;
-        begin
-            r = R; j = 0;
-            while (r > 2) begin r = 2 * (r / 3) + r % 3; j = j + 1; end
-            n_levels = j;
-        end
-    endfunction
-    localparam LV = n_levels(0);
-
-    // tang 0: tao hang tich rieng (to hop thuan, khong bo cong)
-    reg [P-1:0] row0 [0:R-1];
     reg [2*N:0] bb;                       // b mo rong dau toi 2N bit, kem b[-1] = 0 o bit 0
     reg [P-1:0] am, a2m;                  // a va 2a mo rong dau 2W bit
     reg [2:0]   grp;
@@ -604,28 +597,64 @@ module rv32_mul_csa #(
                 3'b101, 3'b110: begin pp = am;  neg = 1'b1; end   // -a
                 default:        begin pp = {P{1'b0}}; neg = 1'b0; end   // 0
             endcase
-            row0[i] = (neg ? ~pp : pp) << (2 * i);      // bu 1, phan +1 dua vao hang hieu chinh
+            rows[i*P +: P] = (neg ? ~pp : pp) << (2 * i);   // bu 1, phan +1 dua vao hang hieu chinh
             corr    = corr | ({{(P-1){1'b0}}, neg} << (2 * i));
         end
-        row0[N] = corr;
+        rows[N*P +: P] = corr;
     end
+endmodule
 
-    // cac tang rut gon: t[l] chua cac hang cua tang l (R hang x P bit, chi dung rows_at(l) hang dau)
+// Bo cong 3:2 (full adder theo tung bit): s + c = x + y + z (mod 2^P)
+module rv32_csa32 #(
+    parameter P = 66
+) (
+    input  wire [P-1:0] x, y, z,
+    output wire [P-1:0] s, c
+);
+    assign s = x ^ y ^ z;
+    assign c = ((x & y) | (x & z) | (y & z)) << 1;
+endmodule
+
+// Cay rut gon R hang P bit con 2 hang: sum + carry = tong cac hang (mod 2^P). Moi tang gom tung nhom 3 hang vao mot
+// bo cong 3:2, hang thua chuyen thang xuong tang sau.
+module rv32_csa_tree #(
+    parameter R = 18,
+    parameter P = 66
+) (
+    input  wire [R*P-1:0] rows,
+    output wire [P-1:0]   sum,
+    output wire [P-1:0]   carry
+);
+    // so hang sau moi tang rut gon 3:2 (hang thua chuyen thang xuong) va so tang can de con 2 hang
+    function integer rows_at(input integer lv);
+        integer r, j;
+        begin
+            r = R;
+            for (j = 0; j < lv; j = j + 1) r = 2 * (r / 3) + r % 3;
+            rows_at = r;
+        end
+    endfunction
+    function integer n_levels(input integer dummy);
+        integer r, j;
+        begin
+            r = R; j = 0;
+            while (r > 2) begin r = 2 * (r / 3) + r % 3; j = j + 1; end
+            n_levels = j;
+        end
+    endfunction
+    localparam LV = n_levels(0);
+
+    // t[l] chua cac hang cua tang l (R hang x P bit, chi dung rows_at(l) hang dau)
     wire [R*P-1:0] t [0:LV];
+    assign t[0] = rows;
     genvar l, g;
     generate
-        for (g = 0; g < R; g = g + 1) begin : lv0
-            assign t[0][g*P +: P] = row0[g];
-        end
         for (l = 0; l < LV; l = l + 1) begin : lv
             localparam RIN = rows_at(l);
             localparam NG  = RIN / 3;                    // so bo cong 3:2 o tang nay
             for (g = 0; g < NG; g = g + 1) begin : csa
-                wire [P-1:0] x = t[l][(3*g)*P +: P];
-                wire [P-1:0] y = t[l][(3*g+1)*P +: P];
-                wire [P-1:0] z = t[l][(3*g+2)*P +: P];
-                assign t[l+1][(2*g)*P +: P]   = x ^ y ^ z;
-                assign t[l+1][(2*g+1)*P +: P] = ((x & y) | (x & z) | (y & z)) << 1;
+                rv32_csa32 #(.P(P)) u (.x(t[l][(3*g)*P +: P]), .y(t[l][(3*g+1)*P +: P]), .z(t[l][(3*g+2)*P +: P]),
+                                       .s(t[l+1][(2*g)*P +: P]), .c(t[l+1][(2*g+1)*P +: P]));
             end
             for (g = 3 * NG; g < RIN; g = g + 1) begin : pass
                 assign t[l+1][(2*NG + g - 3*NG)*P +: P] = t[l][g*P +: P];
@@ -636,8 +665,6 @@ module rv32_mul_csa #(
         end
     endgenerate
 
-    always @* begin
-        sum   = t[LV][0 +: P];
-        carry = t[LV][P +: P];
-    end
+    assign sum   = t[LV][0 +: P];
+    assign carry = t[LV][P +: P];
 endmodule
