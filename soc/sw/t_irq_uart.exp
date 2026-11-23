@@ -1,0 +1,4 @@
+RDY
+rx=ping n=5
+tx by irq
+done

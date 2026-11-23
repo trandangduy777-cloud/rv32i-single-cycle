@@ -1,0 +1,16 @@
+DIV=16
+min=4
+hi=00000110
+D24
+div24 ok
+D16
+X
+drop=1 cleared=0
+R1
+st=00000007 keep=1 got=a
+ovr_clr=0 valid=0
+R2
+ferr=1 byte=Q
+R3
+HELLO 1
+OK

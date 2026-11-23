@@ -1,0 +1,4 @@
+mtime ok
+ticks=6 early=0 late=0 span ok
+soft=1 msip=0
+both order=3,7 soft=1 ticks=101

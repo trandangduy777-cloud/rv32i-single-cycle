@@ -78,6 +78,11 @@ jobs:
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 riscv-tests/run_riscv_tests.py /tmp/riscv-tests
 
+      - name: SoC (bus, UART, GPIO, timer, chuong trinh C qua UART, so bit UART)
+        run: |
+          sh soc/sw/build.sh
+          python3 soc/run_soc.py
+
       - name: Benchmark (CPI, so checksum giua cac loi)
         run: sh bench/run_bench.sh
 
@@ -147,6 +152,8 @@ jobs:
           python3 cache/mutate_cache.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
           python3 bpred/mutate_bpred.py
           python3 mul/mutate_mul.py
+          sh soc/sw/build.sh
+          python3 soc/mutate_soc.py --jobs 4
 
   mutation:
     if: github.event_name == 'workflow_dispatch'

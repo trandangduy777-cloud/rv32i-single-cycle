@@ -73,6 +73,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
 | `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca` hoặc số bước), in một dòng kết quả mỗi bước |
+| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus, ROM/RAM, UART, GPIO, CLINT, SYSCON, phần mềm C (crt0, linker script), testbench và mutation test (xem mục SoC nhỏ) |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
@@ -669,6 +670,65 @@ cp runs/RUN_.../final/nl/rv32im_pipeline.nl.v gls/      # hoặc rv32i_pipeline.
 sh gls/run_gls.sh gls/rv32im_pipeline.nl.v
 GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ihp-sg13g2/libs.ref/sg13g2_stdcell/verilog/sg13g2_udp.v" python3 riscv-tests/run_riscv_tests.py <thu_muc_riscv-tests>
 ```
+
+## SoC nhỏ quanh pipeline RV32IMC (`soc/`)
+
+`soc/soc_top.v` ghép `rv32im_pipeline` (`ENABLE_C = 1`) với bus ánh xạ bộ nhớ, ROM, RAM, UART, GPIO, `rv32_mtimer` và một khối SYSCON. Chương trình C (`soc/sw/`) in chuỗi qua UART; testbench giải mã chân `uart_tx` ở mức từng bit và so với chuỗi mong đợi.
+
+**Bản đồ địa chỉ** (cửa sổ 4 KB cho ngoại vi, thanh ghi lặp lại trong cửa sổ; vùng không ánh xạ: đọc ra 0, ghi bị bỏ, đếm vào `SYSCON.BUSERR`):
+
+| Vùng | Địa chỉ | Ghi chú |
+|---|---|---|
+| ROM | `0x0000_0000`, 16 KB | lấy lệnh + đọc dữ liệu; ghi bị bỏ và đếm |
+| CLINT | `0x0200_0000` | `rv32_mtimer`: `mtime` +0/+4, `mtimecmp` +8/+C, `msip` +0x10 |
+| RAM | `0x1000_0000`, 16 KB | không lấy lệnh từ RAM (lấy lệnh ngoài ROM gây trap, có test) |
+| UART | `0x2000_0000` | `TXDATA` 0x00, `RXDATA` 0x04 (đọc là lấy ra), `STATUS` 0x08, `DIV` 0x0C, `IE` 0x10 |
+| GPIO | `0x2000_1000` | 16 chân: `OUT` 0x00, `IN` 0x04, `DIR` 0x08, `IE` 0x0C, `PEND` 0x10 (ghi 1 để xoá), `EDGE` 0x14, `SET`/`CLR`/`TGL` 0x18/0x1C/0x20 |
+| SYSCON | `0x2000_2000` | `ID` 0x5256_3C01, `SCRATCH`, `EXIT` (kết thúc mô phỏng kèm mã), `BUSERR` |
+
+- UART 8N1, tốc độ chia bằng `DIV` (nhỏ nhất 4; mặc định 434, tức 50 MHz / 115200); `STATUS` có TXREADY, RXVALID và ba cờ dính RXOVR, RXFERR, TXDROP (ghi 1 để xoá); RX đồng bộ 2 flip-flop, kiểm điểm giữa bit start, lỗi khung vẫn giao byte rồi đợi đường lên cao. Có ngắt RX và ngắt TX sẵn sàng.
+- GPIO: đầu vào đồng bộ 2 flip-flop, ngắt theo cạnh lên hoặc xuống từng chân; sự kiện mới thắng thao tác xoá `PEND` cùng chu kỳ (có test trực tiếp).
+- Ngắt ngoài của lõi là OR của ngắt UART và GPIO; ngắt timer và phần mềm lấy từ `rv32_mtimer`.
+
+**Chạy:** `sh soc/sw/build.sh` (cần `riscv64-unknown-elf-gcc`, ra `soc/sw/build/*.hex`) rồi `python3 soc/run_soc.py` (10 bước: 3 testbench khối + 7 chương trình C). Mutation: `python3 soc/mutate_soc.py --jobs 4`. Đã vào `tools/regress.sh` (bước 17 và 18) và CI.
+
+**Kết quả thật (iverilog):**
+
+| Bài | Nội dung | Số chu kỳ |
+|---|---|---|
+| `hello` | in 67 ký tự qua UART, so từng bit (start, 8 bit, stop, không glitch) | 11.860 |
+| `t_mem` | ROM/RAM, byte strobe, ghi ROM, vùng trống, lấy lệnh ngoài ROM | 2.119 |
+| `t_mepc` | trap/ngắt tại PC lệch 2 (xem lỗi lõi bên dưới) | 6.000 |
+| `t_timer` | `mtime`, `mtimecmp`, ngắt timer, `msip` | 16.268 |
+| `t_gpio` | out/in/dir, set/clr/tgl, ngắt cạnh (có kịch bản kéo chân từ testbench) | 25.471 |
+| `t_uart` | TX, RX (nhận byte do testbench gửi), tràn, lỗi khung, `DIV` | 28.424 |
+| `t_irq_uart` | ngắt UART qua WFI | 7.117 |
+
+Mutation test (`mutate_soc.py`): 99 mutant, trong đó 98 mutant thật đều bị bắt (testbench UART 35, bus 32, GPIO 16, các chương trình C còn lại 15) và 1 mutant vô hại cố ý (T12) đúng là sống sót. Bốn mutant (C1-C4) nằm trong `rv32im_pipeline.v` (đường `mepc`). Trong lúc làm, 6 mutant ban đầu sống sót (U23, U24, U30, T5, T6, T7), mỗi cái dẫn tới thêm một test hoặc thêm một mutant; số 98/98 là sau khi bổ sung.
+
+**Lỗi lõi mà SoC cũng tự phát hiện:** `mepc` mất bit 1 khi có lệnh nén: ngắt hoặc trap tại PC có dạng 2 mod 4 làm `mret` trả về sai địa chỉ. `t_timer` bắt được lỗi này trong lúc làm SoC; cùng lúc, chat so vết ngắt với Spike cũng tìm ra và đã sửa trên main (commit `a1c8a5f`), nên `rv32im_pipeline.v` không bị sửa thêm ở đây. `soc/sw/t_mepc.c` là test riêng cho lỗi này (hỏng trên lõi cũ với mepc = 0x218, đạt trên lõi đã sửa), và mutant C1-C4 của `mutate_soc.py` chèn lại lỗi vào đường `mepc` để kiểm tra SoC vẫn bắt được.
+
+**Diện tích ước lượng (yosys + ABC, thư viện SG13G2 góc chậm, `soc/synth/run_soc_area.sh`):** chỉ là ước lượng trước P&R, chưa tính dây, buffer, CTS, và ROM/RAM là mảng flip-flop bị loại ra khỏi số này.
+
+| Khối | Diện tích (µm²) | Tỉ lệ |
+|---|---|---|
+| `rv32im_pipeline` (gồm bộ nhân, giải nén C) | 399.331 | 88,9 % |
+| `rv32_mtimer` | 18.032 | 4,0 % |
+| `soc_uart` | 11.040 | 2,5 % |
+| `soc_gpio` | 9.972 | 2,2 % |
+| `soc_syscon` | 8.580 | 1,9 % |
+| `soc_bus` | 1.836 | 0,4 % |
+| keo nối `soc_top` | 307 | 0,1 % |
+| **Tổng (không ROM/RAM)** | **449.097** | |
+
+Ngoại vi và bus cộng lại khoảng 49.800 µm², chiếm 11,1 % so với lõi.
+
+**Chỗ yếu, nói thẳng:**
+- Không có phân tích timing cho SoC (máy không có OpenSTA) và không chạy flow P&R; chưa có con số tần số cho SoC.
+- Con số lõi 399.331 µm² ở đây khác 377.265 µm² trong mục Flow ở trên: đây là yosys + ABC (`-D 15000`) chạy trên `soc_top` với cấu hình mặc định của `rv32im_pipeline`, còn số cũ ứng với `flow/rv32imc_top.v` (MUL_LAT = 2); tôi chưa đối chiếu được chênh lệch này, nên coi hai số là không so trực tiếp với nhau.
+- ROM và RAM là mảng flip-flop mô phỏng, chưa có macro SRAM; 16 KB mỗi bên nếu đưa vào tổng hợp sẽ lớn hơn nhiều so với toàn bộ phần còn lại.
+- Chạy kiểm chứng chỉ ở mô phỏng RTL; chưa thử trên FPGA. UART RX chỉ có đệm một byte, không có FIFO; `PRESCALE` của `rv32_mtimer` chỉ thử với giá trị 1.
+- Không lấy lệnh từ RAM, nên chưa nạp chương trình lúc chạy (chỉ chạy từ ROM).
 
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chưa có `mtvec` chế độ vectored, chế độ User

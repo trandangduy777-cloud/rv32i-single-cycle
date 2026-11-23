@@ -17,7 +17,8 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 12 cau hinh" "bo nhan: 
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (13 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
-       "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike")
+       "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
+       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (99 mutant)")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
@@ -46,14 +47,16 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     14) python3 cache/mutate_cache.py "$RT" --spike "$SPIKE" ;;
     15) python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" ;;
     16) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" ;;
+    17) sh soc/sw/build.sh && python3 soc/run_soc.py ;;
+    18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
 }
 
 case "${1:-nhanh}" in
-    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15" ;;
-    dot-bien) STEPS="10 11 12 13 14 16" ;;
-    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 10 11 12 13 14 16" ;;
+    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17" ;;
+    dot-bien) STEPS="10 11 12 13 14 16 18" ;;
+    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 10 11 12 13 14 16 18" ;;
     *)       STEPS="$*" ;;
 esac
 n=$(echo $STEPS | wc -w); k=0; t0=$(date +%s)
