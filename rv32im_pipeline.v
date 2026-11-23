@@ -60,6 +60,84 @@ module rv32im_pipeline #(
     input  wire        irq_timer,      // MTIP, tu bo dem mtime/mtimecmp ben ngoai (rv32_mtimer.v)
     input  wire        irq_soft,       // MSIP, thanh ghi msip cua rv32_mtimer.v
     input  wire        irq_ext         // MEIP
+`ifdef RISCV_FORMAL
+    // Cong RVFI (riscv-formal, 1 kenh): chi co khi bien dich voi -DRISCV_FORMAL, khong doi gi o ban thuong.
+    , output wire        rvfi_valid
+    , output wire [63:0] rvfi_order
+    , output wire [31:0] rvfi_insn
+    , output wire        rvfi_trap
+    , output wire        rvfi_halt
+    , output wire        rvfi_intr
+    , output wire [1:0]  rvfi_mode
+    , output wire [1:0]  rvfi_ixl
+    , output wire [4:0]  rvfi_rs1_addr
+    , output wire [4:0]  rvfi_rs2_addr
+    , output wire [31:0] rvfi_rs1_rdata
+    , output wire [31:0] rvfi_rs2_rdata
+    , output wire [4:0]  rvfi_rd_addr
+    , output wire [31:0] rvfi_rd_wdata
+    , output wire [31:0] rvfi_pc_rdata
+    , output wire [31:0] rvfi_pc_wdata
+    , output wire [31:0] rvfi_mem_addr
+    , output wire [3:0]  rvfi_mem_rmask
+    , output wire [3:0]  rvfi_mem_wmask
+    , output wire [31:0] rvfi_mem_rdata
+    , output wire [31:0] rvfi_mem_wdata
+`ifdef RISCV_FORMAL_CSR_MISA
+    , output wire [31:0] rvfi_csr_misa_rmask
+    , output wire [31:0] rvfi_csr_misa_wmask
+    , output wire [31:0] rvfi_csr_misa_rdata
+    , output wire [31:0] rvfi_csr_misa_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MHARTID
+    , output wire [31:0] rvfi_csr_mhartid_rmask
+    , output wire [31:0] rvfi_csr_mhartid_wmask
+    , output wire [31:0] rvfi_csr_mhartid_rdata
+    , output wire [31:0] rvfi_csr_mhartid_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MSTATUS
+    , output wire [31:0] rvfi_csr_mstatus_rmask
+    , output wire [31:0] rvfi_csr_mstatus_wmask
+    , output wire [31:0] rvfi_csr_mstatus_rdata
+    , output wire [31:0] rvfi_csr_mstatus_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MIE
+    , output wire [31:0] rvfi_csr_mie_rmask
+    , output wire [31:0] rvfi_csr_mie_wmask
+    , output wire [31:0] rvfi_csr_mie_rdata
+    , output wire [31:0] rvfi_csr_mie_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MTVEC
+    , output wire [31:0] rvfi_csr_mtvec_rmask
+    , output wire [31:0] rvfi_csr_mtvec_wmask
+    , output wire [31:0] rvfi_csr_mtvec_rdata
+    , output wire [31:0] rvfi_csr_mtvec_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MSCRATCH
+    , output wire [31:0] rvfi_csr_mscratch_rmask
+    , output wire [31:0] rvfi_csr_mscratch_wmask
+    , output wire [31:0] rvfi_csr_mscratch_rdata
+    , output wire [31:0] rvfi_csr_mscratch_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MEPC
+    , output wire [31:0] rvfi_csr_mepc_rmask
+    , output wire [31:0] rvfi_csr_mepc_wmask
+    , output wire [31:0] rvfi_csr_mepc_rdata
+    , output wire [31:0] rvfi_csr_mepc_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MCAUSE
+    , output wire [31:0] rvfi_csr_mcause_rmask
+    , output wire [31:0] rvfi_csr_mcause_wmask
+    , output wire [31:0] rvfi_csr_mcause_rdata
+    , output wire [31:0] rvfi_csr_mcause_wdata
+`endif
+`ifdef RISCV_FORMAL_CSR_MTVAL
+    , output wire [31:0] rvfi_csr_mtval_rmask
+    , output wire [31:0] rvfi_csr_mtval_wmask
+    , output wire [31:0] rvfi_csr_mtval_rdata
+    , output wire [31:0] rvfi_csr_mtval_wdata
+`endif
+`endif
 );
     localparam NOP = 32'h0000_0013;
 
@@ -901,4 +979,186 @@ module rv32im_pipeline #(
             memwb_tstrb <= dmem_we ? st_strb8 : 8'd0;
         end
     end
+
+`ifdef RISCV_FORMAL
+    // ============================================================
+    // RVFI (riscv-formal Verification Interface), mot lenh hoan tat moi chu ky o tang WB.
+    // Toan bo khoi nay chi duoc bien dich khi co RISCV_FORMAL; no chi DOC cac tin hieu da co, khong dieu khien gi.
+    //  - Lenh hoan tat khi memwb_valid & memwb_new (xem wb_commit). Lenh bi ngat o EX (irq_take) van di qua pipeline
+    //    nhu lenh vo hieu nhung KHONG hoan tat (RVFI: ngat khong co lenh); lenh dau tien cua trinh xu ly ngat co intr = 1.
+    //  - Toan hang nguon lay o EX sau forwarding. Lenh M dung o EX nhieu chu ky va forwarding doi trong luc do, nen
+    //    toan hang cua chu ky dau (luc rv32m chep) duoc giu lai (rv_a_hold / rv_b_hold).
+    //  - Bo nho: RVFI_ALIGNED_MEM, mem_addr chia het cho 4, rmask / wmask theo byte trong tu. Chi dung voi MISALIGNED = 0
+    //    (truy cap lech tach 2 pha o MEM khong bieu dien duoc bang 1 kenh RVFI).
+    // ============================================================
+    localparam [31:0] RV_MISA = 32'h4000_0100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);
+    wire [31:0] csr_rdata_const_misa    = RV_MISA;
+    wire [31:0] csr_rdata_const_mhartid = 32'd0;
+
+    // lenh o ID dung rs1 / rs2 that su (CSR dang immediate khong dung rs1)
+    reg rv_u1_q, rv_u2_q;
+    always @(posedge clk) if (!(ex_stall | frz)) begin
+        rv_u1_q <= legal_jalr | legal_branch | legal_load | legal_store | legal_imm | legal_reg | (legal_csr & ~funct3[2]);
+        rv_u2_q <= legal_branch | legal_store | legal_reg;
+    end
+
+    // toan hang cua chu ky dau tien cua lenh o EX (lenh M o EX nhieu chu ky)
+    reg         rv_mcont;
+    reg  [31:0] rv_a_hold, rv_b_hold;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)    rv_mcont <= 1'b0;
+        else if (!frz) rv_mcont <= idex_mext & ~m_done;
+    end
+    always @(posedge clk) if (!rv_mcont) begin rv_a_hold <= op_a; rv_b_hold <= op_b; end
+    wire [31:0] rv_a = rv_mcont ? rv_a_hold : op_a;
+    wire [31:0] rv_b = rv_mcont ? rv_b_hold : op_b;
+
+    // gia tri tai EX
+    wire        rv_ex_irq  = irq_take;
+    wire        rv_ex_trap = trap_ex & ~irq_take;
+    wire [31:0] rv_ex_pcw  = trap_ex ? {mtvec_r, 2'b00} :
+                             mret_ex ? mepc_v           :
+                             idex_jalr ? jalr_target :
+                             (idex_jal | (idex_branch & take_branch)) ? pc_imm : pc_next;
+
+    reg  [4:0]  xm_rs1a, xm_rs2a;
+    reg  [31:0] xm_rs1d, xm_rs2d, xm_pcw, xm_csr_rd, xm_csr_new;
+    reg         xm_trap, xm_irq, xm_csr, xm_csr_w;
+    always @(posedge clk) if (!frz) begin
+        xm_rs1a    <= rv_u1_q ? idex_rs1 : 5'd0;
+        xm_rs2a    <= rv_u2_q ? idex_rs2 : 5'd0;
+        xm_rs1d    <= (rv_u1_q && idex_rs1 != 5'd0) ? rv_a : 32'd0;
+        xm_rs2d    <= (rv_u2_q && idex_rs2 != 5'd0) ? rv_b : 32'd0;
+        xm_pcw     <= rv_ex_pcw;
+        xm_trap    <= rv_ex_trap;
+        xm_irq     <= rv_ex_irq;
+        xm_csr     <= idex_csr;
+        xm_csr_w   <= idex_csr & csr_we_req;
+        xm_csr_rd  <= csr_rdata;
+        xm_csr_new <= csr_new;
+    end
+
+    // MEM -> MEM/WB: truy cap bo nho that su cua lenh vua xong o MEM (dmem_ready = 1 trong chu ky nay)
+    wire [3:0] rv_ld_mask = ((exmem_funct3[1:0] == 2'b00) ? 4'b0001 :
+                             (exmem_funct3[1:0] == 2'b01) ? 4'b0011 : 4'b1111) << byte_off;
+    reg  [4:0]  memwb_rv_rs1a, memwb_rv_rs2a;
+    reg  [31:0] memwb_rv_rs1d, memwb_rv_rs2d, memwb_rv_pcw, memwb_rv_csr_rd, memwb_rv_csr_new;
+    reg         memwb_rv_trap, memwb_rv_irq, memwb_rv_csr, memwb_rv_csr_w;
+    reg  [31:0] memwb_rv_maddr, memwb_rv_mrdata, memwb_rv_mwdata;
+    reg  [3:0]  memwb_rv_mrmask, memwb_rv_mwmask;
+    always @(posedge clk) if (!frz) begin
+        memwb_rv_rs1a    <= xm_rs1a;   memwb_rv_rs2a   <= xm_rs2a;
+        memwb_rv_rs1d    <= xm_rs1d;   memwb_rv_rs2d   <= xm_rs2d;
+        memwb_rv_pcw     <= xm_pcw;
+        memwb_rv_trap    <= xm_trap;   memwb_rv_irq    <= xm_irq;
+        memwb_rv_csr     <= xm_csr;    memwb_rv_csr_w  <= xm_csr_w;
+        memwb_rv_csr_rd  <= xm_csr_rd; memwb_rv_csr_new <= xm_csr_new;
+        memwb_rv_maddr   <= (dmem_re | dmem_we) ? {exmem_result[31:2], 2'b00} : 32'd0;
+        memwb_rv_mrmask  <= dmem_re ? rv_ld_mask : 4'd0;
+        memwb_rv_mwmask  <= dmem_we ? dmem_wstrb : 4'd0;
+        memwb_rv_mrdata  <= dmem_re ? dmem_rdata : 32'd0;
+        memwb_rv_mwdata  <= dmem_we ? dmem_wdata : 32'd0;
+    end
+
+    wire rv_ret = wb_commit & ~memwb_rv_irq;
+    reg  [63:0] rv_order;
+    reg         rv_intr_pend;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin rv_order <= 64'd0; rv_intr_pend <= 1'b0; end
+        else begin
+            if (rv_ret) rv_order <= rv_order + 64'd1;
+            if (rv_ret)                           rv_intr_pend <= 1'b0;
+            else if (wb_commit & memwb_rv_irq)    rv_intr_pend <= 1'b1;   // lenh bi ngat: lenh hoan tat ke tiep vao trinh xu ly
+        end
+    end
+
+    wire rv_rdw = memwb_rd_we & (memwb_rd != 5'd0);
+    assign rvfi_valid     = rv_ret;
+    assign rvfi_order     = rv_order;
+    assign rvfi_insn      = memwb_instr;
+    assign rvfi_trap      = memwb_rv_trap;
+    assign rvfi_halt      = 1'b0;
+    assign rvfi_intr      = rv_ret & rv_intr_pend;
+    assign rvfi_mode      = 2'd3;
+    assign rvfi_ixl       = 2'd1;
+    assign rvfi_rs1_addr  = memwb_rv_rs1a;
+    assign rvfi_rs2_addr  = memwb_rv_rs2a;
+    assign rvfi_rs1_rdata = memwb_rv_rs1d;
+    assign rvfi_rs2_rdata = memwb_rv_rs2d;
+    assign rvfi_rd_addr   = rv_rdw ? memwb_rd  : 5'd0;
+    assign rvfi_rd_wdata  = rv_rdw ? memwb_val : 32'd0;
+    assign rvfi_pc_rdata  = memwb_pc;
+    assign rvfi_pc_wdata  = memwb_rv_pcw;
+    assign rvfi_mem_addr  = memwb_rv_maddr;
+    assign rvfi_mem_rmask = memwb_rv_mrmask;
+    assign rvfi_mem_wmask = memwb_rv_mwmask;
+    assign rvfi_mem_rdata = memwb_rv_mrdata;
+    assign rvfi_mem_wdata = memwb_rv_mwdata;
+
+    wire        rv_csr_ret  = rv_ret & memwb_rv_csr & ~memwb_rv_trap;
+    wire [11:0] rv_csr_addr = memwb_instr[31:20];
+`ifdef RISCV_FORMAL_CSR_MISA
+    wire rv_hit_misa = rv_csr_ret & (rv_csr_addr == 12'h301);
+    assign rvfi_csr_misa_rmask = 32'hFFFF_FFFF;
+    assign rvfi_csr_misa_rdata = rv_hit_misa ? memwb_rv_csr_rd : csr_rdata_const_misa;
+    assign rvfi_csr_misa_wmask = (rv_hit_misa & memwb_rv_csr_w) ? 32'h0 : 32'h0;
+    assign rvfi_csr_misa_wdata = (rv_hit_misa & memwb_rv_csr_w) ? (32'h0 & 32'h0) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MHARTID
+    wire rv_hit_mhartid = rv_csr_ret & (rv_csr_addr == 12'hF14);
+    assign rvfi_csr_mhartid_rmask = 32'hFFFF_FFFF;
+    assign rvfi_csr_mhartid_rdata = rv_hit_mhartid ? memwb_rv_csr_rd : csr_rdata_const_mhartid;
+    assign rvfi_csr_mhartid_wmask = (rv_hit_mhartid & memwb_rv_csr_w) ? 32'h0 : 32'h0;
+    assign rvfi_csr_mhartid_wdata = (rv_hit_mhartid & memwb_rv_csr_w) ? (32'h0 & 32'h0) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MSTATUS
+    wire rv_hit_mstatus = rv_csr_ret & (rv_csr_addr == 12'h300);
+    assign rvfi_csr_mstatus_rmask = rv_hit_mstatus ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mstatus_rdata = rv_hit_mstatus ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mstatus_wmask = (rv_hit_mstatus & memwb_rv_csr_w) ? 32'h0000_0088 : 32'h0;
+    assign rvfi_csr_mstatus_wdata = (rv_hit_mstatus & memwb_rv_csr_w) ? ({19'b0, 2'b11, 3'b0, memwb_rv_csr_new[7], 3'b0, memwb_rv_csr_new[3], 3'b0} & 32'h0000_0088) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MIE
+    wire rv_hit_mie = rv_csr_ret & (rv_csr_addr == 12'h304);
+    assign rvfi_csr_mie_rmask = rv_hit_mie ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mie_rdata = rv_hit_mie ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mie_wmask = (rv_hit_mie & memwb_rv_csr_w) ? 32'h0000_0888 : 32'h0;
+    assign rvfi_csr_mie_wdata = (rv_hit_mie & memwb_rv_csr_w) ? ({20'b0, memwb_rv_csr_new[11], 3'b0, memwb_rv_csr_new[7], 3'b0, memwb_rv_csr_new[3], 3'b0} & 32'h0000_0888) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MTVEC
+    wire rv_hit_mtvec = rv_csr_ret & (rv_csr_addr == 12'h305);
+    assign rvfi_csr_mtvec_rmask = rv_hit_mtvec ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mtvec_rdata = rv_hit_mtvec ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mtvec_wmask = (rv_hit_mtvec & memwb_rv_csr_w) ? 32'hFFFF_FFFC : 32'h0;
+    assign rvfi_csr_mtvec_wdata = (rv_hit_mtvec & memwb_rv_csr_w) ? ({memwb_rv_csr_new[31:2], 2'b00} & 32'hFFFF_FFFC) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MSCRATCH
+    wire rv_hit_mscratch = rv_csr_ret & (rv_csr_addr == 12'h340);
+    assign rvfi_csr_mscratch_rmask = rv_hit_mscratch ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mscratch_rdata = rv_hit_mscratch ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mscratch_wmask = (rv_hit_mscratch & memwb_rv_csr_w) ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mscratch_wdata = (rv_hit_mscratch & memwb_rv_csr_w) ? (memwb_rv_csr_new & 32'hFFFF_FFFF) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MEPC
+    wire rv_hit_mepc = rv_csr_ret & (rv_csr_addr == 12'h341);
+    assign rvfi_csr_mepc_rmask = rv_hit_mepc ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mepc_rdata = rv_hit_mepc ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mepc_wmask = (rv_hit_mepc & memwb_rv_csr_w) ? ((ENABLE_C != 0) ? 32'hFFFF_FFFE : 32'hFFFF_FFFC) : 32'h0;
+    assign rvfi_csr_mepc_wdata = (rv_hit_mepc & memwb_rv_csr_w) ? ({memwb_rv_csr_new[31:2], memwb_rv_csr_new[1] & (ENABLE_C != 0), 1'b0}) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MCAUSE
+    wire rv_hit_mcause = rv_csr_ret & (rv_csr_addr == 12'h342);
+    assign rvfi_csr_mcause_rmask = rv_hit_mcause ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mcause_rdata = rv_hit_mcause ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mcause_wmask = (rv_hit_mcause & memwb_rv_csr_w) ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mcause_wdata = (rv_hit_mcause & memwb_rv_csr_w) ? (memwb_rv_csr_new & 32'hFFFF_FFFF) : 32'h0;
+`endif
+`ifdef RISCV_FORMAL_CSR_MTVAL
+    wire rv_hit_mtval = rv_csr_ret & (rv_csr_addr == 12'h343);
+    assign rvfi_csr_mtval_rmask = rv_hit_mtval ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mtval_rdata = rv_hit_mtval ? memwb_rv_csr_rd : 32'h0;
+    assign rvfi_csr_mtval_wmask = (rv_hit_mtval & memwb_rv_csr_w) ? 32'hFFFF_FFFF : 32'h0;
+    assign rvfi_csr_mtval_wdata = (rv_hit_mtval & memwb_rv_csr_w) ? (memwb_rv_csr_new & 32'hFFFF_FFFF) : 32'h0;
+`endif
+`endif
 endmodule

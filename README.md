@@ -69,6 +69,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `coremark/` | Port CoreMark (`port/`) và script build + chạy + kiểm CRC trên các lõi (xem mục CoreMark) |
 | `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
 | `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike) |
+| `formal/` | riscv-formal (RVFI) cho pipeline RV32IMC: `checks.cfg`, `wrapper.sv`, `run.sh` (chạy check), `mutate.sh` (đột biến cố ý), `setup_ci.sh` (dựng yosys + SymbiYosys + Boolector); xem mục Chứng minh hình thức bằng riscv-formal |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
@@ -645,6 +646,32 @@ python3 cosim/run_cosim.py <thư mục riscv-tests> [--spike <đường dẫn sp
 ```
 
 Cần `spike`, `gcc-riscv64-unknown-elf`, `iverilog`.
+
+## Chứng minh hình thức bằng riscv-formal (pipeline RV32IMC)
+
+Pipeline `rv32im_pipeline.v` (cấu hình RV32IMC, `MISALIGNED = 0`, BTB/RAS/gshare bật, ngắt tự do) được kiểm bằng [riscv-formal](https://github.com/YosysHQ/riscv-formal) (ghim SHA `c992aa6`) qua giao diện RVFI, một kênh retire, bằng SymbiYosys + Boolector (BMC, yosys là bản WASM của YoWASP). Cổng RVFI nằm trong `ifdef RISCV_FORMAL` nên khi tắt thì RTL không đổi hành vi (regression đầy đủ vẫn đạt).
+
+- Cách chạy: `sh formal/setup_ci.sh` (dựng yosys, SymbiYosys, Boolector, mặc định vào `~/.local`), rồi `bash formal/run.sh run '<regex>'` hoặc `bash formal/run.sh all`; `bash formal/mutate.sh` chạy các đột biến cố ý. Job CI `formal-rvfi` chạy cả hai.
+- Cấu hình ở `formal/checks.cfg`, wrapper (đầu vào bộ nhớ, ngắt tự do) ở `formal/wrapper.sv`.
+
+**Đã chạy và đạt** (99 check, đo trên máy 2 nhân, 2 check song song; số giây là thời gian thật của từng check):
+- `insn_*`: 70 check (RV32I, M, C), mỗi check chứng minh lệnh đó hoàn tất đúng ngữ nghĩa ở chu kỳ 18 (BMC độ sâu 18; `div/divu/rem/remu` độ sâu 34). Tổng thời gian các check lệnh khoảng 55 phút CPU; mỗi check 22-131 giây (chậm nhất `insn_div`, 131 s).
+- `reg` (bắt đầu chu kỳ 15, tới 25; 547 s lần đo đầu khi máy đang chạy việc khác, 241 s khi chạy lại): giá trị thanh ghi đọc ra bằng giá trị đã ghi lần cuối, kể cả qua forwarding.
+- `pc_fwd` (3 tới 14; 117 s), `pc_bwd` (10 tới 30; 42 s), `causal` (10 tới 30; 23 s), `unique` (10 tới 30; 16 s), `hang` (30; 19 s).
+- `liveness` (cửa sổ 5 tới 60; 20 s): lệnh tiếp theo luôn retire, với giả định bộ nhớ không chờ quá 3 chu kỳ liên tiếp và không có `WFI`.
+- CSR: `csrw` (mscratch, mcause, mtval, mhartid), `csrc_any` (mscratch), `csrc_const` (mhartid), `csr_ill` (15 CSR không tồn tại phải gây trap).
+- `cover`: các lệnh retire được (check không rỗng).
+- Đột biến cố ý (`formal/mutate.sh`): 8 lỗi chèn vào bản sao RTL, cả 8 đều làm đúng check tương ứng FAIL: SLTU so có dấu (`insn_sltu`), BGEU đảo điều kiện (`insn_bgeu`), `sh` sai mặt nạ byte (`insn_sh`), `lb` sai bit dấu (`insn_lb`), ghi vào x0 (`insn_add`), forwarding WB lấy nhầm rs (`reg`), `fence` treo EX (`liveness`), mất bit 31 của mscratch (`csrc_any_mscratch`).
+
+**Lỗi thật tìm được:** `mepc` chỉ lưu bit [31:2], nên khi trap ở lệnh nén nằm tại pc ≡ 2 (mod 4) thì `mepc` mất bit 1 và `MRET` nhảy sai địa chỉ; ghi `mepc` bằng CSR cũng không ghi được bit 1. Check `csrw_mepc` của riscv-formal phát hiện lỗi này; cùng lỗi cũng được tìm ra độc lập bằng so vết ngắt với Spike (mục Ngắt so với Spike) và đã sửa trên main trước khi mình rebase (`mepc` lưu [31:1], bit 1 chỉ có nghĩa khi `ENABLE_C`). Phần của mục này là test tái hiện `cosim/tests/mepc_c.S` (so với Spike): lệch ở lệnh thứ 9 trên RTL cũ, khớp 706 lệnh sau khi sửa. Spike không ghi `ECALL`/`EBREAK`/`C.EBREAK` vào vết cam kết nên `run_cosim.py` bỏ chúng khỏi vết RTL.
+
+**Chưa chứng minh / giới hạn (nói thẳng):**
+- BMC có độ sâu giới hạn, không phải chứng minh vô hạn: kết quả chỉ nói không có phản ví dụ trong ngần ấy chu kỳ từ trạng thái đầu bất kỳ hợp lệ theo ràng buộc của check. `pc_fwd` chỉ ở cửa sổ 3 tới 14 vì cửa sổ 5 tới 20 chạy quá 25 phút chưa ra kết quả; `reg` chỉ tới 25 chu kỳ.
+- Lệnh M được kiểm với `RISCV_FORMAL_ALTOPS`: kết quả nhân/chia bị thay bằng phép toán thay thế của riscv-formal, nên chỉ chứng minh đường dẫn (toán hạng, rd, hoàn tất, stall), KHÔNG chứng minh phép nhân/chia. Phép nhân song song được chứng minh riêng ở `mul/formal`; bộ chia chỉ được kiểm bằng mô phỏng (riscv-tests, so vết Spike, chương trình ngẫu nhiên). `insn_div` gốc của riscv-formal tính không dấu dưới yosys nên báo sai cả với bộ chia đúng; vì vậy không dùng nó với phép tính thật.
+- Chỉ `MISALIGNED = 0` (lõi lệch địa chỉ bằng phần cứng và các cấu hình cache chưa qua riscv-formal); bộ nhớ lệnh/dữ liệu là đầu vào tự do (không có cache).
+- CSR chưa qua check `csrw`: `mstatus`, `mie`, `mtvec` (chỉ ghi được một phần, check giả định mọi bit ghi được) và `mepc` (bit 0 luôn 0). `mepc` được phủ bằng test cosim ở trên, chưa bằng check hình thức. Các CSR còn lại chỉ qua `csr_ill`/`causal`/`unique`.
+- `liveness` giả định bộ nhớ công bằng và loại `WFI`; `WFI` cần ngắt để thoát nên không thể bảo đảm tiến triển.
+- RVFI do mình tự viết (bộ chuyển đổi trong `rv32im_pipeline.v`): nếu bộ chuyển đổi sai cùng chiều với RTL thì check có thể bỏ sót; đột biến ở trên chỉ chứng tỏ bắt được một số lớp lỗi, không phải mọi lớp.
 
 ## Mô phỏng gate-level (netlist pipeline sau P&R)
 

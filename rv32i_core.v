@@ -527,6 +527,29 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1, parameter MUL_LAT = 0) (
     end
 
     wire [63:0] p_neg = ~p + 64'd1;
+`ifdef RISCV_FORMAL_ALTOPS
+    // Chi khi chay riscv-formal voi RISCV_FORMAL_ALTOPS: thay ket qua so hoc cua M bang phep toan thay the (cung quy uoc
+    // voi ban dac ta insn_mul.v ... cua riscv-formal) de solver khong phai giai phep nhan / chia 32 bit. Bo dem trang thai,
+    // do tre, bat tay va ghi ket qua van la cua RTL that; chi gia tri ket qua bi thay.
+    reg  [31:0] alt_a, alt_b;
+    reg  [2:0]  alt_f;
+    always @(posedge clk) if (state == IDLE && req) begin alt_a <= a; alt_b <= b; alt_f <= funct3; end
+    wire [31:0] xa = f_now ? a      : alt_a;
+    wire [31:0] xb = f_now ? b      : alt_b;
+    wire [2:0]  xf = f_now ? funct3 : alt_f;
+    always @* begin
+        case (xf)
+            3'b000:  result = (xa + xb) ^ 32'h5876063e;   // MUL
+            3'b001:  result = (xa + xb) ^ 32'hf6583fb7;   // MULH
+            3'b010:  result = (xa - xb) ^ 32'hecfbe137;   // MULHSU
+            3'b011:  result = (xa + xb) ^ 32'h949ce5e8;   // MULHU
+            3'b100:  result = (xa - xb) ^ 32'h7f8529ec;   // DIV
+            3'b101:  result = (xa - xb) ^ 32'h10e8fd70;   // DIVU
+            3'b110:  result = (xa - xb) ^ 32'h8da68fa5;   // REM
+            default: result = (xa - xb) ^ 32'h3138d0e1;   // REMU
+        endcase
+    end
+`else
     always @* begin
         if (f_now | (state == MW)) result = f_res;
         else
@@ -541,6 +564,7 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1, parameter MUL_LAT = 0) (
             default: result = p[63:32];                                  // REMU
         endcase
     end
+`endif
 endmodule
 // Bo nhan song song co dau W x W bit (tu viet): ma hoa Booth co so 4 + cay cong luu nho (Wallace, bo cong 3:2).
 // - a, b la so co dau W bit (RV32: W = 33, bit 32 la bit dau mo rong theo MUL / MULH / MULHSU / MULHU).
