@@ -123,7 +123,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: riscv-formal-logs
-          path: /tmp/formal-work/results.txt
+          path: |
+            /tmp/formal-work/results.txt
+            /tmp/formal-work/riscv-formal/cores/rv32im_pipeline/checks/*.log
 
   cosim:
     # So tung lenh voi Spike. Spike duoc build tu ma nguon (ghim phien ban) va luu cache giua cac lan chay.
