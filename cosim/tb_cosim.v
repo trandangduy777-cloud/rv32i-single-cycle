@@ -359,7 +359,7 @@ module tb_cosim;
             irq_pend  <= 1'b1;
             irq_cause <= dut.trap_cause;
             irq_epc   <= dut.idex_pc;
-            irq_tgt   <= {dut.mtvec_r, 2'b00};
+            irq_tgt   <= dut.redirect_pc;
             irq_mip   <= mip_now;
             n_irq      = n_irq + 1;
         end

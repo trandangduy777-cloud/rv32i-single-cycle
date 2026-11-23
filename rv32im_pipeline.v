@@ -12,7 +12,7 @@
 // - Ngat: irq_ext (MEIP), irq_soft (MSIP), irq_timer (MTIP), muc cao, giu cho toi khi phan mem xoa nguon ngat.
 //   Ngat duoc nhan o EX khi mstatus.MIE = 1 va bit tuong ung trong mie bat: lenh dang o EX khong thuc thi,
 //   mepc = pc cua lenh do, mcause = 0x8000000B / 0x80000003 / 0x80000007 (uu tien theo thu tu nay), nhay toi mtvec
-//   giong trap. Lenh M dang chay khong bi ngat (ngat cho lenh ke tiep). mip (0x344) chi doc, phan anh cac chan ngat.
+//   giong trap (mtvec.MODE = 1: toi BASE + 4 * ma nguyen nhan, exception van ve BASE). Lenh M dang chay khong bi ngat (ngat cho lenh ke tiep). mip (0x344) chi doc, phan anh cac chan ngat.
 // - WFI: dung o EX (dong bang IF/ID/EX nhu lenh M) cho toi khi (mip & mie) != 0, bat ke mstatus.MIE. Ngat khong
 //   nhan tren chinh lenh WFI ma tren lenh ke tiep, nen mepc = pc cua WFI + 4.
 // - Cac tin hieu memwb_* duoc testbench doc truc tiep (tang commit) de in vet
@@ -608,6 +608,7 @@ module rv32im_pipeline #(
     // ---- CSR (doc/ghi o EX, dung thu tu chuong trinh) ----
     reg         mstatus_mie, mstatus_mpie;
     reg  [31:2] mtvec_r;
+    reg         mtvec_vec;                             // mtvec.MODE = 1: ngat nhay toi BASE + 4 * ma nguyen nhan
     reg  [31:1] mepc_r;                                    // bit 1 chi co nghia khi ENABLE_C = 1
     wire [31:0] mepc_v = {mepc_r[31:2], mepc_r[1] & (ENABLE_C != 0), 1'b0};
     reg  [31:0] mscratch, mcause_r, mtval_r;
@@ -625,7 +626,7 @@ module rv32im_pipeline #(
             12'h300: csr_rdata = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
             12'h301: csr_rdata = 32'h4000_0100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);   // MXL = 32, I (va C khi ENABLE_C)
             12'h304: csr_rdata = {20'b0, mie_meie, 3'b0, mie_mtie, 3'b0, mie_msie, 3'b0};
-            12'h305: csr_rdata = {mtvec_r, 2'b00};
+            12'h305: csr_rdata = {mtvec_r, 1'b0, mtvec_vec};
             12'h340: csr_rdata = mscratch;
             12'h341: csr_rdata = mepc_v;
             12'h342: csr_rdata = mcause_r;
@@ -701,7 +702,9 @@ module rv32im_pipeline #(
     assign icache_flush = fencei_ex;
     // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
     assign redirect    = (trap_ex | mret_ex | jalr_miss | mispredict | fencei_ex) & ~frz;
-    assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
+    // mtvec vectored: chi ngat (exception van ve BASE); ma nguyen nhan cua ngat la 3 / 7 / 11
+    wire [31:2] trap_base  = (irq_take & mtvec_vec) ? mtvec_r + {26'd0, trap_cause[3:0]} : mtvec_r;
+    assign redirect_pc = trap_ex ? {trap_base, 2'b00} :
                          mret_ex ? mepc_v           :
                          fencei_ex ? pc_next :
                          idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
@@ -736,6 +739,7 @@ module rv32im_pipeline #(
             mstatus_mie  <= 1'b0;
             mstatus_mpie <= 1'b0;
             mtvec_r      <= 30'd0;
+            mtvec_vec    <= 1'b0;
             mepc_r       <= 31'd0;
             mscratch     <= 32'd0;
             mcause_r     <= 32'd0;
@@ -756,7 +760,7 @@ module rv32im_pipeline #(
             case (csr_addr)
                 12'h300: begin mstatus_mie <= csr_new[3]; mstatus_mpie <= csr_new[7]; end
                 12'h304: begin mie_mtie <= csr_new[7]; mie_meie <= csr_new[11]; mie_msie <= csr_new[3]; end
-                12'h305: mtvec_r  <= csr_new[31:2];
+                12'h305: begin mtvec_r <= csr_new[31:2]; mtvec_vec <= csr_new[0]; end   // MODE >= 2 du phong: bit 1 doc 0
                 12'h340: mscratch <= csr_new;
                 12'h341: mepc_r   <= csr_new[31:1];
                 12'h342: mcause_r <= csr_new;
