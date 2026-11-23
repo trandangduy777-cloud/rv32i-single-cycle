@@ -3,6 +3,7 @@
 #   bash formal/run.sh gen                  # chi sinh cac check (thu muc $WORK/cores/rv32im_pipeline/checks)
 #   bash formal/run.sh run <regex>...       # chay cac check co ten khop regex (vd. 'insn_add_ch0' 'reg_ch0')
 #   bash formal/run.sh all                  # chay moi check
+# Check gap ERROR (loi ha tang, khong phai FAIL) duoc chay lai 1 lan; log lan dau giu o <check>.err1.log.
 # Bien: RTL_DIR (thu muc chua RTL, mac dinh repo; dung de chen loi co y vao ban sao), WORK (thu muc lam viec, mac dinh /tmp/formal-work), CFG (mac dinh formal/checks.cfg), JOBS (so tien trinh song song)
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -42,6 +43,7 @@ case $cmd in
         done | sort -u > "$WORK/selected.txt"
         echo "$(wc -l < "$WORK/selected.txt") check duoc chon"
         ( cd checks && xargs -P "$JOBS" -I{} sh -c 'ts=$(date +%s); sby -f {}.sby > {}.log 2>&1; rc=$?; \
+            if grep -q "DONE (ERROR" {}.log; then cp {}.log {}.err1.log; sby -f {}.sby > {}.log 2>&1; fi; \
             st=$(grep -E "DONE \(" {}.log | tail -1 | sed "s/.*DONE (\(.*\)).*/\1/"); \
             echo "{}: $st ($(( $(date +%s) - ts )) s)"' < "$WORK/selected.txt" ) | tee "$WORK/results.txt"
         ! grep -v "PASS" "$WORK/results.txt" | grep -q . ;;      # ma thoat khac 0 neu co check khong PASS
