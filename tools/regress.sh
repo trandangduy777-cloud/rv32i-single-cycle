@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
-#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-8, khoang 60-80 phut)
-#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 9-13, khoang 2-3 gio)
+#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15; khoang 2 gio)
+#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16; vai gio)
 #   bash tools/regress.sh tat-ca          # ca hai nhom
 #   bash tools/regress.sh 2 7             # chi cac buoc 2 va 7
 # Can moi truong cua tools/setup_env.sh. Thoat ma 1 o buoc dau tien that bai (in 20 dong cuoi cua log buoc do).
@@ -17,7 +17,7 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 12 cau hinh" "bo nhan: 
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (13 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
-       "mutation cache")
+       "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
@@ -44,20 +44,22 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     12) (cd verify && python3 run_verify.py --pipem --mutate) ;;
     13) python3 rvc/mutate_rvc.py "$RT" --spike "$SPIKE" && python3 mul/mutate_mul.py && python3 bpred/mutate_bpred.py ;;
     14) python3 cache/mutate_cache.py "$RT" --spike "$SPIKE" ;;
+    15) python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" ;;
+    16) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
 }
 
 case "${1:-nhanh}" in
-    nhanh)   STEPS="1 2 3 4 5 6 7 8 9" ;;
-    dot-bien) STEPS="10 11 12 13 14" ;;
-    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 10 11 12 13 14" ;;
+    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15" ;;
+    dot-bien) STEPS="10 11 12 13 14 16" ;;
+    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 10 11 12 13 14 16" ;;
     *)       STEPS="$*" ;;
 esac
 n=$(echo $STEPS | wc -w); k=0; t0=$(date +%s)
 for s in $STEPS; do
     k=$((k + 1)); ts=$(date +%s)
-    printf "[%d/%d] buoc %s: %s ... " $k $n $s "${NAMES[$s]}"
+    printf "[%d/%d] buoc %s: %s ... " $k $n $s "${NAMES[$s]:-?}"
     if step $s > "$LOGDIR/step$s.log" 2>&1; then
         echo "DAT ($(( $(date +%s) - ts )) s) | $(grep -v '^\s*$' "$LOGDIR/step$s.log" | tail -1 | cut -c1-110)"
     else

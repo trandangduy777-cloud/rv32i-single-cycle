@@ -456,6 +456,7 @@ module rv32im_pipeline #(
     // ============================================================
     reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence;
     reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val;
+    reg         exmem_tirq;
     reg  [4:0]  exmem_rd;
     reg  [2:0]  exmem_funct3;
 
@@ -528,7 +529,9 @@ module rv32im_pipeline #(
 
     // ---- CSR (doc/ghi o EX, dung thu tu chuong trinh) ----
     reg         mstatus_mie, mstatus_mpie;
-    reg  [31:2] mtvec_r, mepc_r;
+    reg  [31:2] mtvec_r;
+    reg  [31:1] mepc_r;                                    // bit 1 chi co nghia khi ENABLE_C = 1
+    wire [31:0] mepc_v = {mepc_r[31:2], mepc_r[1] & (ENABLE_C != 0), 1'b0};
     reg  [31:0] mscratch, mcause_r, mtval_r;
     reg         mie_mtie, mie_meie, mie_msie;
     reg         mip_mtip, mip_meip, mip_msip;              // chan ngat duoc dong bo qua 1 flip-flop
@@ -546,7 +549,7 @@ module rv32im_pipeline #(
             12'h304: csr_rdata = {20'b0, mie_meie, 3'b0, mie_mtie, 3'b0, mie_msie, 3'b0};
             12'h305: csr_rdata = {mtvec_r, 2'b00};
             12'h340: csr_rdata = mscratch;
-            12'h341: csr_rdata = {mepc_r, 2'b00};
+            12'h341: csr_rdata = mepc_v;
             12'h342: csr_rdata = mcause_r;
             12'h343: csr_rdata = mtval_r;
             12'h344: csr_rdata = {20'b0, mip_meip, 3'b0, mip_mtip, 3'b0, mip_msip, 3'b0};
@@ -621,7 +624,7 @@ module rv32im_pipeline #(
     // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
     assign redirect    = (trap_ex | mret_ex | jalr_miss | mispredict | fencei_ex) & ~frz;
     assign redirect_pc = trap_ex ? {mtvec_r, 2'b00} :
-                         mret_ex ? {mepc_r, 2'b00}  :
+                         mret_ex ? mepc_v           :
                          fencei_ex ? pc_next :
                          idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
 
@@ -635,7 +638,7 @@ module rv32im_pipeline #(
     // dieu khien enable cua ~100 flip-flop mepc/mcause/mtval cung chu ky. Lenh o EX chu ky sau da bi redirect_q vo hieu
     // va lenh dau tien cua trinh xu ly trap toi EX sau it nhat 3 chu ky, nen ghi tre khong doi hanh vi.
     reg         trap_q;
-    reg  [29:0] tepc_q;
+    reg  [30:0] tepc_q;
     reg  [3:0]  tcause_q;
     reg         tint_q;
     reg  [31:0] ttval_q;
@@ -644,7 +647,7 @@ module rv32im_pipeline #(
         else        trap_q <= trap_ex & ~frz;
     end
     always @(posedge clk) begin
-        tepc_q       <= idex_pc[31:2];
+        tepc_q       <= idex_pc[31:1];
         tcause_q     <= trap_cause[3:0];
         tint_q       <= trap_cause[31];
         ttval_q      <= trap_tval;
@@ -655,7 +658,7 @@ module rv32im_pipeline #(
             mstatus_mie  <= 1'b0;
             mstatus_mpie <= 1'b0;
             mtvec_r      <= 30'd0;
-            mepc_r       <= 30'd0;
+            mepc_r       <= 31'd0;
             mscratch     <= 32'd0;
             mcause_r     <= 32'd0;
             mtval_r      <= 32'd0;
@@ -677,7 +680,7 @@ module rv32im_pipeline #(
                 12'h304: begin mie_mtie <= csr_new[7]; mie_meie <= csr_new[11]; mie_msie <= csr_new[3]; end
                 12'h305: mtvec_r  <= csr_new[31:2];
                 12'h340: mscratch <= csr_new;
-                12'h341: mepc_r   <= csr_new[31:2];
+                12'h341: mepc_r   <= csr_new[31:1];
                 12'h342: mcause_r <= csr_new;
                 12'h343: mtval_r  <= csr_new;
                 default: ;
@@ -788,6 +791,7 @@ module rv32im_pipeline #(
             exmem_fence     <= idex_fence_r & idex_valid & ~ex_stall & ~trap_ex;
             exmem_pc        <= idex_pc;
             exmem_instr     <= idex_instr;
+            exmem_tirq      <= irq_take;                    // chi de testbench: lenh bi ngat chan lai (chay lai sau mret)
             exmem_rd        <= idex_rd;
             exmem_funct3    <= idex_funct3;
             exmem_result    <= ex_result;
@@ -871,6 +875,7 @@ module rv32im_pipeline #(
     reg  [63:0] memwb_tdata;                       // store vat qua tu: 64 bit va wstrb 8 bit (xem phan MEM)
     reg  [7:0]  memwb_tstrb;
     reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
+    reg         memwb_tirq;                        // lenh bi ngat chan lai o EX: khong thuc thi, se chay lai sau mret
     wire        wb_commit = memwb_valid & memwb_new;   // moi lenh hoan tat dung 1 chu ky (testbench in vet theo day)
 
     always @(posedge clk or negedge rst_n) begin
@@ -889,6 +894,7 @@ module rv32im_pipeline #(
             memwb_val   <= mem_val;
             memwb_pc    <= exmem_pc;
             memwb_instr <= exmem_instr;
+            memwb_tirq  <= exmem_tirq;
             memwb_tst   <= dmem_we;
             memwb_taddr <= dmem_we ? exmem_result : 32'd0;
             memwb_tdata <= dmem_we ? st_wide : 64'd0;      // st_wide chi co cac byte duoc ghi (con lai la 0)

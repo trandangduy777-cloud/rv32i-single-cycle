@@ -8,6 +8,11 @@
 // ngau nhien 1..(+lat) chu ky moi tu (+seed). Vung cacheable 0x8000_0000-0x8003_FFFF; TOHOST di thang qua bus.
 // Kich thuoc cache: -DICL/-DICW/-DDCL/-DDCW (so dong / so tu moi dong), mac dinh 16 x 4; bo dem ghi: -DDWB (mac dinh 4 muc);
 // so duong cua ca 2 cache: -DCWY (mac dinh 1, anh xa truc tiep; tong so dong giu nguyen).
+// Them -DIRQ (chi voi PIPE_FULL): rv32_mtimer o 0x0200_0000 (mtime, mtimecmp, msip) va nguon ngat ngoai o 0x0300_0000
+// (ghi 0x0300_0000: xoa irq_ext, ghi 0x0300_0004: bat irq_ext; +irqext=<N>: tu bat ngau nhien trung binh moi N chu ky,
+// +irqseed=<so>, +irqdly=<chu ky them vao khoang cach ngat timer, chuong trinh doc o 0x0300_0008>). Dong vet co them mip=<mip luc lenh hoan tat>, va dong "irq cause=.. epc=.. mip=.." dat ngay truoc lenh
+// dau tien cua trap handler (sau moi lenh cu hon con dang hoan tat). Vet nay do cosim/irq/spike_irq.cc so voi Spike.
+// Ghi vao ngoai vi co tac dung sau 1 chu ky (thanh ghi tam), doc lay gia tri hien tai.
 // Tham so: +prog=<file hex> [+lat=<do tre toi da>] [+seed=<so>]
 module tb_cosim;
     reg clk = 0;
@@ -60,13 +65,69 @@ module tb_cosim;
         .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
         .dmem_rdata(dmem_rdata)
 `ifdef PIPE_FULL
+`ifdef IRQ
+        , .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
+`else
         , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)
+`endif
         , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re)
         , .icache_flush(icache_flush), .dmem_fence(dmem_fence)
 `endif
     );
 
     reg [31:0] mem [0:65535];
+
+`ifdef IRQ
+    // ---- ngoai vi ngat: rv32_mtimer (0x0200_0000) va nguon ngat ngoai (0x0300_0000) ----
+    wire        irq_timer, irq_soft;
+    reg         irq_ext = 1'b0;
+    reg         dw_v = 1'b0;               // ghi ngoai vi dang cho (tac dung o chu ky sau)
+    reg  [31:0] dw_a, dw_d;
+    reg  [3:0]  dw_s;
+    wire [31:0] tmr_unused;
+    rv32_mtimer #(.PRESCALE(1)) u_tmr (
+        .clk(clk), .rst_n(rst_n), .sel(dw_v && dw_a[31:24] == 8'h02), .addr(dw_a[4:2]), .we(dw_v), .wstrb(dw_s),
+        .wdata(dw_d), .rdata(tmr_unused), .irq(irq_timer), .msip(irq_soft));
+    function [31:0] dev_rd(input [31:0] a);
+        begin
+            case ({a[31:24] == 8'h02, a[4:2]})
+                4'b1000: dev_rd = u_tmr.mtime[31:0];
+                4'b1001: dev_rd = u_tmr.mtime[63:32];
+                4'b1010: dev_rd = u_tmr.mtimecmp[31:0];
+                4'b1011: dev_rd = u_tmr.mtimecmp[63:32];
+                4'b1100: dev_rd = {31'd0, u_tmr.msip_r};
+                default: dev_rd = (a[31:24] == 8'h03) ? (a[3] ? irq_dly : {31'd0, irq_ext}) : 32'd0;
+            endcase
+        end
+    endfunction
+    function is_dev(input [31:0] a);
+        is_dev = (a[31:24] == 8'h02) || (a[31:24] == 8'h03);
+    endfunction
+    task dev_wr(input [31:0] a, input [31:0] d, input [3:0] st);
+        begin dw_v <= 1'b1; dw_a <= a; dw_d <= d; dw_s <= st; end
+    endtask
+    // Nguon ngat ngoai ngau nhien: sau moi lan chuong trinh ha irq_ext, cho it nhat 30-89 lenh hoan tat roi moi bat lai
+    // (xac suat 1/irq_p moi chu ky), de chuong trinh chinh luon tien len du he thong bo nho cham (khong livelock).
+    // Doc 0x0300_0008: irq_dly (+irqdly), chuong trinh cong vao khoang cach ngat timer cho cau hinh bo nho cham.
+    integer irq_p = 0, irq_seed = 1, n_ext_raise = 0, ext_hold = 0;
+    reg [31:0] irq_dly = 32'd0;
+    always @(posedge clk) begin
+        if (dw_v) begin
+            dw_v <= 1'b0;
+            if (dw_a == 32'h0300_0000) begin irq_ext <= 1'b0; ext_hold = 30 + $urandom(irq_seed) % 60; end
+            if (dw_a == 32'h0300_0004) irq_ext <= 1'b1;
+        end
+        if (rst_n && irq_p > 0 && !irq_ext && ext_hold <= 0 && ($urandom(irq_seed) % irq_p) == 0) begin
+            irq_ext <= 1'b1; n_ext_raise = n_ext_raise + 1;
+        end
+        if (rst_n && dut.wb_commit && ext_hold > 0) ext_hold = ext_hold - 1;
+        irq_seed = irq_seed + 1;
+    end
+`else
+    function is_dev(input [31:0] a);
+        is_dev = 1'b0;
+    endfunction
+`endif
 
 `ifdef CACHE
 `ifndef ICL
@@ -116,7 +177,13 @@ module tb_cosim;
             if (wait_cnt <= 0) begin
                 m_ack   <= 1'b1;
                 n_bus    = n_bus + 1;
+`ifdef IRQ
+                m_rdata <= is_dev(m_addr) ? dev_rd(m_addr) : mem[m_addr[17:2]];
+                if (m_we && is_dev(m_addr)) dev_wr(m_addr, m_wdata, m_wstrb);
+                else
+`else
                 m_rdata <= mem[m_addr[17:2]];
+`endif
                 if (m_we && m_addr != TOHOST) begin
                     if (m_addr[31:18] != BASE[31:18]) begin
                         $display("ERROR: ghi ngoai vung nho: addr=%08x", m_addr); $finish;
@@ -136,11 +203,19 @@ module tb_cosim;
     // bo nho to hop: doc lenh tai dia chi chia het cho 2 (lenh 32 bit co the vat qua ranh gioi tu, mo rong C)
     wire [15:0] iw = imem_addr[17:2];
     assign imem_data  = imem_addr[1] ? {mem[iw + 16'd1][15:0], mem[iw][31:16]} : mem[iw];
+`ifdef IRQ
+    assign dmem_rdata = is_dev(dmem_addr) ? dev_rd(dmem_addr) : mem[dmem_addr[17:2]];
+`else
     assign dmem_rdata = mem[dmem_addr[17:2]];
+`endif
     assign imem_ready = 1'b1;
     assign dmem_ready = 1'b1;
 
     always @(posedge clk) begin
+`ifdef IRQ
+        if (dmem_we && is_dev(dmem_addr)) dev_wr(dmem_addr, dmem_wdata, dmem_wstrb);
+        else
+`endif
         if (dmem_we && dmem_addr != TOHOST) begin
             if (dmem_addr[31:18] != BASE[31:18]) begin
                 $display("ERROR: ghi ngoai vung nho: addr=%08x", dmem_addr); $finish;
@@ -271,11 +346,52 @@ module tb_cosim;
     end
 `endif
 
+`ifdef IRQ
+    // ngat RTL nhan o EX (dut.irq_take): ghi lai, in dong "irq" ngay truoc lenh dau tien cua handler (pc = mtvec), sau
+    // khi cac lenh cu hon (o MEM / WB luc nhan ngat) da hoan tat
+    reg        irq_pend = 1'b0;
+    reg [31:0] irq_cause, irq_epc, irq_tgt;
+    reg [11:0] irq_mip;
+    integer    n_irq = 0;
+    wire [11:0] mip_now = {dut.mip_meip, 3'b0, dut.mip_mtip, 3'b0, dut.mip_msip, 3'b0};
+    always @(posedge clk) begin
+        if (rst_n && dut.irq_take && !irq_pend) begin
+            irq_pend  <= 1'b1;
+            irq_cause <= dut.trap_cause;
+            irq_epc   <= dut.idex_pc;
+            irq_tgt   <= {dut.mtvec_r, 2'b00};
+            irq_mip   <= mip_now;
+            n_irq      = n_irq + 1;
+        end
+    end
+`endif
     always @(posedge clk) begin
         if (rst_n && commit) begin
             rd_w = dut.memwb_rd_we && (dut.memwb_rd != 5'd0);
             t_d = dut.memwb_tdata; t_s = dut.memwb_tstrb;   // store vat qua tu (MISALIGNED = 1): 64 bit, wstrb 8 bit
             if (dut.memwb_tst) tb_store(dut.memwb_taddr, t_s, t_d);
+`ifdef IRQ
+            if (dut.memwb_tirq) begin           // lenh bi ngat chan lai: khong thuc thi, khong in; khong duoc ghi gi
+                if (dut.memwb_tst || rd_w)
+                    $display("ERROR lenh bi ngat o pc=%08x van ghi: store=%0d rd=%0d", dut.memwb_pc, dut.memwb_tst,
+                             rd_w ? dut.memwb_rd : 5'd0);
+            end
+            else begin
+            if (irq_pend && dut.memwb_pc == irq_tgt) begin
+                if (!quiet) $display("irq cause=%08x epc=%08x mip=%03x", irq_cause, irq_epc, irq_mip);
+                irq_pend <= 1'b0;
+            end
+            if (quiet) ;
+            else if (t_s[7:4] != 4'b0000)
+                $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x mip=%03x",
+                         dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
+                         dut.memwb_tst, dut.memwb_taddr, t_d, t_s, mip_now);
+            else
+                $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x mip=%03x",
+                         dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
+                         dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0], mip_now);
+            end
+`else
             if (quiet) ;
             else if (t_s[7:4] != 4'b0000)
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x",
@@ -285,6 +401,7 @@ module tb_cosim;
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
                          dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0]);
+`endif
             n = n + 1;
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
                 tb_finish_report;
@@ -297,6 +414,9 @@ module tb_cosim;
                          cyc, n, ic_miss, dc_miss, n_bus, n_bus_cyc, u_dc.n_wbfull, u_dc.n_fwd);
 `else
                 $display("DONE cycles=%0d instr=%0d", cyc, n);
+`endif
+`ifdef IRQ
+                $display("IRQRTL taken=%0d ext_raised=%0d", n_irq, n_ext_raise);
 `endif
                 $finish;
             end
@@ -314,6 +434,11 @@ module tb_cosim;
         for (i = 1; i < 32; i = i + 1) dut.regs[i] = 32'd0;
         if (!$value$plusargs("prog=%s", progfile)) begin $display("ERROR: thieu +prog="); $finish; end
         if ($test$plusargs("quiet")) quiet = 1;
+`ifdef IRQ
+        if (!$value$plusargs("irqext=%d", irq_p)) irq_p = 0;
+        if (!$value$plusargs("irqseed=%d", irq_seed)) irq_seed = 1;
+        if (!$value$plusargs("irqdly=%d", irq_dly)) irq_dly = 0;
+`endif
 `ifdef CACHE
         if (!$value$plusargs("lat=%d", lat)) lat = 4;
         if (!$value$plusargs("seed=%d", seed)) seed = 1;

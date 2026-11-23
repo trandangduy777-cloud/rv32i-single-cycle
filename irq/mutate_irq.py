@@ -9,7 +9,7 @@ ROOT = os.path.join(HERE, "..")
 # (ten, chuoi goc trong RTL, chuoi thay the)
 MUTATIONS = [
     ("mepc tro lenh ke tiep (bo qua lenh bi ngat)",
-     "tepc_q       <= idex_pc[31:2];", "tepc_q       <= idex_pc[31:2] + 30'd1;"),
+     "tepc_q       <= idex_pc[31:1];", "tepc_q       <= idex_pc[31:1] + 31'd2;"),
     ("lenh bi ngat van ghi thanh ghi",
      "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;",
      "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~(trap_ex & ~irq_take);"),
