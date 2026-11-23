@@ -22,7 +22,8 @@ module tb_cosim;
     wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready, icache_flush;
 
 `ifdef PIPE_FULL
-    // bo du doan nhanh: -DBTBN=<muc> -DRASN=<muc> -DGHRB=<bit> (mac dinh theo rv32im_pipeline.v; 0 0 0 = ban cu)
+    // bo du doan nhanh: -DBTBN=<muc> -DRASN=<muc> -DGHRB=<bit> (mac dinh theo rv32im_pipeline.v; 0 0 0 = ban cu);
+    // bo nhan: -DMULLAT=<0 lap | 1 song song 1 chu ky | 2 song song 2 tang>
 `ifndef BTBN
 `define BTBN 16
 `endif
@@ -35,15 +36,18 @@ module tb_cosim;
 `ifndef BTAG
 `define BTAG 10
 `endif
+`ifndef MULLAT
+`define MULLAT 2
+`endif
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
     localparam MA_HW = 0;
 `endif
 `ifdef RVC
-    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG)) dut (
+    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG), .MUL_LAT(`MULLAT)) dut (
 `else
-    rv32im_pipeline #(.RESET_PC(BASE), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG)) dut (
+    rv32im_pipeline #(.RESET_PC(BASE), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG), .MUL_LAT(`MULLAT)) dut (
 `endif
 `elsif PIPE
     rv32i_pipeline #(.RESET_PC(BASE)) dut (

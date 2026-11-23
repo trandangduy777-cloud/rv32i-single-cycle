@@ -14,18 +14,21 @@ module tb_trace_pipe;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready;
 
+`ifndef MULLAT
+`define MULLAT 2   // bo nhan: 0 lap, 1 song song 1 chu ky, 2 song song 2 tang (--mul-lat)
+`endif
 `ifdef PIPE_FULL
 `ifdef BPSTRESS   // bo du doan nho, tag 1 bit: BTB trung nham lien tuc, RAS tran, gshare 2 bit (kiem cac duong sua o ID/EX)
 `ifdef MA
-    rv32im_pipeline #(.MISALIGNED(1), .BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2)) dut (
+    rv32im_pipeline #(.MISALIGNED(1), .BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2), .MUL_LAT(`MULLAT)) dut (
 `else
-    rv32im_pipeline #(.BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2)) dut (
+    rv32im_pipeline #(.BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2), .MUL_LAT(`MULLAT)) dut (
 `endif
 `else
 `ifdef MA
-    rv32im_pipeline #(.MISALIGNED(1)) dut (    // -DMA: load/store lech dia chi bang phan cung
+    rv32im_pipeline #(.MISALIGNED(1), .MUL_LAT(`MULLAT)) dut (    // -DMA: load/store lech dia chi bang phan cung
 `else
-    rv32im_pipeline dut (            // RV32IM + CSR + trap
+    rv32im_pipeline #(.MUL_LAT(`MULLAT)) dut (     // RV32IM + CSR + trap
 `endif
 `endif
 `else

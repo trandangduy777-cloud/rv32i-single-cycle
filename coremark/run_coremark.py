@@ -30,15 +30,19 @@ CACHE_FILES = PIPE_FILES + ["rv32_icache.v", "rv32_dcache.v", "rv32_bus_arbiter.
 CORES = [
     ("single-cycle RV32IM", "rv32im", ["-DSC"], ["rv32i_core.v"], []),
     ("pipeline RV32I (nhan/chia bang libgcc)", "rv32i", ["-DPIPE"], ["rv32i_pipeline.v"], []),
-    ("pipeline RV32IM, du doan cu (BTB/RAS tat)", "rv32im", ["-DPIPE_FULL", "-DBTBN=0", "-DRASN=0"], PIPE_FILES, []),
+    ("pipeline RV32IM, du doan cu (BTB/RAS tat), nhan lap", "rv32im", ["-DPIPE_FULL", "-DBTBN=0", "-DRASN=0", "-DMULLAT=0"],
+     PIPE_FILES, []),
+    ("pipeline RV32IM, BTB 16 + RAS 4, nhan lap", "rv32im", ["-DPIPE_FULL", "-DMULLAT=0"], PIPE_FILES, []),
     ("pipeline RV32IM, BTB 16 + RAS 4", "rv32im", ["-DPIPE_FULL"], PIPE_FILES, []),
+    ("pipeline RV32IMC, BTB 16 + RAS 4, nhan lap", "rv32imc", ["-DPIPE_FULL", "-DRVC", "-DMULLAT=0"], PIPE_FILES, []),
+    ("pipeline RV32IMC, BTB 16 + RAS 4, nhan 1 chu ky", "rv32imc", ["-DPIPE_FULL", "-DRVC", "-DMULLAT=1"], PIPE_FILES, []),
     ("pipeline RV32IMC, BTB 16 + RAS 4", "rv32imc", ["-DPIPE_FULL", "-DRVC"], PIPE_FILES, []),
     ("RV32IMC + cache 2 x 256 B, bo nho tre 1-4", "rv32imc", ["-DPIPE_FULL", "-DRVC", "-DCACHE"], CACHE_FILES,
      ["+lat=4", "+seed=1"]),
     ("RV32IMC + cache 2 x 4 KB (256 dong x 4 tu), bo nho tre 1-4", "rv32imc",
      ["-DPIPE_FULL", "-DRVC", "-DCACHE", "-DICL=256", "-DDCL=256"], CACHE_FILES, ["+lat=4", "+seed=1"]),
 ]
-QUICK = [3, 4]
+QUICK = [4, 7]          # pipeline RV32IM va RV32IMC mac dinh
 
 
 def sh(cmd, **kw):

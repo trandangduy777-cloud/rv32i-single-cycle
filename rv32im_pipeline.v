@@ -37,7 +37,8 @@ module rv32im_pipeline #(
     parameter        BTB_N      = 16,            // so muc BTB (luy thua 2, 0 = khong co): du doan dich ngay o IF
     parameter        RAS_N      = 4,             // so muc ngan xep dia chi tra ve (0 = khong co)
     parameter        GHR_BITS   = 0,             // > 0: gshare (lich su toan cuc GHR_BITS bit XOR voi pc); 0: theo pc
-    parameter        BTB_TAG    = 10             // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
+    parameter        BTB_TAG    = 10,            // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
+    parameter        MUL_LAT    = 2              // nhan: 0 = lap (~18 chu ky), 1 = song song 1 chu ky, 2 = song song 2 tang
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -495,7 +496,7 @@ module rv32im_pipeline #(
     // nhan/chia
     wire        m_done;
     wire [31:0] m_result;
-    rv32m #(.PREP(1), .STEPS(2)) u_m (
+    rv32m #(.PREP(1), .STEPS(2), .MUL_LAT(MUL_LAT)) u_m (
         .clk(clk), .rst_n(rst_n),
         .req(idex_mext), .funct3(idex_funct3),
         .a(op_a), .b(op_b),
