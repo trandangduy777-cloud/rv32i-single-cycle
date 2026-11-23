@@ -9,9 +9,11 @@ ROOT = os.path.dirname(HERE)
 CORE = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_mtimer.v"]
 UNITS = [("bus", ["soc_bus.v", "soc_rom.v", "soc_ram.v", "soc_syscon.v"]),
          ("gpio", ["soc_gpio.v"]),
-         ("uart", ["soc_uart.v"])]
+         ("uart", ["soc_uart.v"]),
+         ("uart_fifo", ["soc_uart.v"]),
+         ("mtimer", ["../rv32_mtimer.v"])]
 # (ten chuong trinh, kich ban kich thich cua tb_soc, so chu ky toi da)
-PROGS = [("hello", 0), ("t_mem", 0), ("t_mepc", 0), ("t_timer", 0), ("t_gpio", 2), ("t_uart", 1), ("t_irq_uart", 3)]
+PROGS = [("hello", 0), ("t_mem", 0), ("t_mepc", 0), ("t_timer", 0), ("t_gpio", 2), ("t_uart", 1), ("t_irq_uart", 3), ("t_ramexec", 0)]
 
 
 def sh(cmd, cwd, timeout=600):

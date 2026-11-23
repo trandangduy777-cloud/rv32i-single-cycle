@@ -24,15 +24,17 @@ int main(void) {
     UART_STATUS = ST_TXDROP;
     puts_(" cleared="); put_dec((UART_STATUS >> 4) & 1); putc_('\n');
 
-    /* pha 1: overrun, 3 byte lien tiep, khong doc */
+    /* pha 1: 10 byte lien tiep khong doc: FIFO 8 muc giu 8 byte dau (a..h), 2 byte sau bi bo + RXOVR */
     puts_("R1\n");
     wait_mtime(3000);
     u32 st = UART_STATUS;
-    puts_("st="); put_hex(st & 0x1F);
+    puts_("st="); put_hex(st & 0x1F); puts_(" cnt="); put_dec((st >> 8) & 15);
     UART_RXDATA = 0x7F;                                                /* ghi RXDATA bi bo qua: khong pop */
     puts_(" keep="); put_dec((UART_STATUS >> 1) & 1);
     u32 first = UART_RXDATA;
-    puts_(" got="); putc_(first); putc_('\n');
+    puts_(" got="); putc_(first); puts_(" rest=");
+    for (int i = 0; i < 7; i++) putc_(UART_RXDATA);                   /* b..h theo thu tu */
+    putc_('\n');
     UART_STATUS = ST_RXOVR;
     puts_("ovr_clr="); put_dec((UART_STATUS >> 2) & 1);
     puts_(" valid="); put_dec((UART_STATUS >> 1) & 1); putc_('\n');

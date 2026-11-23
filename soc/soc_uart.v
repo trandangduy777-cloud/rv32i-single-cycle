@@ -1,14 +1,16 @@
 // UART 8N1 cho SoC (bus don gian 32 bit giong rv32_mtimer: doc to hop, ghi dong bo). Thanh ghi (addr = offset[4:2]):
 //   0x00 TXDATA  W: byte[7:0] -> bat dau gui (bo qua va dat TXDROP neu dang ban). R: 0
-//   0x04 RXDATA  R: byte nhan duoc (doc xong thi RXVALID xoa). W: bo qua
-//   0x08 STATUS  R: [0] TXREADY (khong ban) [1] RXVALID [2] RXOVR (nhan byte moi khi RXVALID con 1, byte moi bi bo)
+//   0x04 RXDATA  R: byte dau FIFO nhan (doc xong thi lay ra khoi FIFO; FIFO rong thi doc ra byte cu). W: bo qua
+//   0x08 STATUS  R: [0] TXREADY (khong ban) [1] RXVALID (FIFO khong rong) [2] RXOVR (nhan byte moi khi FIFO day, byte moi bi bo)
 //                   [3] RXFERR (bit stop = 0) [4] TXDROP. Bit 2-4 la sticky, ghi 1 vao bit do de xoa (W1C)
+//                   [11:8] so byte dang nam trong FIFO nhan (0..RX_DEPTH, RX_DEPTH <= 15)
 //   0x0C DIV     R/W: so chu ky clock moi bit, 16 bit, nho nhat 4 (ghi gia tri nho hon thi lay 4); reset = DEFAULT_DIV
 //   0x10 IE      R/W: [0] ngat khi RXVALID [1] ngat khi TXREADY. irq la muc cao
 // Dang khung: bit start 0, 8 bit du lieu LSB truoc, bit stop 1. TX chot DIV luc bat dau khung. RX dong bo 2 flip-flop,
 // bat canh xuong, lay mau giua bit start (loai nhieu < nua bit), roi giua moi bit; byte nhan duoc ke ca khi bit stop = 0 (kem co RXFERR).
 module soc_uart #(
-    parameter [15:0] DEFAULT_DIV = 16'd16
+    parameter [15:0] DEFAULT_DIV = 16'd16,
+    parameter        RX_DEPTH    = 1            // so byte FIFO nhan (1 = chi mot byte dem, 2..15 = FIFO)
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -40,8 +42,15 @@ module soc_uart #(
     reg [2:0]  rst_;                 // trang thai: 0 ranh, 1 kiem tra start, 2 du lieu, 3 stop, 4 cho duong len cao
     reg [15:0] rc;
     reg [2:0]  rn;
-    reg [7:0]  rbuf, rx_data;
-    reg        rx_valid, rx_ovr, rx_ferr;
+    reg [7:0]  rbuf;
+    reg [7:0]  fifo [0:RX_DEPTH-1];
+    reg [3:0]  rp, wp, cnt;          // con tro doc, con tro ghi, so byte trong FIFO
+    reg        rx_ovr, rx_ferr;
+    wire       rx_valid = (cnt != 4'd0);
+    wire [7:0] rx_data  = fifo[rp];
+    wire [3:0] rp_n = (rp == RX_DEPTH - 1) ? 4'd0 : rp + 4'd1;
+    wire [3:0] wp_n = (wp == RX_DEPTH - 1) ? 4'd0 : wp + 4'd1;
+    integer    fi;
     wire       pop = sel & re & (addr == 3'd1);
     wire       w_status = sel & we & (addr == 3'd2) & wstrb[0];
     wire [15:0] wmask16 = {{8{wstrb[1]}}, {8{wstrb[0]}}};
@@ -51,8 +60,9 @@ module soc_uart #(
         if (!rst_n) begin
             div <= DEFAULT_DIV; ie <= 2'b00;
             busy <= 1'b0; tx_drop <= 1'b0; txs <= 10'h3FF; txn <= 4'd0; txc <= 16'd0; txd <= DEFAULT_DIV;
-            rx_s1 <= 1'b1; rx_s2 <= 1'b1; rst_ <= 3'd0; rc <= 16'd0; rn <= 3'd0; rbuf <= 8'd0; rx_data <= 8'd0;
-            rx_valid <= 1'b0; rx_ovr <= 1'b0; rx_ferr <= 1'b0;
+            rx_s1 <= 1'b1; rx_s2 <= 1'b1; rst_ <= 3'd0; rc <= 16'd0; rn <= 3'd0; rbuf <= 8'd0; rp <= 4'd0; wp <= 4'd0; cnt <= 4'd0;
+            for (fi = 0; fi < RX_DEPTH; fi = fi + 1) fifo[fi] <= 8'd0;
+            rx_ovr <= 1'b0; rx_ferr <= 1'b0;
         end else begin
             // ---- thanh ghi cau hinh ----
             if (sel & we & (addr == 3'd3) & (wstrb[1] | wstrb[0])) div <= (div_new < 16'd4) ? 16'd4 : div_new;
@@ -70,7 +80,7 @@ module soc_uart #(
 
             // ---- RX ----
             rx_s1 <= rx; rx_s2 <= rx_s1;
-            if (pop) rx_valid <= 1'b0;
+            if (pop & rx_valid) begin rp <= rp_n; cnt <= cnt - 4'd1; end
             if (w_status) begin
                 if (wdata[2]) rx_ovr  <= 1'b0;
                 if (wdata[3]) rx_ferr <= 1'b0;
@@ -87,8 +97,11 @@ module soc_uart #(
                           if (rn == 3'd7) rst_ <= 3'd3;
                       end else rc <= rc - 16'd1;
                 3'd3: if (rc == 16'd0) begin
-                          if (rx_valid & ~pop) rx_ovr <= 1'b1;
-                          else begin rx_data <= rbuf; rx_valid <= 1'b1; end
+                          if ((cnt == RX_DEPTH) & ~pop) rx_ovr <= 1'b1;
+                          else begin
+                              fifo[wp] <= rbuf; wp <= wp_n;
+                              cnt <= (pop & rx_valid) ? cnt : cnt + 4'd1;       // pop cung chu ky: so luong khong doi
+                          end
                           if (!rx_s2) rx_ferr <= 1'b1;
                           rst_ <= rx_s2 ? 3'd0 : 3'd4;
                       end else rc <= rc - 16'd1;
@@ -103,7 +116,7 @@ module soc_uart #(
     always @* begin
         case (addr)
             3'd1:    rdata = {24'd0, rx_data};
-            3'd2:    rdata = {27'd0, tx_drop, rx_ferr, rx_ovr, rx_valid, tx_ready};
+            3'd2:    rdata = {20'd0, cnt, 3'd0, tx_drop, rx_ferr, rx_ovr, rx_valid, tx_ready};
             3'd3:    rdata = {16'd0, div};
             3'd4:    rdata = {30'd0, ie};
             default: rdata = 32'd0;

@@ -709,16 +709,16 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 |---|---|---|
 | ROM | `0x0000_0000`, 16 KB | lấy lệnh + đọc dữ liệu; ghi bị bỏ và đếm |
 | CLINT | `0x0200_0000` | `rv32_mtimer`: `mtime` +0/+4, `mtimecmp` +8/+C, `msip` +0x10 |
-| RAM | `0x1000_0000`, 16 KB | không lấy lệnh từ RAM (lấy lệnh ngoài ROM gây trap, có test) |
+| RAM | `0x1000_0000`, 16 KB | dữ liệu và lệnh (chạy mã nạp lúc chạy, cần `fence.i` sau khi ghi mã); lấy lệnh ngoài ROM và RAM gây trap lệnh không hợp lệ, có test |
 | UART | `0x2000_0000` | `TXDATA` 0x00, `RXDATA` 0x04 (đọc là lấy ra), `STATUS` 0x08, `DIV` 0x0C, `IE` 0x10 |
 | GPIO | `0x2000_1000` | 16 chân: `OUT` 0x00, `IN` 0x04, `DIR` 0x08, `IE` 0x0C, `PEND` 0x10 (ghi 1 để xoá), `EDGE` 0x14, `SET`/`CLR`/`TGL` 0x18/0x1C/0x20 |
 | SYSCON | `0x2000_2000` | `ID` 0x5256_3C01, `SCRATCH`, `EXIT` (kết thúc mô phỏng kèm mã), `BUSERR` |
 
-- UART 8N1, tốc độ chia bằng `DIV` (nhỏ nhất 4; mặc định 434, tức 50 MHz / 115200); `STATUS` có TXREADY, RXVALID và ba cờ dính RXOVR, RXFERR, TXDROP (ghi 1 để xoá); RX đồng bộ 2 flip-flop, kiểm điểm giữa bit start, lỗi khung vẫn giao byte rồi đợi đường lên cao. Có ngắt RX và ngắt TX sẵn sàng.
+- UART 8N1, tốc độ chia bằng `DIV` (nhỏ nhất 4; mặc định 434, tức 50 MHz / 115200); `STATUS` có TXREADY, RXVALID (FIFO không rỗng), ba cờ dính RXOVR, RXFERR, TXDROP (ghi 1 để xoá) và số byte đang nằm trong FIFO ở bit 11:8; FIFO nhận có độ sâu `RX_DEPTH` (SoC dùng 8; FIFO đầy thì byte mới bị bỏ và đặt RXOVR, đọc `RXDATA` lấy byte đầu ra); RX đồng bộ 2 flip-flop, kiểm điểm giữa bit start, lỗi khung vẫn giao byte rồi đợi đường lên cao. Có ngắt RX và ngắt TX sẵn sàng.
 - GPIO: đầu vào đồng bộ 2 flip-flop, ngắt theo cạnh lên hoặc xuống từng chân; sự kiện mới thắng thao tác xoá `PEND` cùng chu kỳ (có test trực tiếp).
 - Ngắt ngoài của lõi là OR của ngắt UART và GPIO; ngắt timer và phần mềm lấy từ `rv32_mtimer`.
 
-**Chạy:** `sh soc/sw/build.sh` (cần `riscv64-unknown-elf-gcc`, ra `soc/sw/build/*.hex`) rồi `python3 soc/run_soc.py` (10 bước: 3 testbench khối + 7 chương trình C). Mutation: `python3 soc/mutate_soc.py --jobs 4`. Đã vào `tools/regress.sh` (bước 17 và 18) và CI.
+**Chạy:** `sh soc/sw/build.sh` (cần `riscv64-unknown-elf-gcc`, ra `soc/sw/build/*.hex`) rồi `python3 soc/run_soc.py` (13 bước: 5 testbench khối + 8 chương trình C). Mutation: `python3 soc/mutate_soc.py --jobs 4`. Đã vào `tools/regress.sh` (bước 17 và 18) và CI.
 
 **Kết quả thật (iverilog):**
 
@@ -729,34 +729,38 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 | `t_mepc` | trap/ngắt tại PC lệch 2 (xem lỗi lõi bên dưới) | 6.000 |
 | `t_timer` | `mtime`, `mtimecmp`, ngắt timer, `msip` | 16.268 |
 | `t_gpio` | out/in/dir, set/clr/tgl, ngắt cạnh (có kịch bản kéo chân từ testbench) | 25.471 |
-| `t_uart` | TX, RX (nhận byte do testbench gửi), tràn, lỗi khung, `DIV` | 28.424 |
-| `t_irq_uart` | ngắt UART qua WFI | 7.117 |
+| `t_uart` | TX, RX (testbench gửi 10 byte, FIFO 8 mục giữ 8 byte đầu theo thứ tự và báo tràn), lỗi khung, `DIV` | 31.662 |
+| `t_irq_uart` | ngắt UART qua WFI | 7.127 |
+| `t_ramexec` | chạy mã nạp vào RAM (lệnh nén, lệnh 32 bit vắt qua ranh giới từ, tự sửa mã + `fence.i`), 8 ngắt timer rơi vào vòng lặp 8192 vòng trong RAM, kết quả vẫn đúng 8192 | 209.690 |
 
-Mutation test (`mutate_soc.py`): 99 mutant, trong đó 98 mutant thật đều bị bắt (testbench UART 35, bus 32, GPIO 16, các chương trình C còn lại 15) và 1 mutant vô hại cố ý (T12) đúng là sống sót. Bốn mutant (C1-C4) nằm trong `rv32im_pipeline.v` (đường `mepc`). Trong lúc làm, 6 mutant ban đầu sống sót (U23, U24, U30, T5, T6, T7), mỗi cái dẫn tới thêm một test hoặc thêm một mutant; số 98/98 là sau khi bổ sung.
+Ngoài ra có testbench riêng `tb_uart_fifo` (FIFO 4 mục: thứ tự, đếm, tràn, quay vòng con trỏ, pop cùng chu kỳ nhận byte khi đầy, lỗi khung) và `tb_mtimer` (`rv32_mtimer` với `PRESCALE` = 3 và 8: mtime tăng đúng chu kỳ, không lệch pha khi ghi, carry lên 32 bit cao, `irq`). Testbench FIFO bắt được ngay một lỗi thật khi viết: pop và push cùng chu kỳ làm bộ đếm tụt một.
+
+Mutation test (`mutate_soc.py`): 117 mutant, trong đó 116 mutant thật đều bị bắt (testbench UART 39, bus 37, GPIO 16, FIFO 4, mtimer 4, các chương trình C còn lại 16) và 1 mutant vô hại cố ý (T12) đúng là sống sót. Bốn mutant (C1-C4) nằm trong `rv32im_pipeline.v` (đường `mepc`). Lần đầu 6 mutant sống sót (U23, U24, U30, T5, T6, T7), mỗi cái dẫn tới thêm một test hoặc thêm một mutant; 18 mutant mới thêm cho lấy lệnh từ RAM, FIFO UART và `PRESCALE`.
 
 **Lỗi lõi mà SoC cũng tự phát hiện:** `mepc` mất bit 1 khi có lệnh nén: ngắt hoặc trap tại PC có dạng 2 mod 4 làm `mret` trả về sai địa chỉ. `t_timer` bắt được lỗi này trong lúc làm SoC; cùng lúc, chat so vết ngắt với Spike cũng tìm ra và đã sửa trên main (commit `a1c8a5f`), nên `rv32im_pipeline.v` không bị sửa thêm ở đây. `soc/sw/t_mepc.c` là test riêng cho lỗi này (hỏng trên lõi cũ với mepc = 0x218, đạt trên lõi đã sửa), và mutant C1-C4 của `mutate_soc.py` chèn lại lỗi vào đường `mepc` để kiểm tra SoC vẫn bắt được.
 
-**Diện tích ước lượng (yosys + ABC, thư viện SG13G2 góc chậm, `soc/synth/run_soc_area.sh`):** chỉ là ước lượng trước P&R, chưa tính dây, buffer, CTS, và ROM/RAM là mảng flip-flop bị loại ra khỏi số này.
+**Diện tích ước lượng (yosys + ABC, thư viện SG13G2 góc chậm, `soc/synth/run_soc_area.sh`):** chỉ là ước lượng trước P&R, chưa tính dây, buffer, CTS, và ROM/RAM là mảng flip-flop bị loại ra khỏi số này. Bảng chia theo khối nên tổng hợp không flatten (không tối ưu xuyên ranh giới module); script chạy thêm một lần có `-flatten` để lấy tổng so được với các số khác trong repo.
 
 | Khối | Diện tích (µm²) | Tỉ lệ |
 |---|---|---|
-| `rv32im_pipeline` (gồm bộ nhân, giải nén C) | 399.331 | 88,9 % |
+| `rv32im_pipeline` (gồm bộ nhân, giải nén C) | 400.156 | 87,8 % |
 | `rv32_mtimer` | 18.032 | 4,0 % |
-| `soc_uart` | 11.040 | 2,5 % |
-| `soc_gpio` | 9.972 | 2,2 % |
-| `soc_syscon` | 8.580 | 1,9 % |
-| `soc_bus` | 1.836 | 0,4 % |
-| keo nối `soc_top` | 307 | 0,1 % |
-| **Tổng (không ROM/RAM)** | **449.097** | |
+| `soc_uart` (FIFO nhận 8 byte) | 16.395 | 3,6 % |
+| `soc_gpio` | 9.990 | 2,2 % |
+| `soc_syscon` | 8.493 | 1,9 % |
+| `soc_bus` | 1.849 | 0,4 % |
+| keo nối `soc_top` | 744 | 0,2 % |
+| **Tổng, không flatten (không ROM/RAM)** | **455.659** | |
+| **Tổng, có `-flatten` (không ROM/RAM)** | **434.337** | |
 
-Ngoại vi và bus cộng lại khoảng 49.800 µm², chiếm 11,1 % so với lõi.
+FIFO nhận làm `soc_uart` tăng từ khoảng 11.040 lên 16.395 µm² (8 byte lưu bằng flip-flop). Ngoại vi và bus cộng lại khoảng 55.500 µm², chiếm 13,9 % so với lõi.
 
 **Chỗ yếu, nói thẳng:**
-- Không có phân tích timing cho SoC (máy không có OpenSTA) và không chạy flow P&R; chưa có con số tần số cho SoC.
-- Con số lõi 399.331 µm² ở đây khác 377.265 µm² trong mục Flow ở trên: đây là yosys + ABC (`-D 15000`) chạy trên `soc_top` với cấu hình mặc định của `rv32im_pipeline`, còn số cũ ứng với `flow/rv32imc_top.v` (MUL_LAT = 2); tôi chưa đối chiếu được chênh lệch này, nên coi hai số là không so trực tiếp với nhau.
+- Không có phân tích timing cho SoC: máy chạy kiểm chứng không có OpenSTA và việc tự build OpenSTA từ mã nguồn bị chặn, nên chưa có con số tần số; `synth/run_synth_sta.sh` có sẵn nếu có `sta`.
+- Số diện tích lõi trong bảng (400.156) khác 377.265 µm² ở mục Flow chủ yếu vì cách tổng hợp: cùng script yosys + ABC chạy trên `flow/rv32imc_top.v` cho 378.069 µm² khi `-flatten` và 399.382 µm² khi không flatten (đo ở MUL_LAT = 2, trước các thay đổi mới nhất của lõi). Các số này không phải kết quả flow P&R.
 - ROM và RAM là mảng flip-flop mô phỏng, chưa có macro SRAM; 16 KB mỗi bên nếu đưa vào tổng hợp sẽ lớn hơn nhiều so với toàn bộ phần còn lại.
-- Chạy kiểm chứng chỉ ở mô phỏng RTL; chưa thử trên FPGA. UART RX chỉ có đệm một byte, không có FIFO; `PRESCALE` của `rv32_mtimer` chỉ thử với giá trị 1.
-- Không lấy lệnh từ RAM, nên chưa nạp chương trình lúc chạy (chỉ chạy từ ROM).
+- Kiểm chứng chỉ ở mô phỏng RTL; chưa thử trên FPGA. `PRESCALE` của `rv32_mtimer` chỉ được kiểm bằng testbench riêng (3 và 8), chưa chạy trong SoC đầy đủ.
+- Lấy lệnh từ RAM chạy được, nhưng chưa có bootloader nạp mã qua UART; mã vào RAM do chương trình tự chép. Ghi vào vùng mã mà không `fence.i` thì kết quả không xác định (đúng như đặc tả).
 
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chưa có `mtvec` chế độ vectored, chế độ User

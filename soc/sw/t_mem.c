@@ -62,9 +62,9 @@ int main(void) {
     chk("scr_h", SYS_SCRATCH, 0xBEEFAA44u);
     chk("id", SYS_ID, 0x52563C01u);
 
-    /* fetch ngoai ROM (RAM, vung trong): lenh doc ra 0 -> trap lenh khong hop le, mepc = dia chi nhay toi */
+    /* fetch ngoai ROM va RAM (cua so UART, vung trong): lenh doc ra 0 -> trap lenh khong hop le, mepc = dia chi nhay toi */
     for (u32 i = 0; i < 2; i++) {
-        u32 tgt = i ? 0x30000000u : 0x10000000u;
+        u32 tgt = i ? 0x30000000u : 0x20000000u;
         __asm__ volatile ("lla t0, 1f\n sw t0, 0(%0)\n jr %1\n 1:" :: "r"(&resume_pc), "r"(tgt) : "t0", "memory");
         chk("fetch_cause", trap_cause, 2);
         chk("fetch_pc", trap_pc, tgt);
