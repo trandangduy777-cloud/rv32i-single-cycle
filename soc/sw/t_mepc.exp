@@ -1,0 +1,4 @@
+irq ok
+ecall ok
+ebreak ok
+csr ok
