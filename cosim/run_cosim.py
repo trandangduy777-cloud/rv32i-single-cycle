@@ -144,6 +144,8 @@ def rtl_trace(lines):
         except ValueError:                     # gia tri X/Z trong RTL: chac chan lech
             out.append((-1, 0, 0, 0, l.strip()))
             break
+        if ins in TRAPPING:                     # ECALL/EBREAK/C.EBREAK vao trap, Spike khong ghi vao vet cam ket
+            continue
         s = None
         if st == "1":
             off = (strb & -strb).bit_length() - 1
@@ -154,6 +156,8 @@ def rtl_trace(lines):
             break
     return out
 
+
+TRAPPING = (0x00000073, 0x00100073, 0x9002)
 
 SP_RE = re.compile(r"core\s+\d+: 3 (0x[0-9a-f]+) \((0x[0-9a-f]+)\)(.*)")
 
@@ -258,6 +262,8 @@ def main():
     progs.append(build_asm(os.path.join(HERE, "tests", "conflict.S"), "rv32i", tmp) + ("rv32i",))
     # load/store lech dia chi moi do rong, moi vi tri byte, vat qua tu va dong cache (chi loi co lech bang phan cung)
     progs.append(build_asm(os.path.join(HERE, "tests", "misaligned.S"), "rv32i_zicclsm", tmp) + ("rv32i_zicclsm",))
+    # mepc bit 1 khi co C: trap tai pc = 2 mod 4, ghi/doc mepc (loi that do riscv-formal csrw_mepc tim ra)
+    progs.append(build_asm(os.path.join(HERE, "tests", "mepc_c.S"), "rv32ic_zicsr", tmp) + ("rv32ic",))
     progs.append(build_bench("bench", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_m", "rv32im", tmp) + ("rv32im",))
     progs.append(build_bench("bench", "rv32ic", tmp) + ("rv32ic",))

@@ -97,6 +97,34 @@ jobs:
       - name: Chung minh bo nhan (L1-L4, dai so, doi chung am)
         run: python3 mul/formal/run_formal.py
 
+  formal-rvfi:
+    # riscv-formal (RVFI) cho pipeline RV32IMC: moi check insn_*, reg, pc_fwd/pc_bwd, causal, unique, liveness, hang, CSR, cover
+    # bang SymbiYosys + Boolector (BMC), roi dot bien co y: moi dot bien PHAI lam check tuong ung FAIL. Xem formal/README.md muc riscv-formal.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Boolector, SymbiYosys
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: formal-tools-${{ hashFiles('formal/setup_ci.sh') }}
+      - name: Cai yosys (YoWASP), SymbiYosys, Boolector
+        run: |
+          sh formal/setup_ci.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Cac check riscv-formal (tat ca)
+        run: JOBS=$(nproc) bash formal/run.sh run '.'
+      - name: Dot bien co y (moi loi phai bi bat)
+        run: bash formal/mutate.sh
+      - name: Luu log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: riscv-formal-logs
+          path: /tmp/formal-work/results.txt
+
   cosim:
     # So tung lenh voi Spike. Spike duoc build tu ma nguon (ghim phien ban) va luu cache giua cac lan chay.
     runs-on: ubuntu-24.04
