@@ -1133,8 +1133,8 @@ module rv32im_pipeline #(
     wire rv_hit_mtvec = rv_csr_ret & (rv_csr_addr == 12'h305);
     assign rvfi_csr_mtvec_rmask = rv_hit_mtvec ? 32'hFFFF_FFFF : 32'h0;
     assign rvfi_csr_mtvec_rdata = rv_hit_mtvec ? memwb_rv_csr_rd : 32'h0;
-    assign rvfi_csr_mtvec_wmask = (rv_hit_mtvec & memwb_rv_csr_w) ? 32'hFFFF_FFFC : 32'h0;
-    assign rvfi_csr_mtvec_wdata = (rv_hit_mtvec & memwb_rv_csr_w) ? ({memwb_rv_csr_new[31:2], 2'b00} & 32'hFFFF_FFFC) : 32'h0;
+    assign rvfi_csr_mtvec_wmask = (rv_hit_mtvec & memwb_rv_csr_w) ? 32'hFFFF_FFFD : 32'h0;     // bit 1 (MODE >= 2) doc 0
+    assign rvfi_csr_mtvec_wdata = (rv_hit_mtvec & memwb_rv_csr_w) ? {memwb_rv_csr_new[31:2], 1'b0, memwb_rv_csr_new[0]} : 32'h0;
 `endif
 `ifdef RISCV_FORMAL_CSR_MSCRATCH
     wire rv_hit_mscratch = rv_csr_ret & (rv_csr_addr == 12'h340);

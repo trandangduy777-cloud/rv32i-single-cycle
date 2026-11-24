@@ -526,6 +526,73 @@ module rv32m #(parameter PREP = 0, parameter STEPS = 1, parameter MUL_LAT = 0) (
         end
     end
 
+`ifdef RISCV_FORMAL_DIV
+    // Chi khi chay chung minh hinh thuc bo chia (formal/div): bien "ma" g_* chi doc, khong tac dong vao RTL.
+    // g_p cong don tich thuong * so chia theo dung cac bit thuong thuc su duoc day vao p (chi dung bo cong va bo chon,
+    // khong co phep nhan): g_p <- 2 g_p + (q ? m : 0). Phep nhan thuong * so chia = g_p duoc chung minh o phan dai so
+    // (formal/div/div_algebra.py), con harness nay chung minh tren RTL: du + g_p = |a|, du < |b|, dau, va ket qua tra ve.
+    reg  [31:0] g_a, g_b;
+    reg  [2:0]  g_f;
+    reg  [63:0] g_p;
+    reg  [63:0] g_pn, g_pp;
+    integer     gk;
+    always @* begin
+        g_pn = g_p;
+        g_pp = p;
+        for (gk = 0; gk < STEPS; gk = gk + 1) begin
+            g_pp = div_step(g_pp, m);
+            g_pn = (g_pn << 1) + (g_pp[0] ? {32'd0, m} : 64'd0);
+        end
+    end
+    always @(posedge clk) begin
+        if (state == IDLE) begin
+            g_p <= 64'd0;
+            if (req & ~fast_mul) begin g_a <= a; g_b <= b; g_f <= funct3; end
+        end else if (state == RUN) g_p <= g_pn;
+    end
+    wire        g_sa = (g_f == 3'b100 | g_f == 3'b110) & g_a[31];
+    wire        g_sb = (g_f == 3'b100 | g_f == 3'b110) & g_b[31];
+    wire [31:0] g_ua = g_sa ? (~g_a + 32'd1) : g_a;
+    wire [31:0] g_ub = g_sb ? (~g_b + 32'd1) : g_b;
+    wire        g_neg_q = (g_sa ^ g_sb) & (g_b != 32'd0);
+    wire [31:0] g_q = p[31:0];
+    wire [31:0] g_r = p[63:32];
+    // Bat bien quy nap (k-induction): sau i bit da xu ly (i = cnt * STEPS, 32 o FIN) thi
+    //   du + g_p = i bit cao cua |a|;  du < |b| (hoac |b| = 0);  p[31:i] = cac bit |a| chua dung;  i bit thuong thap
+    //   la 1 het neu |b| = 0;  m = |b|, op = g_f, co dau khop voi toan hang goc.
+    wire [6:0]  g_i   = (state == FIN) ? 7'd32 : cnt * STEPS;
+    wire [63:0] g_ni  = {32'd0, g_ua} >> (7'd32 - g_i);
+    wire [63:0] g_lo  = (64'd1 << g_i) - 64'd1;                              // i bit thap
+    wire [63:0] g_rm  = {32'd0, p[31:0]} >> g_i;
+    wire [63:0] g_ra  = {32'd0, g_ua} & ((64'd1 << (7'd32 - g_i)) - 64'd1);   // 32 - i bit thap cua |a|
+    always @* if (rst_n && g_f[2] && (state == RUN || state == FIN || (PREP != 0 && state == PRE))) begin
+        assert (op == g_f);
+        assert (m == ((PREP != 0 && state == PRE) ? g_b : g_ub));
+        if (state == PRE) begin
+            assert (g_p == 64'd0);
+            assert (p == {32'd0, g_a});
+            assert (sa_r == g_sa && sb_r == g_sb);
+        end else begin
+            assert (cnt <= LAST || state == FIN);
+            assert (neg_res == g_neg_q && neg_rem == g_sa);
+            assert ({32'd0, p[63:32]} + g_p == g_ni);
+            assert (g_ub == 32'd0 || p[63:32] < g_ub);
+            assert (g_rm == g_ra);
+            assert (g_ub != 32'd0 || ((p[31:0] & g_lo[31:0]) == g_lo[31:0] && p[63:32] == g_ni[31:0]));
+        end
+    end
+    always @* if (rst_n && state == FIN && g_f[2]) begin
+        assert ({32'd0, g_r} + g_p == {32'd0, g_ua});                       // du + thuong * |b| = |a|
+        assert (g_ub == 32'd0 || g_r < g_ub);                               // 0 <= du < |b|
+        assert (g_ub != 32'd0 || (g_q == 32'hFFFF_FFFF && g_r == g_ua));    // chia 0: thuong toan 1, du = |a|
+        case (g_f)
+            3'b100:  assert (result == (g_neg_q ? (~g_q + 32'd1) : g_q));   // DIV
+            3'b101:  assert (result == g_q);                                // DIVU
+            3'b110:  assert (result == (g_sa ? (~g_r + 32'd1) : g_r));      // REM
+            default: assert (result == g_r);                                // REMU
+        endcase
+    end
+`endif
     wire [63:0] p_neg = ~p + 64'd1;
 `ifdef RISCV_FORMAL_ALTOPS
     // Chi khi chay riscv-formal voi RISCV_FORMAL_ALTOPS: thay ket qua so hoc cua M bang phep toan thay the (cung quy uoc
