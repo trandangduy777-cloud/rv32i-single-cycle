@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
-#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15; khoang 2 gio)
-#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16; vai gio)
+#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15, 17, 19; khoang 2 gio)
+#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16, 18, 20; vai gio)
 #   bash tools/regress.sh tat-ca          # ca hai nhom
 #   bash tools/regress.sh 2 7             # chi cac buoc 2 va 7
 # Can moi truong cua tools/setup_env.sh. Thoat ma 1 o buoc dau tien that bai (in 20 dong cuoi cua log buoc do).
@@ -18,7 +18,8 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 12 cau hinh" "bo nhan: 
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (13 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
-       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (117 mutant)")
+       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (117 mutant)" \
+       "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
@@ -49,14 +50,16 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     16) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" ;;
     17) sh soc/sw/build.sh && python3 soc/run_soc.py ;;
     18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
+    19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' ;;
+    20) PATH=$HOME/.local/bin:$PATH bash formal/mutate.sh ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
 }
 
 case "${1:-nhanh}" in
-    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17" ;;
-    dot-bien) STEPS="10 11 12 13 14 16 18" ;;
-    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 10 11 12 13 14 16 18" ;;
+    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17 19" ;;
+    dot-bien) STEPS="10 11 12 13 14 16 18 20" ;;
+    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 19 10 11 12 13 14 16 18 20" ;;
     *)       STEPS="$*" ;;
 esac
 n=$(echo $STEPS | wc -w); k=0; t0=$(date +%s)
