@@ -183,6 +183,11 @@ jobs:
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
 
+      - name: So vet chuong trinh ngau nhien voi Spike (19 cau hinh loi, 12 chuong trinh moi loi) va test co huong
+        run: |
+          python3 cosim/run_random.py --n 12 --seed0 4000 --jobs 2 --spike $HOME/spike/bin/spike
+          python3 cosim/run_directed.py --spike $HOME/spike/bin/spike
+
       - name: So vet voi Spike khi co ngat (Spike dang thu vien, irq_storm + bench duoi bao ngat, 2 cau hinh loi)
         run: python3 cosim/irq/run_irq_cosim.py --spike $HOME/spike/bin/spike --quick
 
@@ -191,6 +196,7 @@ jobs:
         run: |
           python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
           python3 cosim/irq/mutate_irq_cosim.py --spike $HOME/spike/bin/spike
+          python3 cosim/mutate_random.py --n 80 --spike $HOME/spike/bin/spike
           python3 cache/mutate_cache.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
           python3 bpred/mutate_bpred.py
           python3 mul/mutate_mul.py

@@ -345,7 +345,7 @@ module rv32im_pipeline #(
     reg         id_csr_exists;
     always @* begin
         case (id_csr_addr)
-            12'h300, 12'h301, 12'h304, 12'h305, 12'h340, 12'h341, 12'h342, 12'h343, 12'h344, 12'hF14: id_csr_exists = 1'b1;
+            12'h300, 12'h301, 12'h304, 12'h305, 12'h340, 12'h341, 12'h342, 12'h343, 12'h344, 12'hF11, 12'hF12, 12'hF13, 12'hF14: id_csr_exists = 1'b1;   // F11-F13: mvendorid, marchid, mimpid = 0
             default: id_csr_exists = 1'b0;
         endcase
         // Zicntr / Zihpm: mcountinhibit, mhpmevent3-31, mcycle / minstret / mhpmcounter3-31 (+h), cycle / instret /

@@ -70,7 +70,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `bpred/` | Bộ dự đoán nhánh: đo theo cấu hình BTB / RAS / gshare, kiểm hiệu năng đúng từng chu kỳ, mutation test (xem mục BTB, RAS và gshare) |
 | `coremark/` | Port CoreMark (`port/`) và script build + chạy + kiểm CRC trên các lõi (xem mục CoreMark) |
 | `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
-| `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike) |
+| `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike); chương trình ngẫu nhiên `gen_rand.py` / `run_random.py` / `run_directed.py` / `mutate_random.py`, coverage `cov_func.py` / `run_vlcov.py` (xem mục Chương trình ngẫu nhiên và coverage) |
 | `formal/` | riscv-formal (RVFI) cho pipeline RV32IMC và chứng minh bộ chia (`formal/div`): `checks.cfg`, `wrapper.sv`, `rvfi_csrw_check.sv`, `run.sh` (chạy check), `mutate.sh` (đột biến cố ý), `setup_ci.sh` (dựng yosys + SymbiYosys + Boolector); xem mục Chứng minh hình thức bằng riscv-formal |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
@@ -658,6 +658,46 @@ python3 cosim/run_cosim.py <thư mục riscv-tests> [--spike <đường dẫn sp
 
 Cần `spike`, `gcc-riscv64-unknown-elf`, `iverilog`.
 
+## Chương trình ngẫu nhiên so với Spike và coverage (`cosim/gen_rand.py`)
+
+riscv-tests và benchmark chỉ là vài chục chương trình cố định. Để tìm lỗi ở những tổ hợp không ai nghĩ tới, `cosim/gen_rand.py` tự sinh chương trình assembly ngẫu nhiên (riscv-dv cần bộ mô phỏng SystemVerilog thương mại; bản Python pygen chạy rất chậm và không hợp với 19 cấu hình lõi, nên mình viết bộ sinh riêng cho đúng các tính năng của lõi này). `cosim/run_random.py` chạy mỗi chương trình trên Spike (`--priv=m`, `--log-commits`) và trên RTL (iverilog), rồi so từng lệnh hoàn tất như `run_cosim.py` (pc, mã lệnh, thanh ghi đích, store).
+
+- Bộ sinh gồm các "đơn vị" ngẫu nhiên: ALU, shift, MUL/DIV (kể cả chia 0 và INT_MIN / -1), load/store mọi độ rộng và độ lệch (lệch địa chỉ thì trap hoặc chạy bằng phần cứng tùy cấu hình), nhánh và vòng lặp (nhánh lùi đủ 6 loại, `c.beqz` / `c.bnez`), JAL/JALR/gọi hàm lồng nhau/RAS, JALR luân phiên hai đích cách nhau 2 byte, cặp hazard sản xuất → tiêu thụ ở khoảng cách 0-3 lệnh (kể cả con trỏ vừa tính xong làm thanh ghi cơ sở của load/store/jalr), CSR đủ 6 dạng lệnh trên mscratch/mtval/mcause/mepc/mstatus, lệnh bất hợp lệ (opcode, funct, CSR không tồn tại, ghi CSR chỉ đọc, lệnh nén cấm), ECALL/EBREAK/C.EBREAK, MRET, FENCE với trường dự trữ khác 0, FENCE.I với mã tự sửa, lệnh nén. Trình xử lý trap tự viết bước qua lệnh gây trap (độ dài 2 hoặc 4 byte) và chỉ đọc `mtval` ở những nguyên nhân mà đặc tả bắt buộc (địa chỉ lệch).
+- Chương trình không bao giờ bật ngắt (Spike có CLINT với `mtimecmp` khởi tạo 0 nên MTIP luôn bật); phần ngắt được kiểm riêng ở mục So vết với Spike khi có ngắt.
+- 19 cấu hình lõi: single-cycle, pipeline RV32I, RV32IM, RV32IMC, 4 cấu hình cache (kích thước, số đường, độ trễ bộ nhớ), lệch địa chỉ bằng phần cứng, nhân lặp / nhân 1 chu kỳ, dự đoán ép lỗi, không BTB/RAS, gshare, đệm ghi, 2 cấu hình Zba/Zbb/Zbs/Zbc/Zicond (bộ sinh thêm các lệnh Zb* cho 2 cấu hình này).
+
+**Kết quả của lần chạy cuối** (400 hạt giống × 19 cấu hình, `python3 cosim/run_random.py --n 400 --seed0 20000 --cov`):
+
+| Chỉ số | Giá trị |
+|---|---|
+| Chương trình ngẫu nhiên khớp Spike | **7.600** (0 lệch, 0 lỗi của bộ sinh) |
+| Lệnh hoàn tất khớp Spike | **11.576.845** |
+| Coverage chức năng (catalog 568 bin, tính từ vết Spike của chương trình đã khớp RTL) | **568 / 568**: lệnh 83/83, toán hạng ALU 21/21, MUL/DIV 58/58, nhánh 32/32, hazard 215/215, load/store 25/25 + 17/17 (lệch), CSR 54/54, trap 55/55, luồng điều khiển 8/8 |
+| Code coverage Verilator, gộp 19 cấu hình × 15 chương trình = 285 lần chạy (chỉ tính file RTL, không tính testbench) | dòng **387/407 = 95,1 %**, nhánh **220/238 = 92,4 %**, toggle **10.828/12.941 = 83,7 %** |
+| Mutation: số đột biến RTL bị so vết ngẫu nhiên bắt (`cosim/mutate_random.py`, tối đa 80 chương trình mỗi đột biến) | **16 / 16** (có thêm một dòng đối chứng không đột biến, 160 chương trình, phải thoát sạch) |
+
+Catalog là danh sách tay các bin có thể xảy ra (không liệt kê bin không thể xảy ra, ví dụ MULH với toán hạng không hợp lệ); bin của lệnh C chỉ tính trên cấu hình có C; lệnh Zb* / Zicond không nằm trong catalog (chúng được đếm vào code coverage và kiểm bằng so vết Spike, nhưng chưa có bin chức năng riêng). Coverage chức năng đo ở mức kiến trúc nên không thay cho code coverage. Phần **chưa phủ** của code coverage:
+
+- `rv32i_core.v` (10 điểm dòng, 2 nhánh): bộ nhân / chia ở các giá trị tham số mà 9 cấu hình đo không dùng (`MUL_LAT`, hàm tính số tầng cây nhân); các bộ nhân đó đã được kiểm riêng ở mục Bộ nhân song song.
+- `rv32im_pipeline.v` (8 điểm dòng, 10 nhánh): nhận ngắt (chương trình ngẫu nhiên không bật ngắt, đã kiểm ở mục ngắt), phần cấu hình và ghi bộ đếm hiệu năng `mhpmevent` (giá trị `mcycle` của RTL và Spike không so được từng lệnh trong chương trình ngẫu nhiên, nên bộ sinh không đụng tới nhóm CSR này; chúng được kiểm ở mục bộ đếm), ghi CSR không tồn tại, và 2 trường hợp RAS "trả về rồi gọi ngay trong cùng chu kỳ" (coroutine).
+- `rv32_dcache.v` (2 điểm dòng, 4 nhánh) và `rv32_icache.v` (2 nhánh): thay thế pseudo-LRU ở một số tổ hợp số đường và bộ đệm ghi quay vòng; đã được `cache/tb_cache_random.v` kiểm riêng.
+- Toggle 83,7 % thấp hơn vì nhiều bit địa chỉ cao và bit của các cấu hình không dùng không bao giờ đổi trong bộ nhớ 2 MB của Spike; mình không cố đẩy con số này.
+
+**Lỗi RTL tìm được bằng chương trình ngẫu nhiên** (đều có test tái hiện):
+- Lõi single-cycle không có CSR `mie` (0x304) và `mip` (0x344), nên `csrr mie` bị trap lệnh bất hợp lệ trong khi đây là CSR bắt buộc của chế độ M (Spike đọc ra 0). Sửa: hai CSR đọc bằng 0 (không có ngắt); cùng đợt thêm `mvendorid` / `marchid` / `mimpid` (0xF11-0xF13, bắt buộc theo đặc tả, đọc ra 0) vì trước đó cũng bị trap, và bộ kiểm chứng `verify/` cũ từng coi `mie`, `mip`, `mvendorid` là "CSR không tồn tại", nay đã sửa theo Spike. `marchid` của Spike bằng 5, tùy triển khai nên không so. Test tái hiện `cosim/tests/csr_mie.S`, chạy bằng `python3 cosim/run_directed.py` trên 16 cấu hình có Zicsr; trước khi sửa lõi single-cycle lệch ở lệnh thứ 4.
+- Lỗi mất bit 1 của `mepc` khi có lệnh nén cũng được bộ sinh bắt trước khi được sửa ở nhánh chính (`cosim/tests/mepc_c.S`).
+
+Công cụ coverage cũng từng sai: bộ giải mã đặt nhầm tên `slli`/`slti`/`andi`; đã sửa, các con số trên là sau khi sửa.
+
+Điểm yếu còn lại: `mtval` sau lệnh bất hợp lệ, `ebreak` và ngắt là tùy triển khai nên chương trình ngẫu nhiên không kiểm; chương trình dài tối đa vài nghìn lệnh nên không đánh vào lỗi chỉ lộ ra sau hàng triệu chu kỳ; mutation chỉ 16 đột biến (nhỏ hơn hẳn các bộ mutation riêng của cache, ngắt, SoC).
+
+```
+python3 cosim/run_random.py --n 400 --seed0 20000 --jobs 2 --cov    # lô lớn, ~40 phút trên 2 lõi
+python3 cosim/run_directed.py                                       # test có hướng csr_mie.S
+python3 cosim/run_vlcov.py --cores 0 1 2 3 4 9 13 14 16 --n 20      # code coverage (cần verilator)
+python3 cosim/mutate_random.py                                      # 16 đột biến RTL
+```
+
 ## Chứng minh hình thức bằng riscv-formal (pipeline RV32IMC)
 
 Pipeline `rv32im_pipeline.v` (cấu hình RV32IMC, `MISALIGNED = 0`, BTB/RAS/gshare bật, ngắt tự do) được kiểm bằng [riscv-formal](https://github.com/YosysHQ/riscv-formal) (ghim SHA `c992aa6`) qua giao diện RVFI, một kênh retire, bằng SymbiYosys + Boolector (BMC, yosys là bản WASM của YoWASP). Cổng RVFI nằm trong `ifdef RISCV_FORMAL` nên khi tắt thì RTL không đổi hành vi (regression đầy đủ vẫn đạt).
@@ -831,7 +871,7 @@ Con số ngắt đo ở pha riêng sau dòng `LAT`: mọi task đang ngủ (ch�
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chỉ có chế độ M (chưa có chế độ User/Supervisor); PLIC của SoC chỉ có một context M-mode
 - Pipeline RV32I chưa dự đoán JALR; ở RV32IM, BTB chỉ nhớ 1 đích cho mỗi JALR gián tiếp, RAS cập nhật ở EX nên lệnh trả về ngay sau lời gọi có thể đoán sai; gshare dùng chung bảng 64 mục nên dễ dẫm chỉ số
 - Bộ chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); bộ nhân song song chỉ có ở pipeline RV32IM và mới có tổng hợp + STA trước P&R, chưa qua flow; chứng minh hình thức của bộ nhân không phủ phép chia và phần ghép vào pipeline
-- Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chưa chạy trên Spike; so vết ngắt với Spike trên CI chỉ chạy bản rút gọn (2 cấu hình lõi)
+- Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chỉ so với Spike ở mức hoàn tất lệnh (không kiểm `mtval` của lệnh bất hợp lệ); phần ngắt được so riêng ở `cosim/irq/`
 - riscv-formal là BMC có độ sâu giới hạn, chỉ cho cấu hình `MISALIGNED = 0` không cache; `mstatus`/`mepc`/`mcause`/`mtval` bị trap/MRET ghi nên chỉ qua `csrw` ở mức RVFI (thanh ghi thật được kiểm bằng so vết với Spike), còn `mie`/`mtvec` (gồm `mtvec` vectored) đã qua `csrw` và `csrc_any` có mặt nạ bit; phép nhân/chia trong check `insn_*` là ALTOPS, phép chia được chứng minh riêng ở `formal/div` và phép nhân ở `mul/formal`
 - Cache set-associative mặc định tắt (`WAYS = 1`) vì không lợi trên 2 benchmark hiện có; bản có cache không đạt timing 15 ns và dùng flip-flop thay SRAM; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
 - Lệnh nén C chỉ có ở pipeline RV32IM; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2

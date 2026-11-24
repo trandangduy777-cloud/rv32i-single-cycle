@@ -127,11 +127,14 @@ module rv32i_core #(
         case (csr_addr)
             12'h300: csr_rdata = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
             12'h301: csr_rdata = 32'h4000_1100;           // misa: RV32, chu I va M
+            12'h304: csr_rdata = 32'd0;                   // mie: loi khong co ngat, WARL cung bang 0 (CSR bat buoc, khong duoc trap)
             12'h305: csr_rdata = {mtvec_r, 2'b00};
             12'h340: csr_rdata = mscratch;
             12'h341: csr_rdata = {mepc_r, 2'b00};
             12'h342: csr_rdata = mcause_r;
             12'h343: csr_rdata = mtval_r;
+            12'h344: csr_rdata = 32'd0;                   // mip: khong co nguon ngat
+            12'hF11, 12'hF12, 12'hF13,                    // mvendorid, marchid, mimpid: bat buoc, chi doc, = 0 (khong dang ky)
             12'hF14: csr_rdata = 32'd0;                   // mhartid (chi doc)
             default: begin csr_rdata = 32'd0; csr_exists = 1'b0; end
         endcase
