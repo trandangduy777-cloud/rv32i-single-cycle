@@ -3,7 +3,8 @@
 #   bash formal/run.sh gen                  # chi sinh cac check (thu muc $WORK/cores/rv32im_pipeline/checks)
 #   bash formal/run.sh run <regex>...       # chay cac check co ten khop regex (vd. 'insn_add_ch0' 'reg_ch0')
 #   bash formal/run.sh all                  # chay moi check
-# Check gap ERROR (loi ha tang, khong phai FAIL) duoc chay lai 1 lan; log lan dau giu o <check>.err1.log.
+# Check gap ERROR (loi cong cu, khong phai FAIL) duoc in 40 dong cuoi log roi chay lai 1 lan, TUAN TU, sau khi cac
+# check khac xong; log lan dau giu o <check>.err1.log. Ket qua cuoi ghi "(chay lai tuan tu)" de khong bi che giau.
 # Bien: RTL_DIR (thu muc chua RTL, mac dinh repo; dung de chen loi co y vao ban sao), WORK (thu muc lam viec, mac dinh /tmp/formal-work), CFG (mac dinh formal/checks.cfg), JOBS (so tien trinh song song)
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -42,10 +43,23 @@ case $cmd in
             ls checks/*.sby | sed 's|checks/||; s|\.sby$||' | grep -E "$pat" 
         done | sort -u > "$WORK/selected.txt"
         echo "$(wc -l < "$WORK/selected.txt") check duoc chon"
-        ( cd checks && xargs -P "$JOBS" -I{} sh -c 'ts=$(date +%s); sby -f {}.sby > {}.log 2>&1; rc=$?; \
-            if grep -q "DONE (ERROR" {}.log; then cp {}.log {}.err1.log; sby -f {}.sby > {}.log 2>&1; fi; \
+        # Chay yosys mot lan truoc khi chay song song: YoWASP bien dich module WASM vao ~/.cache/YoWASP o lan dau,
+        # nhieu tien trinh cung bien dich mot luc la nguon loi ERROR khong lap lai duoc.
+        yosys -q -p 'help' > /dev/null 2>&1 || true
+        one='ts=$(date +%s); sby -f {}.sby > {}.log 2>&1; \
             st=$(grep -E "DONE \(" {}.log | tail -1 | sed "s/.*DONE (\(.*\)).*/\1/"); \
-            echo "{}: $st ($(( $(date +%s) - ts )) s)"' < "$WORK/selected.txt" ) | tee "$WORK/results.txt"
-        ! grep -v "PASS" "$WORK/results.txt" | grep -q . ;;      # ma thoat khac 0 neu co check khong PASS
+            echo "{}: ${st:-KHONG CO KET QUA} ($(( $(date +%s) - ts )) s)"'
+        ( cd checks && xargs -P "$JOBS" -I{} sh -c "$one" < "$WORK/selected.txt" ) | tee "$WORK/results.txt"
+        # Check ERROR / khong co ket qua (loi cong cu, KHONG phai FAIL): in log de thay nguyen nhan, roi chay lai
+        # TUAN TU sau khi moi check khac da xong (khong con tranh tai nguyen). FAIL khong bao gio duoc chay lai.
+        retry=$(grep -vE ": (PASS|FAIL)" "$WORK/results.txt" | cut -d: -f1 || true)
+        for c in $retry; do
+            echo "=== $c loi cong cu, 40 dong cuoi log lan 1 (giu o checks/$c.err1.log) ==="
+            cp "checks/$c.log" "checks/$c.err1.log"; tail -40 "checks/$c.err1.log"
+            r=$( cd checks && echo "$c" | xargs -I{} sh -c "$one" )
+            echo "$r (chay lai tuan tu)"
+            sed -i "s|^$c: .*|$r (chay lai tuan tu)|" "$WORK/results.txt"
+        done
+        ! grep -v ": PASS" "$WORK/results.txt" | grep -q . ;;      # ma thoat khac 0 neu co check khong PASS
     all) bash "$HERE/formal/run.sh" run '.' ;;
 esac
