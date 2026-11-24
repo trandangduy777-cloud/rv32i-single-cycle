@@ -54,7 +54,7 @@ class ISS:
         if addr == 0x300:
             return 0x1800 | (self.mpie << 7) | (self.mie << 3)
         if addr == 0x301:
-            return 0x40000100
+            return 0x40001100              # misa: RV32, I, M
         if addr == 0x305:
             return self.mtvec & ~3 & M32
         if addr == 0x340:

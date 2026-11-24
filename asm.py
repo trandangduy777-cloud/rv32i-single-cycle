@@ -279,9 +279,9 @@ def build(base=False):
         a.csr("csrrs", "x16", "mscratch", "x0");   check("x16", 21 | 10)
         a.csr("csrrci", "x17", "mscratch", 5);     check("x17", 31)
         a.csr("csrrs", "x16", "mscratch", "x0");   check("x16", 31 & ~5)
-        a.csr("csrrs", "x16", "misa", "x0");       check("x16", 0x40000100)
+        a.csr("csrrs", "x16", "misa", "x0");       check("x16", 0x40001100)
         a.csr("csrrw", "x0", "misa", "x14")        # ghi vao misa bi bo qua, khong trap
-        a.csr("csrrs", "x16", "misa", "x0");       check("x16", 0x40000100)
+        a.csr("csrrs", "x16", "misa", "x0");       check("x16", 0x40001100)
         a.csr("csrrs", "x16", "mhartid", "x0");    check("x16", 0)     # doc mhartid voi rs1=x0: hop le
         a.csr("csrrsi", "x0", "mstatus", 8)
         a.csr("csrrs", "x16", "mstatus", "x0");    check("x16", 0x1808)

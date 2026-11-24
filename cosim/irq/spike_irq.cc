@@ -4,7 +4,8 @@
 //   Spike chay lenh ke tiep, gan mip cua Spike bang mip cua RTL luc nhan ngat va cho Spike buoc 1 lan. Kiem: pc cua
 //   Spike luc do = epc (diem ngat chinh xac), Spike thuc su nhan ngat (tuc mstatus.MIE va mie cho phep theo trang thai
 //   kien truc cua Spike), mcause cua Spike = cause cua RTL (dung thu tu uu tien), mepc = epc, pc moi = mtvec.
-// - O moi lenh thuong mip cua Spike = 0, nen Spike khong tu nhan ngat; doc CSR mip lay gia tri cua RTL (ghi lai so lan).
+// - O moi lenh thuong mip cua Spike = 0, nen Spike khong tu nhan ngat; doc CSR mip, mcycle / cycle, mhpmcounter,
+//   mhpmevent (phu thuoc hien thuc) lay gia tri cua RTL; minstret / instret phai khop Spike.
 // - Ngoai vi (0x0200_0000 rv32_mtimer, 0x0300_0000 nguon ngat ngoai): lenh load tra ve gia tri RTL da doc (mtime phu
 //   thuoc chu ky); lenh store van duoc so dia chi / gia tri voi RTL.
 // - Chong "bo doi": neu theo trang thai kien truc cua Spike co ngat duoc phep (MIE, mie & mip cua RTL) ma RTL chay
@@ -166,7 +167,12 @@ int main(int argc, char** argv) {
             uint32_t w = fetch(pc0);
             s->log_reg_write.clear(); s->log_mem_write.clear();
             p.step(1);
-            if (s->minstret->read() == ins0) {
+            // exception: pc moi = mtvec (exception luon ve BASE) va mepc = pc cua lenh (khong dung minstret vi
+            // mcountinhibit.IR co the dung no)
+            reg_t mt = (uint32_t)s->mtvec->read();
+            bool exc = (uint32_t)s->pc == (mt & ~(reg_t)3) && (uint32_t)s->mepc->read() == pc0;
+            (void)ins0;
+            if (exc) {
                 if (pc0 != r.pc || w != r.ins || r.rd != 0 || r.st != 0) {
                     snprintf(buf, sizeof buf, "Spike gap exception (mcause %lx) tai pc=%08lx ins=%08x",
                              (long)s->mcause->read(), (long)pc0, w);
@@ -188,7 +194,11 @@ int main(int argc, char** argv) {
                 if ((it.first & 0xf) == 0 && (it.first >> 4) != 0) { rd = it.first >> 4; val = (uint32_t)s->XPR[rd]; }
             bool csr_rd = (w & 0x7f) == 0x73 && ((w >> 12) & 3) != 0;
             uint32_t csr = w >> 20;
-            if (csr_rd && rd && csr == CSR_MIP && rd == r.rd && val != r.val) {   // mip: lay theo RTL
+            // gia tri phu thuoc hien thuc: mip, mcycle / cycle, mhpmcounter / hpmcounter, mhpmevent -> lay theo RTL.
+            // minstret / instret la dai luong kien truc: phai khop Spike.
+            bool impl = csr == CSR_MIP || ((csr >> 8) == 0xB || (csr >> 8) == 0xC) && ((csr >> 5) & 3) == 0 &&
+                        (csr & 0x1f) != 2 || (csr >= 0x323 && csr <= 0x33f);
+            if (csr_rd && rd && impl && rd == r.rd && val != r.val) {
                 s->XPR.write(rd, r.val); val = r.val; n_patch++;
             }
             if (rd != r.rd || val != (r.rd ? r.val : 0)) {

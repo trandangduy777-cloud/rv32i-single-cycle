@@ -38,7 +38,9 @@ module rv32im_pipeline #(
     parameter        RAS_N      = 4,             // so muc ngan xep dia chi tra ve (0 = khong co)
     parameter        GHR_BITS   = 0,             // > 0: gshare (lich su toan cuc GHR_BITS bit XOR voi pc); 0: theo pc
     parameter        BTB_TAG    = 10,            // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
-    parameter        MUL_LAT    = 2              // nhan: 0 = lap (~18 chu ky), 1 = song song 1 chu ky, 2 = song song 2 tang
+    parameter        MUL_LAT    = 2,             // nhan: 0 = lap (~18 chu ky), 1 = song song 1 chu ky, 2 = song song 2 tang
+    parameter        ZICNTR     = 1,             // 1: bo dem mcycle / minstret (Zicntr) va bo dem su kien (Zihpm)
+    parameter        HPM_N      = 4              // so bo dem su kien mhpmcounter3.. that su dem (0-29; con lai doc 0)
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -276,6 +278,12 @@ module rv32im_pipeline #(
             12'h300, 12'h301, 12'h304, 12'h305, 12'h340, 12'h341, 12'h342, 12'h343, 12'h344, 12'hF14: id_csr_exists = 1'b1;
             default: id_csr_exists = 1'b0;
         endcase
+        // Zicntr / Zihpm: mcountinhibit, mhpmevent3-31, mcycle / minstret / mhpmcounter3-31 (+h), cycle / instret /
+        // hpmcounter3-31 (+h) chi doc (time khong co: bo dem thoi gian nam ngoai loi)
+        if (ZICNTR != 0 && (id_csr_addr == 12'h320 || (id_csr_addr >= 12'h323 && id_csr_addr <= 12'h33F) ||
+                            id_csr_addr[11:8] == 4'hB && id_csr_addr[6:5] == 2'b00 && id_csr_addr[4:0] != 5'd1 ||
+                            id_csr_addr[11:8] == 4'hC && id_csr_addr[6:5] == 2'b00 && id_csr_addr[4:0] != 5'd1))
+            id_csr_exists = 1'b1;
     end
     wire id_csr_we_req = (funct3[1:0] == 2'b01) | (rs1 != 5'd0);
     wire id_csr_ro     = (id_csr_addr[11:10] == 2'b11);
@@ -534,7 +542,7 @@ module rv32im_pipeline #(
     // ============================================================
     reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence;
     reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val;
-    reg         exmem_tirq;
+    reg         exmem_tirq, exmem_trap, exmem_icnt;
     reg  [4:0]  exmem_rd;
     reg  [2:0]  exmem_funct3;
 
@@ -624,7 +632,7 @@ module rv32im_pipeline #(
     always @* begin
         case (csr_addr)
             12'h300: csr_rdata = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
-            12'h301: csr_rdata = 32'h4000_0100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);   // MXL = 32, I (va C khi ENABLE_C)
+            12'h301: csr_rdata = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);   // MXL = 32, I, M (va C khi ENABLE_C)
             12'h304: csr_rdata = {20'b0, mie_meie, 3'b0, mie_mtie, 3'b0, mie_msie, 3'b0};
             12'h305: csr_rdata = {mtvec_r, 1'b0, mtvec_vec};
             12'h340: csr_rdata = mscratch;
@@ -632,10 +640,12 @@ module rv32im_pipeline #(
             12'h342: csr_rdata = mcause_r;
             12'h343: csr_rdata = mtval_r;
             12'h344: csr_rdata = {20'b0, mip_meip, 3'b0, mip_mtip, 3'b0, mip_msip, 3'b0};
-            default: csr_rdata = 32'd0;                    // 0xF14 mhartid
+            default: csr_rdata = cnt_rdata;                // bo dem (0 neu khong phai bo dem); 0xF14 mhartid = 0
         endcase
     end
 
+    reg  [31:0] cnt_rdata;                                 // doc bo dem (Zicntr / Zihpm), xem cuoi module
+    wire        cnt_icnt;
     wire        csr_we_req = (idex_funct3[1:0] == 2'b01) | (idex_rs1 != 5'd0);
     wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : op_a;
     reg  [31:0] csr_new;
@@ -865,6 +875,8 @@ module rv32im_pipeline #(
             exmem_load  <= 1'b0;
             exmem_store <= 1'b0;
             exmem_fence <= 1'b0;
+            exmem_trap  <= 1'b0;
+            exmem_icnt  <= 1'b0;
         end else if (!frz) begin
             exmem_valid     <= idex_valid & ~ex_stall;      // M chua xong: nhan bong bay
             exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;
@@ -874,6 +886,8 @@ module rv32im_pipeline #(
             exmem_pc        <= idex_pc;
             exmem_instr     <= idex_instr;
             exmem_tirq      <= irq_take;                    // chi de testbench: lenh bi ngat chan lai (chay lai sau mret)
+            exmem_trap      <= trap_ex;                     // lenh gay trap / bi ngat: khong tinh la hoan tat (minstret)
+            exmem_icnt      <= cnt_icnt;                    // lenh nay co duoc dem vao minstret khi hoan tat khong
             exmem_rd        <= idex_rd;
             exmem_funct3    <= idex_funct3;
             exmem_result    <= ex_result;
@@ -958,6 +972,7 @@ module rv32im_pipeline #(
     reg  [7:0]  memwb_tstrb;
     reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
     reg         memwb_tirq;                        // lenh bi ngat chan lai o EX: khong thuc thi, se chay lai sau mret
+    reg         memwb_trap, memwb_icnt;
     wire        wb_commit = memwb_valid & memwb_new;   // moi lenh hoan tat dung 1 chu ky (testbench in vet theo day)
 
     always @(posedge clk or negedge rst_n) begin
@@ -966,6 +981,8 @@ module rv32im_pipeline #(
             memwb_rd_we <= 1'b0;
             memwb_tst   <= 1'b0;
             memwb_new   <= 1'b0;
+            memwb_trap  <= 1'b0;
+            memwb_icnt  <= 1'b0;
         end else if (frz) begin
             memwb_new   <= 1'b0;                     // MEM/WB giu nguyen: lenh trong do da duoc tinh la hoan tat
         end else begin
@@ -977,6 +994,8 @@ module rv32im_pipeline #(
             memwb_pc    <= exmem_pc;
             memwb_instr <= exmem_instr;
             memwb_tirq  <= exmem_tirq;
+            memwb_trap  <= exmem_trap;
+            memwb_icnt  <= exmem_icnt;
             memwb_tst   <= dmem_we;
             memwb_taddr <= dmem_we ? exmem_result : 32'd0;
             memwb_tdata <= dmem_we ? st_wide : 64'd0;      // st_wide chi co cac byte duoc ghi (con lai la 0)
@@ -995,7 +1014,7 @@ module rv32im_pipeline #(
     //  - Bo nho: RVFI_ALIGNED_MEM, mem_addr chia het cho 4, rmask / wmask theo byte trong tu. Chi dung voi MISALIGNED = 0
     //    (truy cap lech tach 2 pha o MEM khong bieu dien duoc bang 1 kenh RVFI).
     // ============================================================
-    localparam [31:0] RV_MISA = 32'h4000_0100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);
+    localparam [31:0] RV_MISA = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);
     wire [31:0] csr_rdata_const_misa    = RV_MISA;
     wire [31:0] csr_rdata_const_mhartid = 32'd0;
 
@@ -1165,4 +1184,89 @@ module rv32im_pipeline #(
     assign rvfi_csr_mtval_wdata = (rv_hit_mtval & memwb_rv_csr_w) ? (memwb_rv_csr_new & 32'hFFFF_FFFF) : 32'h0;
 `endif
 `endif
+    // ---- Zicntr / Zihpm (ZICNTR = 1): mcycle, minstret, HPM_N bo dem su kien mhpmcounter3.. (64 bit) ----
+    // minstret dem lenh hoan tat o WB (khong tinh lenh gay trap / bi ngat). CSR doc o EX: gia tri kien truc = minstret
+    // cong cac lenh cu hon con o MEM / WB (chac chan hoan tat vi trap chi xay ra o EX). Ghi minstret o EX: tru lai so lenh
+    // cu hon se con tang sau canh ghi, va lenh ghi khong tu tang (dac ta: "ghi thay cho tang").
+    // Su kien (mhpmevent): 1 chu ky cho bo nho (frz), 2 lenh M chiem EX, 3 redirect o EX, 4 load-use, 5 ID nhay som,
+    // 6 cho nap lenh, 7 nhanh, 8 nhanh doan sai, 9 JALR, 10 JALR doan sai, 11 ngat, 12 exception, 13 lenh hoan tat.
+    // Cac loai chu ky 1-6 loai tru nhau theo thu tu uu tien nay (giong phan tich chu ky cua testbench).
+    reg  [63:0] mcycle_r, minstret_r;
+    reg  [2:0]  mcinh;                                     // mcountinhibit: bit 0 CY, bit 2 IR (bit 1 TM luon 0)
+    reg  [63:0] hpm_cnt [0:29];
+    reg  [3:0]  hpm_ev  [0:29];
+    reg  [29:0] hpm_inh;
+    wire        rt_inc    = wb_commit & ~memwb_trap;           // lenh hoan tat that su
+    // moi lenh mang co icnt quyet dinh o EX: khong dem neu no ghi minstret (ghi thay cho tang) hoac mcountinhibit.IR
+    // = 1 truoc lenh do. Cac lenh cu hon con trong pipeline van dem theo co cua chung.
+    wire [1:0]  ir_old    = {1'b0, exmem_valid & ~exmem_trap & exmem_icnt} + {1'b0, rt_inc & memwb_icnt};
+    wire [63:0] instret_v = minstret_r + {62'd0, ir_old};
+    wire [13:1] hpm_evt;
+    assign hpm_evt[1]  = frz;
+    assign hpm_evt[2]  = ~frz & ex_stall;
+    assign hpm_evt[3]  = ~frz & ~ex_stall & redirect_q;
+    assign hpm_evt[4]  = ~frz & ~ex_stall & ~redirect_q & stall;
+    assign hpm_evt[5]  = ~frz & ~ex_stall & ~redirect_q & ~stall & id_redirect;
+    assign hpm_evt[6]  = ~frz & ~ex_stall & ~redirect_q & ~stall & ~id_redirect & ~imem_ready;
+    assign hpm_evt[7]  = ex_upd & idex_branch;
+    assign hpm_evt[8]  = ex_upd & idex_branch & mispredict;
+    assign hpm_evt[9]  = ex_upd & idex_jalr;
+    assign hpm_evt[10] = ex_upd & idex_jalr & jalr_miss;
+    assign hpm_evt[11] = irq_take;
+    assign hpm_evt[12] = trap_ex & ~irq_take & ~frz;
+    assign hpm_evt[13] = rt_inc & memwb_icnt;
+    // dia chi CSR cua bo dem: chi so 0 (cycle), 2 (instret), 3.. (hpm); h = nua cao
+    wire        cnt_space = (csr_addr[11:8] == 4'hB || csr_addr[11:8] == 4'hC) && csr_addr[6:5] == 2'b00;
+    wire [4:0]  cnt_idx   = csr_addr[4:0];
+    wire        cnt_hi    = csr_addr[7];
+    reg  [63:0] cnt_v;
+    integer     hk;
+    always @* begin
+        cnt_v = 64'd0;
+        if (cnt_idx == 5'd0) cnt_v = mcycle_r;
+        else if (cnt_idx == 5'd2) cnt_v = instret_v;
+        else if (cnt_idx >= 5'd3 && cnt_idx - 5'd3 < HPM_N) cnt_v = hpm_cnt[cnt_idx - 5'd3];
+        cnt_rdata = 32'd0;
+        if (ZICNTR != 0) begin
+            if (cnt_space) cnt_rdata = cnt_hi ? cnt_v[63:32] : cnt_v[31:0];
+            else if (csr_addr == 12'h320) begin
+                cnt_rdata = {hpm_inh[28:0], mcinh};
+                for (hk = HPM_N; hk < 29; hk = hk + 1) cnt_rdata[hk + 3] = 1'b0;
+            end
+            else if (csr_addr >= 12'h323 && csr_addr <= 12'h33F && csr_addr[4:0] - 5'd3 < HPM_N)
+                cnt_rdata = {28'd0, hpm_ev[csr_addr[4:0] - 5'd3]};
+        end
+    end
+    wire        cnt_wr    = csr_write & (ZICNTR != 0) & (csr_addr[11:8] == 4'hB) & (csr_addr[6:5] == 2'b00);
+    wire        cnt_wr_ir = cnt_wr & (cnt_idx == 5'd2);
+    assign      cnt_icnt  = ~cnt_wr_ir & ~mcinh[2];   // inhibit theo gia tri truoc lenh (lenh ghi mcountinhibit van duoc dem, giong Spike)
+    // gia tri moi cua bo dem khi ghi nua thap / cao (tinh tren gia tri kien truc cnt_v)
+    wire [63:0] cnt_new   = cnt_hi ? {csr_new, cnt_v[31:0]} : {cnt_v[63:32], csr_new};
+    integer     hj;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mcycle_r   <= 64'd0;
+            minstret_r <= 64'd0;
+            mcinh      <= 3'd0;
+            hpm_inh    <= 30'd0;
+            for (hj = 0; hj < 30; hj = hj + 1) begin hpm_cnt[hj] <= 64'd0; hpm_ev[hj] <= 4'd0; end
+        end else if (ZICNTR != 0) begin
+            if (cnt_wr && cnt_idx == 5'd0)  mcycle_r <= cnt_new;
+            else if (!mcinh[0])             mcycle_r <= mcycle_r + 64'd1;
+            // lenh cu hon con o MEM se tang sau canh nay (lenh o WB tang ngay o canh nay: ghi de)
+            if (cnt_wr_ir)                  minstret_r <= cnt_new - {63'd0, exmem_valid & ~exmem_trap & exmem_icnt};
+            else if (rt_inc && memwb_icnt)  minstret_r <= minstret_r + 64'd1;
+            for (hj = 0; hj < HPM_N; hj = hj + 1) begin
+                if (cnt_wr && cnt_idx == hj + 3) hpm_cnt[hj] <= cnt_new;
+                else if (!hpm_inh[hj] && hpm_ev[hj] != 4'd0 && hpm_ev[hj] <= 4'd13 && hpm_evt[hpm_ev[hj]])
+                    hpm_cnt[hj] <= hpm_cnt[hj] + 64'd1;
+                if (csr_write && csr_addr == 12'h323 + hj) hpm_ev[hj] <= csr_new[3:0];
+            end
+            if (csr_write && csr_addr == 12'h320) begin
+                mcinh   <= {csr_new[2], 1'b0, csr_new[0]};
+                hpm_inh <= csr_new[31:3] & ((30'd1 << HPM_N) - 30'd1);
+            end
+        end
+    end
+
 endmodule

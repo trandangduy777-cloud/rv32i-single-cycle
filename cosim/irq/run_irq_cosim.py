@@ -49,6 +49,18 @@ def build_storm(march, tmp, ma=False, vec=False):
     return name, elf
 
 
+def build_counters(march, tmp):
+    name = f"counters-{march[4:]}"
+    elf = os.path.join(tmp, name + ".elf")
+    ld = os.path.join(tmp, "irq80.ld")
+    open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
+    r = rc.sh(rc.GCC + [f"-march={march}_zicsr_zicntr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE, "-T", ld,
+                        os.path.join(HERE, "counters.S"), "-o", elf])
+    if r.returncode:
+        sys.exit(r.stderr)
+    return name, elf
+
+
 def build_bench_irq(bname, march, tmp):
     b = os.path.join(ROOT, "bench")
     ld = os.path.join(tmp, "irq80.ld")
@@ -98,6 +110,7 @@ def main():
     progs = [build_storm("rv32im", tmp) + ("rv32im",), build_storm("rv32imc", tmp) + ("rv32imc",),
              build_storm("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_storm("rv32imc", tmp, vec=True) + ("rv32imc",),
+             build_counters("rv32im", tmp) + ("rv32im",), build_counters("rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),
@@ -137,7 +150,7 @@ def main():
                             f"+seed={sd}", f"+tmax={a.tmax}"] + plus, stdout=f, timeout=3600)
         cyc = re.search(r"DONE cycles=(\d+)", open(trf).read()[-4000:])
         base, *z = isa.split("_")
-        r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicsr", "zifencei"]))])
+        r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicntr", "zicsr", "zifencei", "zihpm"]))])
         st = re.search(r"IRQSTAT (.*)", r.stdout)
         tag = f"[{j + 1}/{len(jobs)}] {name} / {title} / seed {sd}"
         if r.returncode or not st:
