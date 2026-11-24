@@ -37,6 +37,17 @@ typedef unsigned char u8;
 #define GPIO_CLR     REG(GPIO_BASE + 0x1C)
 #define GPIO_TGL     REG(GPIO_BASE + 0x20)
 
+#define PLIC_BASE    0x0C000000u
+#define PLIC_PRIO(i) REG(PLIC_BASE + 4u * (i))
+#define PLIC_PEND    REG(PLIC_BASE + 0x1000u)
+#define PLIC_EN      REG(PLIC_BASE + 0x2000u)
+#define PLIC_THR     REG(PLIC_BASE + 0x200000u)
+#define PLIC_CLAIM   REG(PLIC_BASE + 0x200004u)      /* doc = claim, ghi = complete */
+#define IRQ_UART_RX  1u                               /* ID nguon PLIC */
+#define IRQ_UART_TX  2u
+#define IRQ_GPIO     3u
+#define IRQ_EXT0     4u                               /* 4..7 = ext_irq[0..3] cua soc_top */
+
 #define SYS_BASE     0x20002000u
 #define SYS_ID       REG(SYS_BASE + 0x00)
 #define SYS_SCRATCH  REG(SYS_BASE + 0x04)

@@ -10,11 +10,11 @@ module tb_bus;
     endtask
 
     reg [31:0] daddr = 0, iaddr = 0; reg dwe = 0, dre = 0;
-    wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err; wire [31:0] rdata;
+    wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, sel_plic, i_sel_rom, i_sel_ram, bus_err; wire [31:0] rdata;
     soc_bus #(.ROM_AW(14), .RAM_AW(14)) bus (
         .daddr(daddr), .dwe(dwe), .dre(dre), .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .sel_uart(sel_uart),
-        .sel_gpio(sel_gpio), .sel_sys(sel_sys), .rom_rd(32'h1111_0001), .ram_rd(32'h2222_0002), .clint_rd(32'h3333_0003),
-        .uart_rd(32'h4444_0004), .gpio_rd(32'h5555_0005), .sys_rd(32'h6666_0006), .rdata(rdata), .bus_err(bus_err),
+        .sel_gpio(sel_gpio), .sel_sys(sel_sys), .sel_plic(sel_plic), .rom_rd(32'h1111_0001), .ram_rd(32'h2222_0002), .clint_rd(32'h3333_0003),
+        .uart_rd(32'h4444_0004), .gpio_rd(32'h5555_0005), .sys_rd(32'h6666_0006), .plic_rd(32'h7777_0007), .rdata(rdata), .bus_err(bus_err),
         .iaddr(iaddr), .i_sel_rom(i_sel_rom), .i_sel_ram(i_sel_ram));
 
     // mo hinh tham chieu: vung (0 = khong co) va gia tri doc
@@ -26,18 +26,19 @@ module tb_bus;
             else if (a >= 32'h2000_0000 && a < 32'h2000_1000) region = 4;
             else if (a >= 32'h2000_1000 && a < 32'h2000_2000) region = 5;
             else if (a >= 32'h2000_2000 && a < 32'h2000_3000) region = 6;
+            else if (a >= 32'h0C00_0000 && a < 32'h0C40_0000) region = 7;
             else region = 0;
         end
     endfunction
     function [31:0] rv(input [2:0] r);
-        case (r) 1: rv = 32'h1111_0001; 2: rv = 32'h2222_0002; 3: rv = 32'h3333_0003; 4: rv = 32'h4444_0004; 5: rv = 32'h5555_0005; 6: rv = 32'h6666_0006; default: rv = 0; endcase
+        case (r) 1: rv = 32'h1111_0001; 2: rv = 32'h2222_0002; 3: rv = 32'h3333_0003; 4: rv = 32'h4444_0004; 5: rv = 32'h5555_0005; 6: rv = 32'h6666_0006; 7: rv = 32'h7777_0007; default: rv = 0; endcase
     endfunction
     task probe(input [31:0] a);
-        reg [2:0] r; reg [5:0] s;
+        reg [2:0] r; reg [6:0] s;
         begin
             r = region(a); daddr = a; iaddr = a; dre = 1; dwe = 0; #1;
-            s = {sel_sys, sel_gpio, sel_uart, sel_clint, sel_ram, sel_rom};
-            if (s !== (r == 0 ? 6'd0 : (6'd1 << (r - 1)))) begin errors = errors + 1; $display("[BUS] LOI giai ma %h: sel=%b vung=%0d", a, s, r); end
+            s = {sel_plic, sel_sys, sel_gpio, sel_uart, sel_clint, sel_ram, sel_rom};
+            if (s !== (r == 0 ? 7'd0 : (7'd1 << (r - 1)))) begin errors = errors + 1; $display("[BUS] LOI giai ma %h: sel=%b vung=%0d", a, s, r); end
             if (rdata !== rv(r)) begin errors = errors + 1; $display("[BUS] LOI du lieu doc %h: %h", a, rdata); end
             if (bus_err !== (r == 0)) begin errors = errors + 1; $display("[BUS] LOI bus_err doc %h", a); end
             dre = 0; dwe = 1; #1;

@@ -10,13 +10,13 @@ module tb_uart;
     reg  [31:0] wdata = 0;
     wire [31:0] rdata;
     reg         rx_drv = 1'b1, loop = 1'b0;
-    wire        tx, irq;
+    wire        tx, irq, irq_rx, irq_tx;
     wire        rx_in = loop ? tx : rx_drv;
     integer errors = 0, cyc = 0;
     always @(posedge clk) cyc <= cyc + 1;
 
     soc_uart #(.DEFAULT_DIV(16'd16)) dut (.clk(clk), .rst_n(rst_n), .sel(sel), .addr(addr), .we(we), .re(re), .wstrb(wstrb),
-                                          .wdata(wdata), .rdata(rdata), .rx(rx_in), .tx(tx), .irq(irq));
+                                          .wdata(wdata), .rdata(rdata), .rx(rx_in), .tx(tx), .irq(irq), .irq_rx(irq_rx), .irq_tx(irq_tx));
 
     task wr(input [4:2] a, input [31:0] d, input [3:0] s);
         begin @(negedge clk); sel = 1; we = 1; re = 0; addr = a; wdata = d; wstrb = s; @(negedge clk); sel = 0; we = 0; wstrb = 0; end
@@ -194,9 +194,9 @@ module tb_uart;
 
         // ---- ngat ----
         wr(3'd4, 32'h1, 4'b0001); check("irq rx khi chua co", irq, 0);
-        send(8'h77, 1, 16); check("irq rx", irq, 1);
+        send(8'h77, 1, 16); check("irq rx", irq, 1); check("irq_rx = rx", irq_rx, 1); check("irq_tx = 0 khi IE[1] = 0", irq_tx, 0);
         rd(3'd1, v); check("irq rx het", irq, 0);
-        wr(3'd4, 32'h2, 4'b0001); check("irq tx khi san sang", irq, 1);
+        wr(3'd4, 32'h2, 4'b0001); check("irq tx khi san sang", irq, 1); check("irq_tx = tx", irq_tx, 1); check("irq_rx = 0 khi IE[0] = 0", irq_rx, 0);
         wr(3'd0, 32'h31, 4'b0001); @(posedge clk); #1 check("irq tx khi ban", irq, 0);
         repeat (170) @(posedge clk); check("irq tx lai", irq, 1);
         wr(3'd4, 32'h0, 4'b0001); check("irq tat", irq, 0);

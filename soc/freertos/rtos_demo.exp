@@ -1,0 +1,29 @@
+BOOT
+S4
+S3
+S2
+S1
+Q1
+Q2
+Ua
+Q3
+Q4
+Ux
+Uy
+Q5
+DONE
+TICKS OK
+TICKLEN OK
+QUEUE OK
+IRQ OK
+HWM # # # #
+STACK OK
+LAT
+Up
+Uq
+Ur
+Us
+CAL #
+SW1 # #
+SW2 # #
+ALLOK

@@ -23,7 +23,9 @@ module soc_uart #(
     output reg  [31:0] rdata,
     input  wire        rx,
     output wire        tx,
-    output wire        irq
+    output wire        irq,
+    output wire        irq_rx,       // ngat muc rieng cho PLIC: IE[0] & RXVALID
+    output wire        irq_tx        // IE[1] & TXREADY
 );
     reg [15:0] div;
     reg [1:0]  ie;
@@ -123,5 +125,7 @@ module soc_uart #(
         endcase
     end
 
-    assign irq = (ie[0] & rx_valid) | (ie[1] & tx_ready);
+    assign irq_rx = ie[0] & rx_valid;
+    assign irq_tx = ie[1] & tx_ready;
+    assign irq = irq_rx | irq_tx;
 endmodule

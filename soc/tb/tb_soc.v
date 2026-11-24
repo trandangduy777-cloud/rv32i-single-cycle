@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 // Testbench SoC: nap ROM tu hex (+rom=), giai ma UART TX o muc bit (kiem do dai tung bit dung bang chu ky quy dinh, bit start/stop, khong nhieu),
 // so chuoi nhan duoc voi file mong doi (+exp=), kiem ma thoat (+code=, mac dinh 0) va thoi gian toi da (+max=, mac dinh 2.000.000 chu ky).
-// +scn=N chon kich ban kich thich ben ngoai (theo dau nhac trong luong TX): 0 khong co, 1 UART RX, 2 GPIO, 3 UART RX + ngat.
+// +scn=N chon kich ban kich thich ben ngoai (theo dau nhac trong luong TX): 0 khong co, 1 UART RX, 2 GPIO, 3 UART RX + ngat, 4 ngat ngoai PLIC, 5 FreeRTOS (gui ky tu UART).
+// Trong file +exp ky tu '#' khop mot day chu so thap phan bat ky (cho cac so do). +trap=<hex> +wake=<hex>: dia chi bo xu ly trap va ham mark_wake cua FreeRTOS, de do tre ngat.
 // Chay: iverilog -g2012 -o x soc/tb/tb_soc.v soc/soc_*.v rv32im_pipeline.v rv32i_core.v rv32c_decompress.v rv32_mtimer.v && vvp x +rom=soc/sw/build/hello.hex +exp=soc/sw/hello.exp
 module tb_soc;
     parameter DIV = 16;
@@ -17,13 +18,15 @@ module tb_soc;
     wire        exit_valid;
     wire [31:0] exit_code;
 
+    reg [3:0] ext_irq = 4'd0;
     soc_top #(.UART_DIV(DIV), .MTIME_PRESC(1)) dut (
-        .clk(clk), .rst_n(rst_n), .uart_rx(uart_rx), .uart_tx(uart_tx),
+        .clk(clk), .rst_n(rst_n), .uart_rx(uart_rx), .uart_tx(uart_tx), .ext_irq(ext_irq),
         .gpio_in(pad), .gpio_out(gpio_out), .gpio_oe(gpio_oe), .exit_valid(exit_valid), .exit_code(exit_code)
     );
 
     // ---------- nap ROM, tham so dong lenh ----------
     reg [8*256-1:0] rom_file, exp_file;
+    reg show = 1'b0, lat_on = 1'b0;
     integer scn, max_cyc, want_code, fd, ch, exp_n, i;
     reg [7:0] exp_buf [0:4095];
     reg [7:0] out_buf [0:4095];
@@ -32,6 +35,7 @@ module tb_soc;
     integer errors = 0;
     initial begin
         if (!$value$plusargs("rom=%s", rom_file)) begin $display("[SOC] FAIL thieu +rom="); $finish; end
+        show = $test$plusargs("show");
         if (!$value$plusargs("scn=%d", scn)) scn = 0;
         if (!$value$plusargs("max=%d", max_cyc)) max_cyc = 2000000;
         if (!$value$plusargs("code=%d", want_code)) want_code = 0;
@@ -138,8 +142,44 @@ module tb_soc;
             wait_for("RDY\n", 4);
             send_byte("p", 1'b1, 16); send_byte("i", 1'b1, 16); send_byte("n", 1'b1, 16); send_byte("g", 1'b1, 16); send_byte("\n", 1'b1, 16);
         end
+        4: begin
+            wait_for("P1\n", 3); ext_irq = 4'hF;
+            wait_for("P2\n", 3); ext_irq = 4'h0;
+        end
+        5: begin
+            wait_for("Q2\n", 3); send_byte("a", 1'b1, 16);
+            wait_for("Q4\n", 3); send_byte("x", 1'b1, 16); send_byte("y", 1'b1, 16);
+            // pha do tre: moi task ngu, chi Idle chay; 4 ky tu cach nhau 3333 chu ky (khong boi cua chu ky tick 2000), chi cac ngat nay duoc tinh vao thong ke
+            wait_for("LAT\n", 4); lat_on = 1'b1;
+            repeat (3333) @(posedge clk); send_byte("p", 1'b1, 16);
+            repeat (3333) @(posedge clk); send_byte("q", 1'b1, 16);
+            repeat (3333) @(posedge clk); send_byte("r", 1'b1, 16);
+            repeat (3333) @(posedge clk); send_byte("s", 1'b1, 16);
+        end
         default: ;
         endcase
+    end
+
+    // ---------- do tre ngat (FreeRTOS): tu luc EIP cua PLIC len cao den lan lay lenh dau tien tai bo xu ly trap / tai mark_wake ----------
+    reg [31:0] trap_a, wake_a;
+    reg        have_lat = 1'b0, irq_q = 1'b0, w_trap = 1'b0, w_wake = 1'b0;
+    integer    irq_t, lat_n = 0, lt, lw, tr_min = 1 << 30, tr_max = 0, tr_sum = 0, wk_min = 1 << 30, wk_max = 0, wk_sum = 0, wk_n = 0;
+    initial begin
+        have_lat = $value$plusargs("trap=%h", trap_a) & $value$plusargs("wake=%h", wake_a);
+    end
+    always @(posedge clk) if (rst_n && have_lat) begin
+        irq_q <= dut.irq_ext;
+        if (dut.irq_ext && !irq_q && lat_on) begin irq_t = cyc; w_trap = 1'b1; w_wake = 1'b0; end
+        if (w_trap && {dut.imem_addr[31:2], 2'b00} == trap_a) begin
+            if ($test$plusargs("lat")) $display("[lat] trap at %0d (irq %0d)", cyc, irq_t);
+            w_trap = 1'b0; w_wake = 1'b1; lt = cyc - irq_t; lat_n = lat_n + 1; tr_sum = tr_sum + lt;
+            if (lt < tr_min) tr_min = lt; if (lt > tr_max) tr_max = lt;
+        end
+        if (w_wake && {dut.imem_addr[31:2], 2'b00} == {wake_a[31:2], 2'b00}) begin
+            if ($test$plusargs("lat")) $display("[lat] wake at %0d (irq %0d)", cyc, irq_t);
+            w_wake = 1'b0; lw = cyc - irq_t; wk_n = wk_n + 1; wk_sum = wk_sum + lw;
+            if (lw < wk_min) wk_min = lw; if (lw > wk_max) wk_max = lw;
+        end
     end
 
     // ---------- ket thuc ----------
@@ -159,16 +199,34 @@ module tb_soc;
     task show_out; integer j; begin $write("[SOC] da nhan: \""); for (j = 0; j < out_n && j < 4096; j = j + 1) $write("%c", out_buf[j]); $display("\""); end endtask
 
     task report;
-        integer j, bad;
+        integer j, bad, jj, kk;
         begin
             bad = 0;
             if (exp_n > 0 || out_n > 0) begin
-                if (out_n != exp_n) bad = bad + 1;
-                for (j = 0; j < exp_n && j < out_n; j = j + 1) if (out_buf[j] !== exp_buf[j]) bad = bad + 1;
+                // so khop, '#' trong mong doi = mot day chu so thap phan (>= 1 chu so)
+                jj = 0; kk = 0;
+                while (jj < exp_n && kk < out_n) begin
+                    if (exp_buf[jj] == "#") begin
+                        if (out_buf[kk] < "0" || out_buf[kk] > "9") begin bad = bad + 1; jj = exp_n; end
+                        else begin while (kk < out_n && out_buf[kk] >= "0" && out_buf[kk] <= "9") kk = kk + 1; jj = jj + 1; end
+                    end else begin
+                        if (out_buf[kk] !== exp_buf[jj]) bad = bad + 1;
+                        jj = jj + 1; kk = kk + 1;
+                    end
+                end
+                if (jj < exp_n || kk < out_n) bad = bad + 1;
             end
             if (exit_code !== want_code[31:0]) begin $display("[SOC] LOI ma thoat %08x, mong doi %08x (SCRATCH = mepc luc loi: %08x)", exit_code, want_code, dut.u_sys.scratch); bad = bad + 1; end
             if (errors != 0) bad = bad + 1;
-            if (bad == 0) $display("[SOC] PASS %0d chu ky, %0d ky tu UART, ma thoat %0d", cyc, out_n, exit_code);
+            if (have_lat && (lat_n < 2 || wk_n < 2)) begin bad = bad + 1; $display("[SOC] LOI do tre ngat: chi do duoc %0d lan toi trap, %0d lan toi mark_wake", lat_n, wk_n); end
+            if (bad == 0) begin
+                $display("[SOC] PASS %0d chu ky, %0d ky tu UART, ma thoat %0d", cyc, out_n, exit_code);
+                if (have_lat) begin
+                    $display("[SOC] RTOS do tre ngat (EIP len -> lay lenh dau o bo xu ly trap): n=%0d min=%0d trung binh=%0d max=%0d chu ky", lat_n, tr_min, tr_sum / lat_n, tr_max);
+                    $display("[SOC] RTOS do tre ngat (EIP len -> lay lenh dau o mark_wake, task UART chay lai): n=%0d min=%0d trung binh=%0d max=%0d chu ky", wk_n, wk_min, wk_sum / wk_n, wk_max);
+                end
+                if (show) begin show_out; end
+            end
             else begin $display("[SOC] FAIL (%0d loi, %0d loi UART)", bad, errors); show_out; end
             $finish;
         end
