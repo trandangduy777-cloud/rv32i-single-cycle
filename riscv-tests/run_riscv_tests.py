@@ -13,7 +13,12 @@ ROOT = os.path.dirname(HERE)
 SKIP = {"fence_i": "bo nho lenh/du lieu tach rieng; chay trong cosim/", "ma_data": "can truy cap lech do phan cung xu ly (loi nay bao trap)"}
 CORES = [("single-cycle (rv32i_core.v)", "", ["rv32i_core.v"], "rv32i"),
          ("pipeline RV32I (rv32i_pipeline.v)", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
-         ("pipeline RV32IM (rv32im_pipeline.v)", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im")]
+         ("pipeline RV32IM (rv32im_pipeline.v)", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im"),
+         # RV32IM + Zba/Zbb/Zbs/Zbc/Zicond (tham so ZBA... = 1): chay them bo test cua cac phan mo rong nay (ZSUITES)
+         ("pipeline RV32IM + Zba/Zbb/Zbs/Zbc/Zicond", "-DPIPE_FULL -DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1",
+          ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im_zb")]
+# bo test ISA cua cac phan mo rong (riscv-tests/isa/rv32uzba ...): chi chay tren loi co phan mo rong do
+ZSUITES = {"rv32uzba": "zba", "rv32uzbb": "zbb", "rv32uzbc": "zbc", "rv32uzbs": "zbs", "rv32uzicond": "zicond"}
 # Mo phong muc cong: GLS_FILES="<netlist.nl.v> <thu vien cell chuc nang> <udp>" chay them bo test tren netlist sau P&R
 # (RV32I hoac RV32IM, nhan dien theo ten module trong netlist)
 if os.environ.get("GLS_FILES"):
@@ -55,7 +60,7 @@ def main():
     rt = sys.argv[1] if len(sys.argv) > 1 else "riscv-tests"
     isa = os.path.join(rt, "isa")
     tests = []
-    for suite in ("rv32ui", "rv32um"):
+    for suite in ("rv32ui", "rv32um") + tuple(z for z in ZSUITES if os.path.isdir(os.path.join(isa, z))):
         d = os.path.join(isa, suite)
         for f in sorted(os.listdir(d)):
             if f.endswith(".S"):
@@ -76,7 +81,7 @@ def main():
         short = os.path.splitext(os.path.basename(src))[0]
         if short in SKIP:
             images[name] = (None, "bo qua: " + SKIP[short], suite); continue
-        march = "rv32im" if suite == "rv32um" else "rv32i"
+        march = "rv32im" if suite == "rv32um" else ("rv32im_" + ZSUITES[suite] if suite in ZSUITES else "rv32i")
         hexf, info = build(src, march, tmp)
         images[name] = (hexf, info, suite)
     total_fail = 0
@@ -86,7 +91,9 @@ def main():
         for name, (hexf, info, suite) in images.items():
             if hexf is None:
                 nskip += 1; continue
-            if suite == "rv32um" and arch != "rv32im":
+            if suite == "rv32um" and not arch.startswith("rv32im"):
+                nskip += 1; continue
+            if suite in ZSUITES and arch != "rv32im_zb":
                 nskip += 1; continue
             r = sh(["vvp", sims[title], f"+img={hexf}"])
             line = [l for l in r.stdout.splitlines() if l.startswith("RESULT")]

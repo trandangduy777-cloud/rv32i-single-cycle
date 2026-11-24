@@ -126,7 +126,7 @@ module rv32i_core #(
         csr_exists = 1'b1;
         case (csr_addr)
             12'h300: csr_rdata = {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
-            12'h301: csr_rdata = 32'h4000_0100;           // misa: RV32, chu I
+            12'h301: csr_rdata = 32'h4000_1100;           // misa: RV32, chu I va M
             12'h305: csr_rdata = {mtvec_r, 2'b00};
             12'h340: csr_rdata = mscratch;
             12'h341: csr_rdata = {mepc_r, 2'b00};

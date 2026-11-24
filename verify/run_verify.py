@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from rv32i_iss import ISS, load_hex                       # noqa: E402
 from gen_prog import Gen, write_hex                       # noqa: E402
+import rv32_zb                                            # noqa: E402
 
 ALL_INSTR = ["lui", "auipc", "jal", "jalr", "beq", "bne", "blt", "bge", "bltu", "bgeu",
              "lb", "lh", "lw", "lbu", "lhu", "sb", "sh", "sw",
@@ -45,6 +46,8 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
         if BPSTRESS:                    # bo du doan nho, tag 1 bit (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DBPSTRESS"]
         cmd[2:2] = [f"-DMULLAT={MUL_LAT}"]   # bo nhan cua pipeline RV32IM
+        for e in ZB:                    # Zba/Zbb/Zbs/Zbc/Zicond: tham so tuong ung cua pipeline = 1
+            cmd[2:2] = [f"-D{e.upper()}=1"]
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
@@ -57,6 +60,9 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
 CACHE = False                           # --cache: chay pipeline RV32IM qua cache voi bo nho tre ngau nhien
 WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 1 = anh xa truc tiep, 2 = 1 tap 2 duong)
 MA = False                              # --ma: pipeline RV32IM voi MISALIGNED = 1, ISS cung khong trap khi lech
+ZB = ()                                 # --zb: cac phan mo rong zba/zbb/zbs/zbc/zicond dang bat (RTL, ISS, bo sinh cung bat)
+STOP_FAIL = False                       # --stop-on-fail: dung o chuong trinh dau tien lech (mutation test: bat duoc la du)
+ZB_PROBE = False                        # --zb-probe: bo sinh them ma Zb cua phan mo rong tat / gan hop le (phai trap lenh bat hop le)
 BPSTRESS = False                        # --bpstress: BTB 4 muc tag 1 bit, RAS 2 muc, gshare 2 bit
 MUL_LAT = 2                             # --mul-lat: bo nhan 0 lap, 1 song song 1 chu ky, 2 song song 2 tang
 _seed = [0]
@@ -94,7 +100,7 @@ def check_one(vvp, prog_words, dmem_words, tmp, tag, irq_csrs=False):
     write_hex(p, prog_words + [0x13] * (1024 - len(prog_words)))
     write_hex(d, dmem_words)
     rtl_lines, timeout = run_rtl(vvp, p, d)
-    iss = ISS(prog_words, dmem_words, irq_csrs, misaligned_hw=MA)
+    iss = ISS(prog_words, dmem_words, irq_csrs, misaligned_hw=MA, zb=ZB)
     iss_lines, halted = iss.run()
     if timeout or not halted:
         return ("TIMEOUT", None), iss.coverage
@@ -117,15 +123,19 @@ def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=Fa
         cov[k] = cov.get(k, 0) + v
     if res[0] != "PASS":
         fails.append(("directed", res))
+        if STOP_FAIL:
+            return cov, fails
     # chuong trinh ngau nhien
     for s in range(seed0, seed0 + n):
-        words, dmem = Gen(s, length, profile, ma=MA).build()
+        words, dmem = Gen(s, length, profile, ma=MA, zb=ZB, zb_probe=ZB_PROBE).build()
         res, c = check_one(vvp, words, dmem, tmp, f"s{s}", full_pipe)
         for k, v in c.items():
             cov[k] = cov.get(k, 0) + v
         instr_total += len(words)
         if res[0] != "PASS":
             fails.append((f"seed {s}", res))
+            if STOP_FAIL:
+                break
             if stop_on_hang and _hung[0]:
                 break
     return cov, fails
@@ -151,6 +161,12 @@ def report(cov, fails, n, pipe=False):
               ("| chua phu: " + ", ".join(miss_t)) if miss_t else "| du 6 loai trap")
     low = sorted((v, k) for k, v in cov.items() if k in (ALL_INSTR_BASE if pipe else ALL_INSTR))[:5]
     print("Lenh it xuat hien nhat:", ", ".join(f"{k}={v}" for v, k in low))
+    if ZB:                              # phu lenh cua cac phan mo rong dang bat
+        zn = sorted({n for e in ZB for n in rv32_zb.NAMES_OF[e]})
+        zmiss = [n for n in zn if cov.get(n, 0) == 0]
+        print("Phu lenh %s: %d/%d" % ("+".join(ZB), len(zn) - len(zmiss), len(zn)),
+              ("| chua phu: " + ", ".join(zmiss)) if zmiss else "| du lenh",
+              "| it nhat: " + ", ".join(f"{k}={v}" for v, k in sorted((cov.get(n, 0), n) for n in zn)[:3]))
 
 
 MUTATIONS = [
@@ -385,9 +401,18 @@ if __name__ == "__main__":
                     help="voi --pipem: load/store lech dia chi bang phan cung (MISALIGNED = 1), sinh nhieu truy cap lech")
     ap.add_argument("--bpstress", action="store_true",
                     help="voi --pipem: bo du doan nho (BTB 4 muc tag 1 bit, RAS 2, gshare 2): trung nham BTB lien tuc")
+    ap.add_argument("--zb", default="", help="voi --pipem: bat phan mo rong, vd. all hoac zba,zbb,zbs,zbc,zicond (RTL, ISS, bo sinh)")
+    ap.add_argument("--stop-on-fail", action="store_true", help="dung o chuong trinh dau tien lech (cho mutation test)")
+    ap.add_argument("--zb-probe", action="store_true",
+                    help="bo sinh them ma Zb cua phan mo rong tat va ma gan hop le: ca RTL va ISS phai bao lenh bat hop le")
     ap.add_argument("--mul-lat", type=int, default=2, choices=[0, 1, 2], help="voi --pipem: kieu bo nhan")
     a = ap.parse_args()
     MUL_LAT = a.mul_lat
+    ZB = tuple(rv32_zb.ALL_EXTS) if a.zb == "all" else tuple(e for e in a.zb.split(",") if e)
+    if any(e not in rv32_zb.ALL_EXTS for e in ZB) or (ZB and not a.pipem):
+        sys.exit("--zb chi dung voi --pipem, danh sach: " + ",".join(rv32_zb.ALL_EXTS) + " hoac all")
+    ZB_PROBE = a.zb_probe and a.pipem
+    STOP_FAIL = a.stop_on_fail
     CACHE = a.cache and a.pipem
     BPSTRESS = a.bpstress and a.pipem
     WAYS = a.ways
