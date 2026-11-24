@@ -2,7 +2,7 @@
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
 #   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15, 17, 19; khoang 2 gio)
-#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16, 18, 20; vai gio)
+#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16, 18, 20, 21; vai gio)
 #   bash tools/regress.sh tat-ca          # ca hai nhom
 #   bash tools/regress.sh 2 7             # chi cac buoc 2 va 7
 # Can moi truong cua tools/setup_env.sh. Thoat ma 1 o buoc dau tien that bai (in 20 dong cuoi cua log buoc do).
@@ -13,13 +13,13 @@ SPIKE=${SPIKE:-/opt/spike/bin/spike}
 LOGDIR=${LOGDIR:-/tmp/regress_logs}
 mkdir -p "$LOGDIR"
 
-NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 12 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
+NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 15 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (13 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
        "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (117 mutant)" \
-       "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y")
+       "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y" "mutation Zba/Zbb/Zbs/Zbc/Zicond")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
@@ -28,7 +28,8 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
        iverilog -g2012 -DPIPE_FULL -DNO_VCD -o /tmp/r_pm tb_rv32i_pipeline.v rv32im_pipeline.v rv32i_core.v && vvp /tmp/r_pm +prog=prog.hex > /tmp/r1c && grep -q "\[TB\] PASS" /tmp/r1c &&
        echo "3/3 PASS" ;;
     2) (cd verify && for o in "" "--pipe" "--pipem" "--pipem --cache" "--pipem --cache --ways 2" "--pipem --ma" "--pipem --ma --cache" \
-               "--pipem --bpstress" "--pipem --bpstress --cache" "--pipem --mul-lat 0" "--pipem --mul-lat 1" "--pipem --mul-lat 1 --cache"; do
+               "--pipem --bpstress" "--pipem --bpstress --cache" "--pipem --mul-lat 0" "--pipem --mul-lat 1" "--pipem --mul-lat 1 --cache" \
+               "--pipem --zb all --zb-probe" "--pipem --zb zba,zbs --zb-probe --cache" "--pipem --zb zbb,zbc,zicond --zb-probe --bpstress --mul-lat 0"; do
            python3 run_verify.py $o --n 60 > /tmp/r2 2>&1; l=$(head -1 /tmp/r2); echo "  [$o] $l"
            echo "$l" | grep -q "that bai: 0$" || exit 1
        done) ;;
@@ -52,14 +53,15 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
     19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' ;;
     20) PATH=$HOME/.local/bin:$PATH bash formal/mutate.sh ;;
+    21) python3 zb/mutate_zb.py ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
 }
 
 case "${1:-nhanh}" in
     nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17 19" ;;
-    dot-bien) STEPS="10 11 12 13 14 16 18 20" ;;
-    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 19 10 11 12 13 14 16 18 20" ;;
+    dot-bien) STEPS="10 11 12 13 14 16 18 20 21" ;;
+    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 19 10 11 12 13 14 16 18 20 21" ;;
     *)       STEPS="$*" ;;
 esac
 n=$(echo $STEPS | wc -w); k=0; t0=$(date +%s)

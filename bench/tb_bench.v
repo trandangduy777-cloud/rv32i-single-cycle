@@ -1,6 +1,23 @@
 `timescale 1ns/1ps
 // Do hieu nang: chay bench.hex tren 1 loi, in so chu ky, so lenh hoan tat va CPI.
 //   (khong -D): rv32i_core (CPI = 1 voi RV32I, lon hon 1 khi co lenh M)   -DPIPE: rv32i_pipeline   -DPIPE_FULL: rv32im_pipeline
+// phan mo rong bit-manip va Zicond (mac dinh tat): -DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1
+`ifndef ZBA
+`define ZBA 0
+`endif
+`ifndef ZBB
+`define ZBB 0
+`endif
+`ifndef ZBS
+`define ZBS 0
+`endif
+`ifndef ZBC
+`define ZBC 0
+`endif
+`ifndef ZICOND
+`define ZICOND 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
 module tb_bench;
     reg clk = 0, rst_n = 0;
     always #5 clk = ~clk;
@@ -8,7 +25,7 @@ module tb_bench;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we;
 `ifdef PIPE_FULL
-    rv32im_pipeline dut (
+    rv32im_pipeline #(`ZBPARAMS) dut (
 `elsif PIPE
     rv32i_pipeline dut (
 `else

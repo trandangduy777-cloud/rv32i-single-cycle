@@ -47,6 +47,9 @@ jobs:
           python3 run_verify.py --pipem --mul-lat 0 --n 60
           python3 run_verify.py --pipem --mul-lat 1 --n 60
           python3 run_verify.py --pipem --mul-lat 1 --cache --n 60
+          python3 run_verify.py --pipem --zb all --zb-probe --n 60
+          python3 run_verify.py --pipem --zb zba,zbs --zb-probe --cache --n 60
+          python3 run_verify.py --pipem --zb zbb,zbc,zicond --zb-probe --bpstress --mul-lat 0 --n 60
 
       - name: Bo nhan song song (Booth + cay CSA), thu het moi cap o 3-10 bit, gia tri bien + ngau nhien o 33 bit
         run: |
@@ -75,7 +78,7 @@ jobs:
             done
           done
 
-      - name: riscv-tests (rv32ui, rv32um)
+      - name: riscv-tests (rv32ui, rv32um, rv32uzba/zbb/zbc/zbs)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 riscv-tests/run_riscv_tests.py /tmp/riscv-tests
@@ -182,7 +185,7 @@ jobs:
       - name: So vet voi Spike khi co ngat (Spike dang thu vien, irq_storm + bench duoi bao ngat, 2 cau hinh loi)
         run: python3 cosim/irq/run_irq_cosim.py --spike $HOME/spike/bin/spike --quick
 
-      - name: Mutation test mo rong C, cache, du doan nhanh, bo nhan (khi bam Run workflow va hang tuan)
+      - name: Mutation test mo rong C, cache, du doan nhanh, bo nhan, SoC, Zb* (khi bam Run workflow va hang tuan)
         if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
         run: |
           python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
@@ -192,6 +195,7 @@ jobs:
           python3 mul/mutate_mul.py
           sh soc/sw/build.sh
           python3 soc/mutate_soc.py --jobs 4
+          python3 zb/mutate_zb.py
 
   mutation:
     if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')

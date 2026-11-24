@@ -40,7 +40,14 @@ module rv32im_pipeline #(
     parameter        BTB_TAG    = 10,            // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
     parameter        MUL_LAT    = 2,             // nhan: 0 = lap (~18 chu ky), 1 = song song 1 chu ky, 2 = song song 2 tang
     parameter        ZICNTR     = 1,             // 1: bo dem mcycle / minstret (Zicntr) va bo dem su kien (Zihpm)
-    parameter        HPM_N      = 4              // so bo dem su kien mhpmcounter3.. that su dem (0-29; con lai doc 0)
+    parameter        HPM_N      = 4,              // so bo dem su kien mhpmcounter3.. that su dem (0-29; con lai doc 0)
+    // Mo rong thao tac bit va lenh dieu kien (giai ma o ID, thuc thi 1 chu ky o EX, xem "Zba/Zbb/Zbs/Zbc/Zicond"):
+    // mac dinh tat het (RTL, so lieu flow va CI cu giu nguyen); lenh cua phan mo rong dang tat la lenh bat hop le (trap 2)
+    parameter        ZBA        = 0,             // sh1add sh2add sh3add
+    parameter        ZBB        = 0,             // andn orn xnor clz ctz cpop sext.b sext.h zext.h min max minu maxu rol ror rori orc.b rev8
+    parameter        ZBS        = 0,             // bclr bclri bext bexti binv binvi bset bseti
+    parameter        ZBC        = 0,             // clmul clmulh clmulr
+    parameter        ZICOND     = 0              // czero.eqz czero.nez
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -253,9 +260,72 @@ module rv32im_pipeline #(
     wire f7_alt  = (instr[31:25] == 7'b0100000);
     wire f7_m    = (instr[31:25] == 7'b0000001);
 
-    wire legal_reg    = is_reg & (f7_zero | f7_m | (f7_alt & (funct3 == 3'b000 | funct3 == 3'b101)));
+    // ---- Zba / Zbb / Zbs / Zbc / Zicond: giai ma chat theo {funct7, funct3} (va rs2 cho lenh mot ngoi) ----
+    // zb_op la ma thao tac gui xuong EX; zb_*_ok = lenh hop le va phan mo rong tuong ung dang bat.
+    localparam [4:0] Z_SH1ADD = 5'd0,  Z_SH2ADD = 5'd1,  Z_SH3ADD = 5'd2,  Z_ANDN = 5'd3,  Z_ORN  = 5'd4,  Z_XNOR  = 5'd5,
+                     Z_CLZ    = 5'd6,  Z_CTZ    = 5'd7,  Z_CPOP   = 5'd8,  Z_SEXTB = 5'd9, Z_SEXTH = 5'd10, Z_ZEXTH = 5'd11,
+                     Z_MAX    = 5'd12, Z_MAXU   = 5'd13, Z_MIN    = 5'd14, Z_MINU  = 5'd15, Z_ROL  = 5'd16, Z_ROR   = 5'd17,
+                     Z_ORCB   = 5'd18, Z_REV8   = 5'd19, Z_BCLR   = 5'd20, Z_BEXT  = 5'd21, Z_BINV = 5'd22, Z_BSET  = 5'd23,
+                     Z_CLMUL  = 5'd24, Z_CLMULH = 5'd25, Z_CLMULR = 5'd26, Z_CZEQZ = 5'd27, Z_CZNEZ = 5'd28;
+    reg        zb_reg_ok, zb_imm_ok;
+    reg [4:0]  zb_op;
+    always @* begin
+        zb_reg_ok = 1'b0; zb_imm_ok = 1'b0; zb_op = 5'd0;
+        if (is_reg) begin
+            case ({instr[31:25], funct3})
+                {7'b0010000, 3'b010}: begin zb_reg_ok = (ZBA != 0); zb_op = Z_SH1ADD; end
+                {7'b0010000, 3'b100}: begin zb_reg_ok = (ZBA != 0); zb_op = Z_SH2ADD; end
+                {7'b0010000, 3'b110}: begin zb_reg_ok = (ZBA != 0); zb_op = Z_SH3ADD; end
+                {7'b0100000, 3'b111}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_ANDN; end
+                {7'b0100000, 3'b110}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_ORN; end
+                {7'b0100000, 3'b100}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_XNOR; end
+                {7'b0000101, 3'b100}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_MIN; end
+                {7'b0000101, 3'b101}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_MINU; end
+                {7'b0000101, 3'b110}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_MAX; end
+                {7'b0000101, 3'b111}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_MAXU; end
+                {7'b0110000, 3'b001}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_ROL; end
+                {7'b0110000, 3'b101}: begin zb_reg_ok = (ZBB != 0); zb_op = Z_ROR; end
+                {7'b0000100, 3'b100}: begin zb_reg_ok = (ZBB != 0) & (rs2 == 5'd0); zb_op = Z_ZEXTH; end
+                {7'b0100100, 3'b001}: begin zb_reg_ok = (ZBS != 0); zb_op = Z_BCLR; end
+                {7'b0100100, 3'b101}: begin zb_reg_ok = (ZBS != 0); zb_op = Z_BEXT; end
+                {7'b0110100, 3'b001}: begin zb_reg_ok = (ZBS != 0); zb_op = Z_BINV; end
+                {7'b0010100, 3'b001}: begin zb_reg_ok = (ZBS != 0); zb_op = Z_BSET; end
+                {7'b0000101, 3'b001}: begin zb_reg_ok = (ZBC != 0); zb_op = Z_CLMUL; end
+                {7'b0000101, 3'b010}: begin zb_reg_ok = (ZBC != 0); zb_op = Z_CLMULR; end
+                {7'b0000101, 3'b011}: begin zb_reg_ok = (ZBC != 0); zb_op = Z_CLMULH; end
+                {7'b0000111, 3'b101}: begin zb_reg_ok = (ZICOND != 0); zb_op = Z_CZEQZ; end
+                {7'b0000111, 3'b111}: begin zb_reg_ok = (ZICOND != 0); zb_op = Z_CZNEZ; end
+                default: ;
+            endcase
+        end
+        if (is_imm) begin
+            case ({instr[31:25], funct3})
+                {7'b0110000, 3'b001}: begin                   // clz ctz cpop sext.b sext.h: chon theo rs2
+                    case (rs2)
+                        5'd0:    begin zb_imm_ok = (ZBB != 0); zb_op = Z_CLZ; end
+                        5'd1:    begin zb_imm_ok = (ZBB != 0); zb_op = Z_CTZ; end
+                        5'd2:    begin zb_imm_ok = (ZBB != 0); zb_op = Z_CPOP; end
+                        5'd4:    begin zb_imm_ok = (ZBB != 0); zb_op = Z_SEXTB; end
+                        5'd5:    begin zb_imm_ok = (ZBB != 0); zb_op = Z_SEXTH; end
+                        default: ;
+                    endcase
+                end
+                {7'b0110000, 3'b101}: begin zb_imm_ok = (ZBB != 0); zb_op = Z_ROR; end                 // rori
+                {7'b0010100, 3'b101}: begin zb_imm_ok = (ZBB != 0) & (rs2 == 5'b00111); zb_op = Z_ORCB; end
+                {7'b0110100, 3'b101}: begin zb_imm_ok = (ZBB != 0) & (rs2 == 5'b11000); zb_op = Z_REV8; end
+                {7'b0100100, 3'b001}: begin zb_imm_ok = (ZBS != 0); zb_op = Z_BCLR; end                // bclri
+                {7'b0100100, 3'b101}: begin zb_imm_ok = (ZBS != 0); zb_op = Z_BEXT; end                // bexti
+                {7'b0110100, 3'b001}: begin zb_imm_ok = (ZBS != 0); zb_op = Z_BINV; end                // binvi
+                {7'b0010100, 3'b001}: begin zb_imm_ok = (ZBS != 0); zb_op = Z_BSET; end                // bseti
+                default: ;
+            endcase
+        end
+    end
+    wire id_zb = zb_reg_ok | zb_imm_ok;
+
+    wire legal_reg    = is_reg & (f7_zero | f7_m | (f7_alt & (funct3 == 3'b000 | funct3 == 3'b101))) | zb_reg_ok;
     wire legal_imm    = is_imm & ((funct3 == 3'b001) ? f7_zero :
-                                  (funct3 == 3'b101) ? (f7_zero | f7_alt) : 1'b1);
+                                  (funct3 == 3'b101) ? (f7_zero | f7_alt) : 1'b1) | zb_imm_ok;
     wire legal_load   = is_load & (funct3 == 3'b000 | funct3 == 3'b001 | funct3 == 3'b010 |
                                    funct3 == 3'b100 | funct3 == 3'b101);
     wire legal_store  = is_store & (funct3 == 3'b000 | funct3 == 3'b001 | funct3 == 3'b010);
@@ -440,6 +510,8 @@ module rv32im_pipeline #(
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
     reg         idex_illegal_r, idex_ecall_r, idex_ebreak_r, idex_mret_r, idex_csr_r, idex_mext_r, idex_wfi_r;
     reg         idex_fencei_r, idex_fence_r;
+    reg         idex_zb;                                      // lenh Zba/Zbb/Zbs/Zbc/Zicond (ket qua tu zb_out); khong can reset hay gate voi
+    reg  [4:0]  idex_zop;                                     // idex_valid: bong bay khong ghi thanh ghi va ket qua cua no khong duoc dung
     // Cac co dieu khien chi co hieu luc khi idex_valid = 1. Nho vay lenh bi huy boi redirect chi can xoa idex_valid
     // (1 flip-flop) thay vi xoa ~20 co o day, giam so flip-flop ma redirect phai toi.
     wire idex_lui = idex_lui_r & idex_valid;
@@ -534,6 +606,8 @@ module rv32im_pipeline #(
             idex_rd      <= rd;
             idex_funct3  <= funct3;
             idex_f7_5    <= instr[30];
+            idex_zop     <= zb_op;
+            idex_zb      <= id_zb;
         end
     end
 
@@ -577,6 +651,85 @@ module rv32im_pipeline #(
             3'b101: alu_out = do_sra ? sra_out : srl_out;
             3'b110: alu_out = op_a | alu_b;
             3'b111: alu_out = op_a & alu_b;
+        endcase
+    end
+
+    // ---- Zba / Zbb / Zbs / Zbc / Zicond o EX: moi lenh 1 chu ky, toan hang tu mux forwarding (op_a, alu_b) ----
+    // Voi dang immediate (clz.. rori, bclri...) alu_b = idex_imm nen shamt = instr[24:20] giong dang thanh ghi.
+    // Phan mo rong dang tat (tham so = 0) khong bao gio co idex_zb nhung cung duoc rut gon thanh hang so 0 de
+    // cong cu tong hop khong giu logic thua.
+    wire [31:0] zb_a = op_a;
+    wire [31:0] zb_b = alu_b;
+    wire [4:0]  zb_sh = zb_b[4:0];
+
+    function [5:0] zb_clz32(input [31:0] x);       // so bit 0 dau; x = 0 -> 32
+        integer i; reg done;
+        begin
+            zb_clz32 = 6'd32; done = 1'b0;
+            for (i = 31; i >= 0; i = i - 1)
+                if (!done && x[i]) begin zb_clz32 = 6'd31 - i[5:0]; done = 1'b1; end
+        end
+    endfunction
+    function [31:0] zb_rev32(input [31:0] x);
+        integer i;
+        begin for (i = 0; i < 32; i = i + 1) zb_rev32[i] = x[31 - i]; end
+    endfunction
+    function [5:0] zb_pop32(input [31:0] x);
+        integer i;
+        begin zb_pop32 = 6'd0; for (i = 0; i < 32; i = i + 1) zb_pop32 = zb_pop32 + {5'd0, x[i]}; end
+    endfunction
+    function [63:0] zb_clmul64(input [31:0] x, input [31:0] y);   // nhan khong nho (carry-less), tich day du 64 bit
+        integer i;
+        begin
+            zb_clmul64 = 64'd0;
+            for (i = 0; i < 32; i = i + 1)
+                if (y[i]) zb_clmul64 = zb_clmul64 ^ ({32'd0, x} << i);
+        end
+    endfunction
+
+    wire [31:0] z_sh1   = {zb_a[30:0], 1'b0} + zb_b;
+    wire [31:0] z_sh2   = {zb_a[29:0], 2'b0} + zb_b;
+    wire [31:0] z_sh3   = {zb_a[28:0], 3'b0} + zb_b;
+    wire        z_lt    = ($signed(zb_a) < $signed(zb_b));
+    wire        z_ltu   = (zb_a < zb_b);
+    wire        z_rol   = (idex_zop == Z_ROL);
+    wire [4:0]  z_ramt  = z_rol ? (5'd0 - zb_sh) : zb_sh;                 // rol = quay phai (32 - sh): dung chung 1 bo quay
+    wire [63:0] z_rot   = {zb_a, zb_a} >> z_ramt;
+    wire [31:0] z_bit   = 32'd1 << zb_sh;
+    wire [63:0] z_clm   = (ZBC != 0) ? zb_clmul64(zb_a, zb_b) : 64'd0;
+    wire [5:0]  z_ctz_r = zb_clz32(zb_rev32(zb_a));
+    reg  [31:0] zb_out;
+    always @* begin
+        case (idex_zop)
+            Z_SH1ADD: zb_out = (ZBA != 0) ? z_sh1 : 32'd0;
+            Z_SH2ADD: zb_out = (ZBA != 0) ? z_sh2 : 32'd0;
+            Z_SH3ADD: zb_out = (ZBA != 0) ? z_sh3 : 32'd0;
+            Z_ANDN:   zb_out = (ZBB != 0) ? (zb_a & ~zb_b) : 32'd0;
+            Z_ORN:    zb_out = (ZBB != 0) ? (zb_a | ~zb_b) : 32'd0;
+            Z_XNOR:   zb_out = (ZBB != 0) ? ~(zb_a ^ zb_b) : 32'd0;
+            Z_CLZ:    zb_out = (ZBB != 0) ? {26'd0, zb_clz32(zb_a)} : 32'd0;
+            Z_CTZ:    zb_out = (ZBB != 0) ? {26'd0, z_ctz_r} : 32'd0;
+            Z_CPOP:   zb_out = (ZBB != 0) ? {26'd0, zb_pop32(zb_a)} : 32'd0;
+            Z_SEXTB:  zb_out = (ZBB != 0) ? {{24{zb_a[7]}}, zb_a[7:0]} : 32'd0;
+            Z_SEXTH:  zb_out = (ZBB != 0) ? {{16{zb_a[15]}}, zb_a[15:0]} : 32'd0;
+            Z_ZEXTH:  zb_out = (ZBB != 0) ? {16'd0, zb_a[15:0]} : 32'd0;
+            Z_MAX:    zb_out = (ZBB != 0) ? (z_lt  ? zb_b : zb_a) : 32'd0;
+            Z_MAXU:   zb_out = (ZBB != 0) ? (z_ltu ? zb_b : zb_a) : 32'd0;
+            Z_MIN:    zb_out = (ZBB != 0) ? (z_lt  ? zb_a : zb_b) : 32'd0;
+            Z_MINU:   zb_out = (ZBB != 0) ? (z_ltu ? zb_a : zb_b) : 32'd0;
+            Z_ROL, Z_ROR: zb_out = (ZBB != 0) ? z_rot[31:0] : 32'd0;
+            Z_ORCB:   zb_out = (ZBB != 0) ? {{8{|zb_a[31:24]}}, {8{|zb_a[23:16]}}, {8{|zb_a[15:8]}}, {8{|zb_a[7:0]}}} : 32'd0;
+            Z_REV8:   zb_out = (ZBB != 0) ? {zb_a[7:0], zb_a[15:8], zb_a[23:16], zb_a[31:24]} : 32'd0;
+            Z_BCLR:   zb_out = (ZBS != 0) ? (zb_a & ~z_bit) : 32'd0;
+            Z_BEXT:   zb_out = (ZBS != 0) ? {31'd0, zb_a[zb_sh]} : 32'd0;
+            Z_BINV:   zb_out = (ZBS != 0) ? (zb_a ^ z_bit) : 32'd0;
+            Z_BSET:   zb_out = (ZBS != 0) ? (zb_a | z_bit) : 32'd0;
+            Z_CLMUL:  zb_out = z_clm[31:0];
+            Z_CLMULR: zb_out = z_clm[62:31];
+            Z_CLMULH: zb_out = z_clm[63:32];
+            Z_CZEQZ:  zb_out = (ZICOND != 0) ? ((zb_b == 32'd0) ? 32'd0 : zb_a) : 32'd0;
+            Z_CZNEZ:  zb_out = (ZICOND != 0) ? ((zb_b != 32'd0) ? 32'd0 : zb_a) : 32'd0;
+            default:  zb_out = 32'd0;
         endcase
     end
 
@@ -787,6 +940,7 @@ module rv32im_pipeline #(
                             idex_csr              ? csr_rdata       :
                             idex_mext             ? m_result        :
                             (idex_load | idex_store) ? (op_a + idex_imm) :
+                            idex_zb               ? zb_out          :
                                                       alu_out;
 
     // cap nhat bo du doan tre 1 chu ky: EX ghi ket qua vao thanh ghi, chu ky sau moi sua bang (xem "Du doan nhanh")
