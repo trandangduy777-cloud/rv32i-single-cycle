@@ -47,7 +47,7 @@ class Gen:
         self.ma = ma            # True: load/store lech chay bang phan cung (MISALIGNED = 1), sinh nhieu hon
         self.base = (profile == "base")
         self.csrs = CSR_LIST + ([("mie", 0x304), ("mip", 0x344)] if profile == "irq" else [])
-        self.bad_csrs = [0x000, 0x7C0, 0xB00, 0xC00, 0xF11, 0x100, 0x3A0] + ([] if profile == "irq" else [0x304, 0x344])
+        self.bad_csrs = [0x000, 0x7C0, 0xB01, 0xC01, 0xF11, 0x100, 0x3A0] + ([] if profile == "irq" else [0x304, 0x344])
 
     # Nhom thanh ghi "nong": chon thanh ghi nguon/dich tu nhom nho voi xac suat HOT_P de cac lenh sat nhau
     # hay phu thuoc du lieu (forwarding, load-use). x0 nam trong nhom de thu ghi/doc x0 giua chuoi phu thuoc.
