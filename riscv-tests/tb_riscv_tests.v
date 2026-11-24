@@ -3,6 +3,23 @@
 //   (khong -D)  : rv32i_core (single-cycle)    -DPIPE : rv32i_pipeline    -DPIPE_FULL : rv32im_pipeline
 // Anh (hex tu 32 bit moi dong) nap vao CA bo nho lenh va bo nho du lieu (kien truc Harvard cua loi nay),
 // moi bo nho 64 KB. Tham so: +img=<file hex>. Ket qua: ghi vao TOHOST (0x00100000), 1 = PASS.
+// phan mo rong bit-manip va Zicond (mac dinh tat): -DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1
+`ifndef ZBA
+`define ZBA 0
+`endif
+`ifndef ZBB
+`define ZBB 0
+`endif
+`ifndef ZBS
+`define ZBS 0
+`endif
+`ifndef ZBC
+`define ZBC 0
+`endif
+`ifndef ZICOND
+`define ZICOND 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
 module tb_riscv_tests;
     reg clk = 0;
     reg rst_n = 0;
@@ -13,7 +30,7 @@ module tb_riscv_tests;
     wire        dmem_we;
 
 `ifdef PIPE_FULL
-    rv32im_pipeline dut (
+    rv32im_pipeline #(`ZBPARAMS) dut (
 `elsif PIPE
     rv32i_pipeline dut (
 `else

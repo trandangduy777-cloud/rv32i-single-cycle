@@ -12,7 +12,11 @@ Quy uoc giong RTL:
   - trap: lenh bat hop le(2) EBREAK(3) ECALL(11) nhay toi dia chi khong chia het 4 (0)
     lenh gay trap khong ghi thanh ghi/bo nho; dong vet van in voi rd=0 va st=0
 """
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rv32_zb                                       # noqa: E402  (Zba/Zbb/Zbs/Zbc/Zicond)
 
 M32 = 0xFFFFFFFF
 TOHOST = 0x1000
@@ -30,7 +34,8 @@ def s32(v):
 
 
 class ISS:
-    def __init__(self, prog, dmem=None, irq_csrs=False, misaligned_hw=False):
+    def __init__(self, prog, dmem=None, irq_csrs=False, misaligned_hw=False, zb=()):
+        self.zb = frozenset(zb)          # phan mo rong bit-manip/Zicond dang bat (rv32_zb.ALL_EXTS); rong = RV32IM nhu cu
         self.ma = misaligned_hw          # True: load/store lech dia chi chay binh thuong (khong trap), giong MISALIGNED = 1
         self.imem = list(prog) + [NOP] * (MEM_WORDS - len(prog))
         self.dmem = list(dmem) + [0] * (MEM_WORDS - len(dmem)) if dmem else [0] * MEM_WORDS
@@ -180,6 +185,9 @@ class ISS:
                 store = (addr, data & mask, strb)
             if not self.ma and ((f3 == 1 and addr & 1) or (f3 == 2 and addr & 3)):
                 trap = (6, addr)
+        elif self.zb and op in (0b0110011, 0b0010011) and rv32_zb.decode(self.zb, op, f3, f7, rs2):
+            name = rv32_zb.decode(self.zb, op, f3, f7, rs2)
+            wr = (rd, rv32_zb.execute(name, a, rs2 if op == 0b0010011 else b))      # dang immediate: toan hang 2 = shamt
         elif op == 0b0010011 and (f3 not in (1, 5) or
                                   (f3 == 1 and f7 == 0) or (f3 == 5 and f7 in (0, 0x20))):
             if f3 == 1:
