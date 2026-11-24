@@ -122,6 +122,10 @@ jobs:
         run: JOBS=$(nproc) bash formal/run.sh run '.'
       - name: Dot bien co y (moi loi phai bi bat)
         run: bash formal/mutate.sh
+      - name: Chung minh bo chia (k-induction tren RTL + dai so z3, 3 cau hinh, 7 dot bien)
+        run: |
+          pip install -q --break-system-packages z3-solver || pip install -q z3-solver
+          bash formal/div/run.sh
       - name: Luu log
         if: always()
         uses: actions/upload-artifact@v4

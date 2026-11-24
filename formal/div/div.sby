@@ -1,0 +1,22 @@
+[tasks]
+p1s2
+p0s1
+p0s4
+
+[options]
+mode prove
+depth 4
+
+[engines]
+smtbmc boolector
+
+[script]
+read_verilog -formal -D RISCV_FORMAL_DIV rv32i_core.v div_harness.v
+p1s2: chparam -set PREP 1 -set STEPS 2 div_harness
+p0s1: chparam -set PREP 0 -set STEPS 1 div_harness
+p0s4: chparam -set PREP 0 -set STEPS 4 div_harness
+prep -top div_harness
+
+[files]
+../../rv32i_core.v
+div_harness.v

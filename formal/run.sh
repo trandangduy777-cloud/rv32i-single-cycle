@@ -20,6 +20,7 @@ fi
 CORE=$WORK/riscv-formal/cores/rv32im_pipeline
 mkdir -p "$CORE"
 cp "$CFG" "$CORE/checks.cfg"
+cp "$HERE/formal/rvfi_csrw_check.sv" "$WORK/riscv-formal/checks/rvfi_csrw_check.sv"   # ban sua: CSR ghi mot phan
 RTL_DIR=${RTL_DIR:-$HERE}
 for f in formal/wrapper.sv rv32im_pipeline.v rv32i_core.v rv32c_decompress.v; do cp "$RTL_DIR/$f" "$CORE/$(basename $f)"; done
 cmd=${1:-gen}; shift || true

@@ -21,3 +21,5 @@ synth/build/
 # SoC: chuong trinh C va tong hop
 soc/sw/build/
 soc/synth/build/
+formal/div/div/
+formal/div/div_*/
