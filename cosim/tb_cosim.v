@@ -44,15 +44,32 @@ module tb_cosim;
 `ifndef MULLAT
 `define MULLAT 2
 `endif
+// phan mo rong bit-manip va Zicond (mac dinh tat): -DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1
+`ifndef ZBA
+`define ZBA 0
+`endif
+`ifndef ZBB
+`define ZBB 0
+`endif
+`ifndef ZBS
+`define ZBS 0
+`endif
+`ifndef ZBC
+`define ZBC 0
+`endif
+`ifndef ZICOND
+`define ZICOND 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
     localparam MA_HW = 0;
 `endif
 `ifdef RVC
-    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG), .MUL_LAT(`MULLAT)) dut (
+    rv32im_pipeline #(.RESET_PC(BASE), .ENABLE_C(1), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG), .MUL_LAT(`MULLAT), `ZBPARAMS) dut (
 `else
-    rv32im_pipeline #(.RESET_PC(BASE), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG), .MUL_LAT(`MULLAT)) dut (
+    rv32im_pipeline #(.RESET_PC(BASE), .MISALIGNED(MA_HW), .BTB_N(`BTBN), .RAS_N(`RASN), .GHR_BITS(`GHRB), .BTB_TAG(`BTAG), .MUL_LAT(`MULLAT), `ZBPARAMS) dut (
 `endif
 `elsif PIPE
     rv32i_pipeline #(.RESET_PC(BASE)) dut (

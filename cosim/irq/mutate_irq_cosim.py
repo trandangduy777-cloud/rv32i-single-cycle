@@ -33,6 +33,25 @@ EXTRA = [
     ("mtvec vectored: exception cung nhay theo ma nguyen nhan",
      "wire [31:2] trap_base  = (irq_take & mtvec_vec) ? mtvec_r + {26'd0, trap_cause[3:0]} : mtvec_r;",
      "wire [31:2] trap_base  = mtvec_vec ? mtvec_r + {26'd0, trap_cause[3:0]} : mtvec_r;"),
+    # ---- bo dem Zicntr / Zihpm (cosim/irq/counters.S) ----
+    ("minstret doc o EX quen lenh cu hon o MEM",
+     "wire [1:0]  ir_old    = {1'b0, exmem_valid & ~exmem_trap & exmem_icnt} + {1'b0, rt_inc & memwb_icnt};",
+     "wire [1:0]  ir_old    = {1'b0, rt_inc & memwb_icnt};"),
+    ("ghi minstret khong tru lenh cu hon con trong pipeline",
+     "minstret_r <= cnt_new - {63'd0, exmem_valid & ~exmem_trap & exmem_icnt};", "minstret_r <= cnt_new;"),
+    ("lenh ghi minstret van tu tang", "assign      cnt_icnt  = ~cnt_wr_ir & ~mcinh[2];",
+     "assign      cnt_icnt  = ~mcinh[2];"),
+    ("mcountinhibit.IR bi bo qua", "assign      cnt_icnt  = ~cnt_wr_ir & ~mcinh[2];",
+     "assign      cnt_icnt  = ~cnt_wr_ir;"),
+    ("lenh gay trap van duoc dem", "wire        rt_inc    = wb_commit & ~memwb_trap;",
+     "wire        rt_inc    = wb_commit;"),
+    ("minstret mat nho sang nua cao", "else if (rt_inc && memwb_icnt)  minstret_r <= minstret_r + 64'd1;",
+     "else if (rt_inc && memwb_icnt)  minstret_r <= {minstret_r[63:32], minstret_r[31:0] + 32'd1};"),
+    ("mcountinhibit.CY bi bo qua", "else if (!mcinh[0])             mcycle_r <= mcycle_r + 64'd1;",
+     "else                            mcycle_r <= mcycle_r + 64'd1;"),
+    ("su kien nhanh dem ca lenh khong phai nhanh", "assign hpm_evt[7]  = ex_upd & idex_branch;",
+     "assign hpm_evt[7]  = ex_upd;"),
+    ("misa thieu M", "12'h301: csr_rdata = 32'h4000_1100 |", "12'h301: csr_rdata = 32'h4000_0100 |"),
 ]
 
 

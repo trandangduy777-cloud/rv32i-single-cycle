@@ -17,18 +17,34 @@ module tb_trace_pipe;
 `ifndef MULLAT
 `define MULLAT 2   // bo nhan: 0 lap, 1 song song 1 chu ky, 2 song song 2 tang (--mul-lat)
 `endif
+`ifndef ZBA
+`define ZBA 0      // phan mo rong bit-manip va Zicond (--zb): -DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1
+`endif
+`ifndef ZBB
+`define ZBB 0
+`endif
+`ifndef ZBS
+`define ZBS 0
+`endif
+`ifndef ZBC
+`define ZBC 0
+`endif
+`ifndef ZICOND
+`define ZICOND 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
 `ifdef PIPE_FULL
 `ifdef BPSTRESS   // bo du doan nho, tag 1 bit: BTB trung nham lien tuc, RAS tran, gshare 2 bit (kiem cac duong sua o ID/EX)
 `ifdef MA
-    rv32im_pipeline #(.MISALIGNED(1), .BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2), .MUL_LAT(`MULLAT)) dut (
+    rv32im_pipeline #(.MISALIGNED(1), .BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2), .MUL_LAT(`MULLAT), `ZBPARAMS) dut (
 `else
-    rv32im_pipeline #(.BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2), .MUL_LAT(`MULLAT)) dut (
+    rv32im_pipeline #(.BTB_N(4), .BTB_TAG(1), .RAS_N(2), .GHR_BITS(2), .MUL_LAT(`MULLAT), `ZBPARAMS) dut (
 `endif
 `else
 `ifdef MA
-    rv32im_pipeline #(.MISALIGNED(1), .MUL_LAT(`MULLAT)) dut (    // -DMA: load/store lech dia chi bang phan cung
+    rv32im_pipeline #(.MISALIGNED(1), .MUL_LAT(`MULLAT), `ZBPARAMS) dut (    // -DMA: load/store lech dia chi bang phan cung
 `else
-    rv32im_pipeline #(.MUL_LAT(`MULLAT)) dut (     // RV32IM + CSR + trap
+    rv32im_pipeline #(.MUL_LAT(`MULLAT), `ZBPARAMS) dut (     // RV32IM + CSR + trap
 `endif
 `endif
 `else

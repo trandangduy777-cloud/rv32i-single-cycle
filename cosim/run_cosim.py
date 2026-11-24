@@ -29,6 +29,8 @@ CACHE_FILES = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_
                "rv32_bus_arbiter.v"]
 # Zifencei: single-cycle nap moi lenh sau khi lenh truoc xong nen tu nhien dung; pipeline RV32IM xoa cache lenh va
 # nap lai khi gap FENCE.I. Pipeline RV32I coi FENCE.I la NOP nen khong ho tro.
+ZBARCH = "zba_zbb_zbc_zbs_zicond"
+ZBFLAGS = "-DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1"
 CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("pipeline RV32I", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
          ("pipeline RV32IM", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im_zifencei"),
@@ -57,7 +59,12 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC nhan 1 chu ky + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DMULLAT=1 -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
           CACHE_FILES, "rv32imc_zifencei", ["+lat=8", "+seed=13"]),
          ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2 -DBTBN=4 "
-          "-DRASN=2 -DGHRB=2 -DBTAG=1", CACHE_FILES, "rv32imc_zifencei", ["+lat=6", "+seed=9"])]
+          "-DRASN=2 -DGHRB=2 -DBTAG=1", CACHE_FILES, "rv32imc_zifencei", ["+lat=6", "+seed=9"]),
+         # Zba, Zbb, Zbs, Zbc, Zicond (tham so ZBA... = 1): chay them zb.S va benchmark / CoreMark bien dich co Zb
+         ("RV32IMC + Zba/Zbb/Zbs/Zbc/Zicond", "-DPIPE_FULL -DRVC " + ZBFLAGS,
+          ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"], "rv32imc_zifencei_" + ZBARCH),
+         ("RV32IMC + Zb* + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2 " + ZBFLAGS,
+          CACHE_FILES, "rv32imc_zifencei_" + ZBARCH, ["+lat=8", "+seed=17"])]
 
 
 def exts(march):
@@ -109,7 +116,7 @@ def build_bench(name, march, tmp):
     b = os.path.join(ROOT, "bench")
     ld = os.path.join(tmp, "bench80.ld")
     open(ld, "w").write(open(os.path.join(b, "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
-    tag = name + ("-c" if march.endswith("c") else "")
+    tag = name + ("-c" if "c" in exts(march) else "") + ("-zb" if any(e.startswith("zb") for e in exts(march)) else "")
     elf = os.path.join(tmp, tag + ".elf")
     r = sh(GCC + [f"-march={march}", "-O2", "-fno-builtin", "-fno-tree-loop-distribute-patterns",
                   f"-DSTACK_TOP=0x{BASE + 0x3F000:x}", f"-DTOHOST_ADDR=0x{TOHOST:x}",
@@ -245,8 +252,11 @@ def main():
     # Moi chuong trinh duoc bien dich 2 lan: khong co C (cho ca 4 loi) va voi -march=...c (trinh hop dich tu nen
     # lenh nao nen duoc, chi chay tren loi co ENABLE_C). rv32uc (rvc.S) chi co ban C.
     progs = []      # (ten, elf, march)
+    # bo test Zba/Zbb/Zbc/Zbs/Zicond cua riscv-tests: bien dich voi -march tuong ung, chi chay tren loi co phan mo rong do
+    zsuites = tuple((d, "rv32im_" + d[5:]) for d in ("rv32uzba", "rv32uzbb", "rv32uzbc", "rv32uzbs", "rv32uzicond")
+                    if os.path.isdir(os.path.join(a.riscv_tests, "isa", d)))
     for suite, march in (("rv32ui", "rv32i"), ("rv32um", "rv32im"), ("rv32ui", "rv32ic"), ("rv32um", "rv32imc"),
-                         ("rv32uc", "rv32ic")):
+                         ("rv32uc", "rv32ic")) + zsuites:
         d = os.path.join(a.riscv_tests, "isa", suite)
         for fn in sorted(os.listdir(d)):
             t = fn[:-2]
@@ -270,12 +280,19 @@ def main():
     progs.append(build_bench("bench_m", "rv32imc", tmp) + ("rv32imc",))
     progs.append(build_bench("bench_call", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_call", "rv32ic", tmp) + ("rv32ic",))
+    # Zba/Zbb/Zbs/Zbc/Zicond: test tu viet zb.S (moi lenh, gia tri bien, hazard) va benchmark bien dich co Zb
+    # (trinh bien dich tu dung shNadd, andn, min/max, rori, bset...): chi chay tren loi co cac phan mo rong nay
+    progs.append(build_asm(os.path.join(HERE, "tests", "zb.S"), "rv32im_" + ZBARCH, tmp) + ("rv32im_" + ZBARCH,))
+    progs.append(build_bench("bench", "rv32imc_zba_zbb_zbs", tmp) + ("rv32imc_zba_zbb_zbs",))
+    progs.append(build_bench("bench_m", "rv32imc_zba_zbb_zbs", tmp) + ("rv32imc_zba_zbb_zbs",))
+    progs.append(build_bench("bench_call", "rv32imc_zba_zbb_zbs", tmp) + ("rv32imc_zba_zbb_zbs",))
     # CoreMark 1 vong (ma nguon EEMBC lay tu GitHub, port o coremark/port): so tung lenh, khoang 313 nghin lenh
     if not a.no_coremark:
         sys.path.insert(0, os.path.join(ROOT, "coremark"))
         import run_coremark as cm
         cm.fetch_src()
         progs.append(("coremark", cm.build("rv32im", 1, tmp)[0], "rv32im"))
+        progs.append(("coremark-zb", cm.build("rv32imc_zba_zbb_zbs", 1, tmp)[0], "rv32imc_zba_zbb_zbs"))
     if a.only:
         progs = [p for p in progs if a.only in p[0]]
 
