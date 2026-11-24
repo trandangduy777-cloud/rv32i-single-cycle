@@ -1,5 +1,5 @@
-// SoC nho quanh pipeline RV32IMC (rv32im_pipeline, ENABLE_C = 1): ROM + RAM + CLINT (rv32_mtimer) + UART + GPIO + SYSCON qua soc_bus.
-// Bo nho to hop nen dmem_ready = imem_ready = 1; khong co cache. irq_ext = ngat UART | ngat GPIO; irq_timer / irq_soft tu CLINT.
+// SoC nho quanh pipeline RV32IMC (rv32im_pipeline, ENABLE_C = 1): ROM + RAM + CLINT (rv32_mtimer) + PLIC + UART + GPIO + SYSCON qua soc_bus.
+// Bo nho to hop nen dmem_ready = imem_ready = 1; khong co cache. irq_ext = dau ra PLIC (UART RX, UART TX, GPIO, 4 ngat ngoai); irq_timer / irq_soft tu CLINT.
 module soc_top #(
     parameter        ROM_WORDS   = 4096,                  // 16 KB
     parameter        RAM_WORDS   = 4096,                  // 16 KB
@@ -13,6 +13,7 @@ module soc_top #(
     input  wire              rst_n,
     input  wire              uart_rx,
     output wire              uart_tx,
+    input  wire [3:0]        ext_irq,       // 4 nguon ngat ngoai (muc cao), vao PLIC nguon 4..7
     input  wire [GPIO_N-1:0] gpio_in,
     output wire [GPIO_N-1:0] gpio_out,
     output wire [GPIO_N-1:0] gpio_oe,
@@ -25,7 +26,8 @@ module soc_top #(
     wire [31:0] imem_addr, imem_data, dmem_addr, dmem_wdata, dmem_rdata;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we, dmem_re;
-    wire        irq_timer, irq_soft, irq_ext, irq_uart, irq_gpio;
+    wire        irq_timer, irq_soft, irq_ext, irq_uart, irq_uart_rx, irq_uart_tx, irq_gpio, sel_plic;
+    wire [31:0] plic_rd;
 
     rv32im_pipeline #(.ENABLE_C(1)) u_core (
         .clk(clk), .rst_n(rst_n),
@@ -40,8 +42,8 @@ module soc_top #(
 
     soc_bus #(.ROM_AW(ROM_AW), .RAM_AW(RAM_AW)) u_bus (
         .daddr(dmem_addr), .dwe(dmem_we), .dre(dmem_re),
-        .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys),
-        .rom_rd(rom_rd), .ram_rd(ram_rd), .clint_rd(clint_rd), .uart_rd(uart_rd), .gpio_rd(gpio_rd), .sys_rd(sys_rd),
+        .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys), .sel_plic(sel_plic),
+        .rom_rd(rom_rd), .ram_rd(ram_rd), .clint_rd(clint_rd), .uart_rd(uart_rd), .gpio_rd(gpio_rd), .sys_rd(sys_rd), .plic_rd(plic_rd),
         .rdata(dmem_rdata), .bus_err(bus_err), .iaddr(imem_addr), .i_sel_rom(i_sel_rom), .i_sel_ram(i_sel_ram)
     );
 
@@ -62,7 +64,7 @@ module soc_top #(
 
     soc_uart #(.DEFAULT_DIV(UART_DIV), .RX_DEPTH(UART_RX_DEPTH)) u_uart (
         .clk(clk), .rst_n(rst_n), .sel(sel_uart), .addr(dmem_addr[4:2]), .we(dmem_we), .re(dmem_re), .wstrb(dmem_wstrb),
-        .wdata(dmem_wdata), .rdata(uart_rd), .rx(uart_rx), .tx(uart_tx), .irq(irq_uart)
+        .wdata(dmem_wdata), .rdata(uart_rd), .rx(uart_rx), .tx(uart_tx), .irq(irq_uart), .irq_rx(irq_uart_rx), .irq_tx(irq_uart_tx)
     );
 
     soc_gpio #(.N(GPIO_N)) u_gpio (
@@ -75,5 +77,9 @@ module soc_top #(
         .wdata(dmem_wdata), .rdata(sys_rd), .bus_err(bus_err), .exit_valid(exit_valid), .exit_code(exit_code)
     );
 
-    assign irq_ext = irq_uart | irq_gpio;
+    // PLIC: nguon 1 = UART RX, 2 = UART TX san sang, 3 = GPIO, 4..7 = ext_irq[0..3]; dau ra la irq_ext (mip.MEIP) cua loi
+    soc_plic #(.NSRC(7), .PRIO_W(3)) u_plic (
+        .clk(clk), .rst_n(rst_n), .sel(sel_plic), .addr(dmem_addr[21:2]), .we(dmem_we), .re(dmem_re), .wstrb(dmem_wstrb),
+        .wdata(dmem_wdata), .rdata(plic_rd), .src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx}), .eip(irq_ext)
+    );
 endmodule

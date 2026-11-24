@@ -83,6 +83,7 @@ jobs:
       - name: SoC (bus, UART, GPIO, timer, chuong trinh C qua UART, so bit UART)
         run: |
           sh soc/sw/build.sh
+          sh soc/freertos/build.sh
           python3 soc/run_soc.py
 
       - name: Benchmark (CPI, so checksum giua cac loi)

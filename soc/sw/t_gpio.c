@@ -4,7 +4,12 @@
 volatile u32 irqs, last_pend;
 void trap_c(void) {
     u32 c = csr_read(mcause);
-    if (c == 0x8000000Bu) { last_pend = GPIO_PEND; GPIO_PEND = last_pend; irqs++; }
+    if (c == 0x8000000Bu) {
+        u32 id = PLIC_CLAIM;                              /* claim qua PLIC */
+        if (id == IRQ_GPIO) { last_pend = GPIO_PEND; GPIO_PEND = last_pend; irqs++; }
+        else die(0xBAD10000u | id);
+        PLIC_CLAIM = id;                                  /* complete */
+    }
     else die(0xBAD00000u | (c & 0xFFFF));
 }
 int main(void) {
@@ -25,6 +30,7 @@ int main(void) {
 
     /* ngat canh len chan 12 va canh xuong chan 13 */
     GPIO_EDGE = 1u << 13; GPIO_PEND = 0xFFFF; GPIO_IE = (1u << 12) | (1u << 13);
+    PLIC_PRIO(IRQ_GPIO) = 1; PLIC_EN = 1u << IRQ_GPIO; PLIC_THR = 0;
     csr_write(mie, MIE_MEIE); csr_set(mstatus, MSTATUS_MIE);
     puts_("G2\n");                            /* tb: chan 12 xuong roi len (chi canh len tinh), chan 13 len roi xuong */
     WAIT_IRQ(irqs >= 2);

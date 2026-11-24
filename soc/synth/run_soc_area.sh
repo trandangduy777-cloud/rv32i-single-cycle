@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 mkdir -p build
 cp "$LIBDIR/$LIB" ../../synth/abc.script build/
 cd build
-SRC="../blackbox_mem.v ../../soc_uart.v ../../soc_gpio.v ../../soc_bus.v ../../soc_syscon.v ../../soc_top.v ../../../rv32_mtimer.v \
+SRC="../blackbox_mem.v ../../soc_uart.v ../../soc_gpio.v ../../soc_bus.v ../../soc_syscon.v ../../soc_plic.v ../../soc_top.v ../../../rv32_mtimer.v \
      ../../../rv32im_pipeline.v ../../../rv32i_core.v ../../../rv32c_decompress.v"
 $YOSYS -q -l syn.log -p "read_verilog $SRC; hierarchy -top soc_top; synth -top soc_top; dfflibmap -liberty $LIB; \
     abc -liberty $LIB -D 15000 -script abc.script -dont_use sg13g2_sighold -dont_use sg13g2_lgcp_1 -dont_use sg13g2_slgcp_1; \

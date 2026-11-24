@@ -18,7 +18,7 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 12 cau hinh" "bo nhan: 
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (13 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
-       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (117 mutant)" \
+       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (152 mutant)" \
        "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
@@ -48,7 +48,7 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     14) python3 cache/mutate_cache.py "$RT" --spike "$SPIKE" ;;
     15) python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" ;;
     16) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" ;;
-    17) sh soc/sw/build.sh && python3 soc/run_soc.py ;;
+    17) sh soc/sw/build.sh && sh soc/freertos/build.sh && python3 soc/run_soc.py ;;
     18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
     19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' ;;
     20) PATH=$HOME/.local/bin:$PATH bash formal/mutate.sh ;;

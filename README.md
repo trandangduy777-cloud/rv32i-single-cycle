@@ -75,7 +75,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
 | `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca` hoặc số bước), in một dòng kết quả mỗi bước |
-| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus, ROM/RAM, UART, GPIO, CLINT, SYSCON, phần mềm C (crt0, linker script), testbench và mutation test (xem mục SoC nhỏ) |
+| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus, ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
@@ -339,7 +339,7 @@ Thời điểm nhận ngắt phụ thuộc chu kỳ nên Spike chạy độc l�
 - **Lỗi RTL tìm ra**: `mepc` chỉ lưu bit [31:2]. Với lệnh nén, trap hoặc ngắt ở lệnh có địa chỉ lẻ 2 byte làm `mret` quay về sai chỗ (bộ test ngắt cũ dùng mã không nén nên không thấy). Đã sửa (`mepc` lưu bit 1 khi `ENABLE_C = 1`), thêm đột biến tái hiện.
 - Hai lỗi của chính môi trường test cũng lộ ra và đã sửa: testbench phát ngắt nhanh hơn tốc độ xử lý ở cấu hình bộ nhớ chậm gây livelock (nay chờ tối thiểu một số lệnh sau mỗi lần ack, khoảng cách ngắt timer cộng thêm theo cấu hình), và bản truy cập lệch không xoá vùng dữ liệu giữa 2 lần chạy.
 - `mtvec` hỗ trợ cả chế độ vectored (`MODE = 1`: ngắt nhảy tới `BASE + 4 × mã nguyên nhân`, exception vẫn về `BASE`); `irq_storm` có bản `-DVEC` dùng bảng vector, so với Spike như các bản khác.
-- Hạn chế: chỉ có chế độ M; ngoại vi ngắt là mô hình testbench (chưa có PLIC); CI chạy bản rút gọn (`--quick`, 2 cấu hình lõi), bản đầy đủ mất khoảng 1,5 giờ.
+- Hạn chế: chỉ có chế độ M; ngoại vi ngắt là mô hình testbench (mô hình đó chưa có PLIC; PLIC có ở SoC, mục SoC nhỏ); CI chạy bản rút gọn (`--quick`, 2 cấu hình lõi), bản đầy đủ mất khoảng 1,5 giờ.
 
 ## Mô phỏng
 Cần `python3` và Icarus Verilog (`iverilog`, `vvp`).
@@ -703,7 +703,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 
 ## SoC nhỏ quanh pipeline RV32IMC (`soc/`)
 
-`soc/soc_top.v` ghép `rv32im_pipeline` (`ENABLE_C = 1`) với bus ánh xạ bộ nhớ, ROM, RAM, UART, GPIO, `rv32_mtimer` và một khối SYSCON. Chương trình C (`soc/sw/`) in chuỗi qua UART; testbench giải mã chân `uart_tx` ở mức từng bit và so với chuỗi mong đợi.
+`soc/soc_top.v` ghép `rv32im_pipeline` (`ENABLE_C = 1`) với bus ánh xạ bộ nhớ, ROM, RAM, UART, GPIO, `rv32_mtimer` (CLINT), PLIC (`soc/soc_plic.v`) và một khối SYSCON. Chương trình C (`soc/sw/`) in chuỗi qua UART; testbench giải mã chân `uart_tx` ở mức từng bit và so với chuỗi mong đợi.
 
 **Bản đồ địa chỉ** (cửa sổ 4 KB cho ngoại vi, thanh ghi lặp lại trong cửa sổ; vùng không ánh xạ: đọc ra 0, ghi bị bỏ, đếm vào `SYSCON.BUSERR`):
 
@@ -711,6 +711,7 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 |---|---|---|
 | ROM | `0x0000_0000`, 16 KB | lấy lệnh + đọc dữ liệu; ghi bị bỏ và đếm |
 | CLINT | `0x0200_0000` | `rv32_mtimer`: `mtime` +0/+4, `mtimecmp` +8/+C, `msip` +0x10 |
+| PLIC | `0x0C00_0000`, cửa sổ 4 MB | `soc_plic`: ưu tiên nguồn i tại `4·i`, pending `0x1000`, enable `0x2000`, threshold `0x20_0000`, claim/complete `0x20_0004` (xem bên dưới) |
 | RAM | `0x1000_0000`, 16 KB | dữ liệu và lệnh (chạy mã nạp lúc chạy, cần `fence.i` sau khi ghi mã); lấy lệnh ngoài ROM và RAM gây trap lệnh không hợp lệ, có test |
 | UART | `0x2000_0000` | `TXDATA` 0x00, `RXDATA` 0x04 (đọc là lấy ra), `STATUS` 0x08, `DIV` 0x0C, `IE` 0x10 |
 | GPIO | `0x2000_1000` | 16 chân: `OUT` 0x00, `IN` 0x04, `DIR` 0x08, `IE` 0x0C, `PEND` 0x10 (ghi 1 để xoá), `EDGE` 0x14, `SET`/`CLR`/`TGL` 0x18/0x1C/0x20 |
@@ -718,9 +719,11 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 
 - UART 8N1, tốc độ chia bằng `DIV` (nhỏ nhất 4; mặc định 434, tức 50 MHz / 115200); `STATUS` có TXREADY, RXVALID (FIFO không rỗng), ba cờ dính RXOVR, RXFERR, TXDROP (ghi 1 để xoá) và số byte đang nằm trong FIFO ở bit 11:8; FIFO nhận có độ sâu `RX_DEPTH` (SoC dùng 8; FIFO đầy thì byte mới bị bỏ và đặt RXOVR, đọc `RXDATA` lấy byte đầu ra); RX đồng bộ 2 flip-flop, kiểm điểm giữa bit start, lỗi khung vẫn giao byte rồi đợi đường lên cao. Có ngắt RX và ngắt TX sẵn sàng.
 - GPIO: đầu vào đồng bộ 2 flip-flop, ngắt theo cạnh lên hoặc xuống từng chân; sự kiện mới thắng thao tác xoá `PEND` cùng chu kỳ (có test trực tiếp).
-- Ngắt ngoài của lõi là OR của ngắt UART và GPIO; ngắt timer và phần mềm lấy từ `rv32_mtimer`.
+- Ngắt ngoài của lõi (`irq_ext`, tức `mip.MEIP`) là đầu ra của PLIC; ngắt timer và phần mềm lấy từ `rv32_mtimer`.
 
-**Chạy:** `sh soc/sw/build.sh` (cần `riscv64-unknown-elf-gcc`, ra `soc/sw/build/*.hex`) rồi `python3 soc/run_soc.py` (13 bước: 5 testbench khối + 8 chương trình C). Mutation: `python3 soc/mutate_soc.py --jobs 4`. Đã vào `tools/regress.sh` (bước 17 và 18) và CI.
+**PLIC (`soc/soc_plic.v`):** một hart, một context (M-mode), 7 nguồn, ưu tiên 3 bit (0-7; 0 = không bao giờ ngắt), theo bố cục thanh ghi của đặc tả PLIC. Nguồn: 1 = UART RX (`IE[0] & RXVALID`), 2 = UART TX sẵn sàng (`IE[1] & TXREADY`), 3 = GPIO, 4-7 = chân `ext_irq[0..3]` của `soc_top`. Cổng vào nhạy mức: nguồn lên cao thì pending, claim xoá pending và đánh dấu đang xử lý; nguồn đang xử lý không pending lại cho tới khi complete; nếu sau complete nguồn vẫn cao thì pending lại. Claim trả về nguồn có ưu tiên cao nhất trong số pending, được enable và ưu tiên > threshold, bằng nhau thì ID nhỏ nhất (0 nếu không có); complete với ID không hợp lệ, chưa enable hoặc không đang xử lý bị bỏ qua. Ghi cần `wstrb[0]` (chỉ truy cập từ 32 bit). Kiểm chứng: `tb_plic` (kiểm trực tiếp ưu tiên, threshold, hoà ưu tiên, claim/complete, nguồn mức, nhiều nguồn cùng lúc, byte strobe, cộng 60.000 chu kỳ ngẫu nhiên so với mô hình độc lập viết riêng) và hệ thống: `t_plic` (4 nguồn ngoài, thứ tự claim, threshold, pending giữ khi nguồn hạ), `t_gpio`, `t_irq_uart` đều qua PLIC.
+
+**Chạy:** `sh soc/sw/build.sh` (cần `riscv64-unknown-elf-gcc`, ra `soc/sw/build/*.hex`) rồi `sh soc/freertos/build.sh` (cần mạng để lấy nhân FreeRTOS ở lần đầu) rồi `python3 soc/run_soc.py` (16 bước: 6 testbench khối + 9 chương trình C + FreeRTOS). Mutation: `python3 soc/mutate_soc.py --jobs 4`. Đã vào `tools/regress.sh` (bước 17 và 18) và CI.
 
 **Kết quả thật (iverilog):**
 
@@ -730,14 +733,16 @@ GLS_FILES="gls/rv32im_pipeline.nl.v gls/build/sg13g2_stdcell_func.v $PDK_ROOT/ih
 | `t_mem` | ROM/RAM, byte strobe, ghi ROM, vùng trống, lấy lệnh ngoài ROM | 2.119 |
 | `t_mepc` | trap/ngắt tại PC lệch 2 (xem lỗi lõi bên dưới) | 6.000 |
 | `t_timer` | `mtime`, `mtimecmp`, ngắt timer, `msip` | 16.268 |
-| `t_gpio` | out/in/dir, set/clr/tgl, ngắt cạnh (có kịch bản kéo chân từ testbench) | 25.471 |
+| `t_gpio` | out/in/dir, set/clr/tgl, ngắt cạnh qua PLIC (có kịch bản kéo chân từ testbench) | 25.475 |
 | `t_uart` | TX, RX (testbench gửi 10 byte, FIFO 8 mục giữ 8 byte đầu theo thứ tự và báo tràn), lỗi khung, `DIV` | 31.662 |
-| `t_irq_uart` | ngắt UART qua WFI | 7.127 |
+| `t_irq_uart` | ngắt UART RX và TX qua PLIC (claim/complete) và WFI | 7.258 |
+| `t_plic` | 4 nguồn ngoài cùng lúc: pending, thứ tự claim theo ưu tiên (hoà → ID nhỏ), không báo lại khi chưa complete, threshold, pending giữ khi nguồn hạ | 17.461 |
 | `t_ramexec` | chạy mã nạp vào RAM (lệnh nén, lệnh 32 bit vắt qua ranh giới từ, tự sửa mã + `fence.i`), 8 ngắt timer rơi vào vòng lặp 8192 vòng trong RAM, kết quả vẫn đúng 8192 | 209.690 |
+| `rtos_demo` | FreeRTOS V11.1.0 (xem bên dưới) | 124.387 |
 
 Ngoài ra có testbench riêng `tb_uart_fifo` (FIFO 4 mục: thứ tự, đếm, tràn, quay vòng con trỏ, pop cùng chu kỳ nhận byte khi đầy, lỗi khung) và `tb_mtimer` (`rv32_mtimer` với `PRESCALE` = 3 và 8: mtime tăng đúng chu kỳ, không lệch pha khi ghi, carry lên 32 bit cao, `irq`). Testbench FIFO bắt được ngay một lỗi thật khi viết: pop và push cùng chu kỳ làm bộ đếm tụt một.
 
-Mutation test (`mutate_soc.py`): 117 mutant, trong đó 116 mutant thật đều bị bắt (testbench UART 39, bus 37, GPIO 16, FIFO 4, mtimer 4, các chương trình C còn lại 16) và 1 mutant vô hại cố ý (T12) đúng là sống sót. Bốn mutant (C1-C4) nằm trong `rv32im_pipeline.v` (đường `mepc`). Lần đầu 6 mutant sống sót (U23, U24, U30, T5, T6, T7), mỗi cái dẫn tới thêm một test hoặc thêm một mutant; 18 mutant mới thêm cho lấy lệnh từ RAM, FIFO UART và `PRESCALE`.
+Mutation test (`mutate_soc.py`): 152 mutant, trong đó 151 mutant thật đều bị bắt (testbench UART 41, bus 40, PLIC 27, GPIO 16, FIFO 4, mtimer 4, các chương trình C còn lại 19) và 1 mutant vô hại cố ý (T12) đúng là sống sót. Bốn mutant (C1-C4) nằm trong `rv32im_pipeline.v` (đường `mepc`). 35 mutant mới cho PLIC (PL, PLB, PLT, PLU: chọn ưu tiên, hoà ID, threshold, gateway mức, complete, byte strobe, đấu nguồn, giải mã vùng 4 MB); mutant PL25 bị bỏ vì tương đương (`pend` và `in-flight` không bao giờ cùng bằng 1 lúc complete nên không quan sát được), và PL21 (ghi threshold bỏ qua `wstrb`) từng sống sót cho tới khi thêm kiểm byte strobe vào `tb_plic`. Sáu mutant cũ (BUS11, U25, U26, T1, T2, T5) phải viết lại vì RTL đổi (ngắt qua PLIC). Lần đầu 6 mutant sống sót (U23, U24, U30, T5, T6, T7), mỗi cái dẫn tới thêm một test hoặc thêm một mutant; 18 mutant mới thêm cho lấy lệnh từ RAM, FIFO UART và `PRESCALE`.
 
 **Lỗi lõi mà SoC cũng tự phát hiện:** `mepc` mất bit 1 khi có lệnh nén: ngắt hoặc trap tại PC có dạng 2 mod 4 làm `mret` trả về sai địa chỉ. `t_timer` bắt được lỗi này trong lúc làm SoC; cùng lúc, chat so vết ngắt với Spike cũng tìm ra và đã sửa trên main (commit `a1c8a5f`), nên `rv32im_pipeline.v` không bị sửa thêm ở đây. `soc/sw/t_mepc.c` là test riêng cho lỗi này (hỏng trên lõi cũ với mepc = 0x218, đạt trên lõi đã sửa), và mutant C1-C4 của `mutate_soc.py` chèn lại lỗi vào đường `mepc` để kiểm tra SoC vẫn bắt được.
 
@@ -745,27 +750,76 @@ Mutation test (`mutate_soc.py`): 117 mutant, trong đó 116 mutant thật đều
 
 | Khối | Diện tích (µm²) | Tỉ lệ |
 |---|---|---|
-| `rv32im_pipeline` (gồm bộ nhân, giải nén C) | 400.156 | 87,8 % |
-| `rv32_mtimer` | 18.032 | 4,0 % |
-| `soc_uart` (FIFO nhận 8 byte) | 16.395 | 3,6 % |
+| `rv32im_pipeline` (gồm bộ nhân, giải nén C) | 400.295 | 86,7 % |
+| `rv32_mtimer` | 18.032 | 3,9 % |
+| `soc_uart` (FIFO nhận 8 byte) | 16.375 | 3,5 % |
 | `soc_gpio` | 9.990 | 2,2 % |
-| `soc_syscon` | 8.493 | 1,9 % |
-| `soc_bus` | 1.849 | 0,4 % |
-| keo nối `soc_top` | 744 | 0,2 % |
-| **Tổng, không flatten (không ROM/RAM)** | **455.659** | |
-| **Tổng, có `-flatten` (không ROM/RAM)** | **434.337** | |
+| `soc_syscon` | 8.493 | 1,8 % |
+| `soc_plic` (7 nguồn, ưu tiên 3 bit) | 5.746 | 1,2 % |
+| `soc_bus` | 2.297 | 0,5 % |
+| keo nối `soc_top` | 735 | 0,2 % |
+| **Tổng, không flatten (không ROM/RAM)** | **461.963** | |
+| **Tổng, có `-flatten` (không ROM/RAM)** | **440.518** | |
 
-FIFO nhận làm `soc_uart` tăng từ khoảng 11.040 lên 16.395 µm² (8 byte lưu bằng flip-flop). Ngoại vi và bus cộng lại khoảng 55.500 µm², chiếm 13,9 % so với lõi.
+PLIC thêm 5.746 µm² (1,2 %) và làm `soc_bus` tăng từ 1.849 lên 2.297 µm² (giải mã thêm cửa sổ 4 MB). Ngoại vi và bus cộng lại khoảng 61.700 µm², chiếm 15,4 % so với lõi (trước khi có PLIC: 55.500 µm², 13,9 %); lõi tăng nhẹ từ 400.156 lên 400.295 µm² do các thay đổi của lõi trên main.
 
 **Chỗ yếu, nói thẳng:**
-- Không có phân tích timing cho SoC: máy chạy kiểm chứng không có OpenSTA và việc tự build OpenSTA từ mã nguồn bị chặn, nên chưa có con số tần số; `synth/run_synth_sta.sh` có sẵn nếu có `sta`.
-- Số diện tích lõi trong bảng (400.156) khác 377.265 µm² ở mục Flow chủ yếu vì cách tổng hợp: cùng script yosys + ABC chạy trên `flow/rv32imc_top.v` cho 378.069 µm² khi `-flatten` và 399.382 µm² khi không flatten (đo ở MUL_LAT = 2, trước các thay đổi mới nhất của lõi). Các số này không phải kết quả flow P&R.
+- Timing của SoC chỉ có ở mức STA trước P&R (mục dưới), với ROM/RAM là blackbox và giả định thời gian truy cập; chưa có số từ flow P&R.
+- PLIC chỉ có một context (M-mode), 7 nguồn, 7 mức ưu tiên; chưa có context S-mode, chưa có thanh ghi pending ghi được, và chỉ truy cập 32 bit được kiểm. `tb_plic` so với mô hình do cùng người viết nên nếu hiểu sai đặc tả ở cả hai chỗ thì cả hai cùng sai; chưa có PLIC tham chiếu bên ngoài để so (ví dụ mô hình PLIC của Spike).
+- Số diện tích lõi trong bảng (400.295) khác 377.265 µm² ở mục Flow chủ yếu vì cách tổng hợp: cùng script yosys + ABC chạy trên `flow/rv32imc_top.v` cho 378.069 µm² khi `-flatten` và 399.382 µm² khi không flatten (đo ở MUL_LAT = 2, trước các thay đổi mới nhất của lõi). Các số này không phải kết quả flow P&R.
 - ROM và RAM là mảng flip-flop mô phỏng, chưa có macro SRAM; 16 KB mỗi bên nếu đưa vào tổng hợp sẽ lớn hơn nhiều so với toàn bộ phần còn lại.
 - Kiểm chứng chỉ ở mô phỏng RTL; chưa thử trên FPGA. `PRESCALE` của `rv32_mtimer` chỉ được kiểm bằng testbench riêng (3 và 8), chưa chạy trong SoC đầy đủ.
 - Lấy lệnh từ RAM chạy được, nhưng chưa có bootloader nạp mã qua UART; mã vào RAM do chương trình tự chép. Ghi vào vùng mã mà không `fence.i` thì kết quả không xác định (đúng như đặc tả).
 
+## FreeRTOS trên SoC (`soc/freertos/`)
+
+Nhân FreeRTOS chính thức **V11.1.0, commit `dbf70559b27d39c1fdb68dfb9a32140b6a6777a0`** (`soc/freertos/fetch.sh` clone và kiểm đúng commit, không chép mã nhân vào repo), cổng GCC/RISC-V với CLINT (`RISCV_MTIME_CLINT_no_extensions`): tick lấy từ `mtime`/`mtimecmp` của SoC ở `0x0200_0000` (1 tick = 2.000 chu kỳ), `heap_4` 8 KB. Build: `sh soc/freertos/build.sh` (`-Os`, `rv32imc_zicsr`, `--gc-sections`, dùng chung `crt0.S` và `link.ld` với các test khác): ROM 11.052 byte trong 16 KB, `.bss` 9.316 byte trong RAM 16 KB. Cấu hình ở `FreeRTOSConfig.h`; `rtos_libc.c` và `stubs/` thay libc (toolchain bare-metal không có header libc).
+
+Ứng dụng `main.c` có 4 task (ưu tiên 4 → 1) cùng một hàng đợi, 2 semaphore nhị phân, mutex bảo vệ UART và ngắt UART RX qua PLIC:
+- **uart (4):** ngủ chờ semaphore; ISR PLIC (`freertos_risc_v_application_interrupt_handler`) claim, rút hết FIFO nhận vào vòng đệm, `xSemaphoreGiveFromISR`, complete, rồi `portYIELD_FROM_ISR`; task in mỗi ký tự nhận được.
+- **cons (3):** nhận 5 phần tử từ hàng đợi theo thứ tự và in `Q<n>`; **prod (2):** gửi 1..5 mỗi 3 tick (`xTaskDelayUntil`); **mon (1):** chờ cả hai xong, tự kiểm rồi đo chuyển ngữ cảnh.
+
+Testbench (kịch bản 5) giải mã `uart_tx` ở mức bit (như các bài khác) và so toàn bộ chuỗi với `rtos_demo.exp`: thứ tự khởi động `S4 S3 S2 S1` (đúng ưu tiên), `Q1..Q5` xen `Ua`, `Ux`, `Uy` (ký tự do testbench gửi vào chân `uart_rx` sau `Q2` và `Q4`, hai ký tự liền nhau sau `Q4`), rồi các dòng tự kiểm: số tick của chuỗi 15 tick nằm trong 14-16 (`TICKS OK`), độ dài tick đo bằng `mtime` là 2.000 chu kỳ sai số tối đa 1 tick (`TICKLEN OK`), dữ liệu hàng đợi đúng thứ tự (`QUEUE OK`), số lần ngắt và ký tự (`IRQ OK`), mỗi ngăn xếp còn trống tối thiểu 24 từ (`STACK OK`), `ALLOK` và mã thoát 0. Không deadlock được kiểm bằng việc chương trình phải thoát trước giới hạn 400.000 chu kỳ (chạy hết trong 124.387 chu kỳ, 13 s mô phỏng).
+
+**Số đo thật (iverilog, RTL):**
+
+| Đại lượng | Kết quả | Cách đo |
+|---|---|---|
+| Chuyển ngữ cảnh, task mon → help (`taskYIELD` = `ecall` → `vTaskSwitchContext` → `mret`) | 192 chu kỳ (nhỏ nhất = trung vị, 16 lần) | phần mềm: đọc `mtime` ngay trước `ecall` và ngay sau khi task kia chạy lại |
+| Chuyển ngữ cảnh, task help → mon | 186 chu kỳ (nhỏ nhất = trung vị, 16 lần) | như trên |
+| Chi phí hai lần đọc `mtime` liền nhau | 1 chu kỳ | hiệu chỉnh; số trên chưa trừ |
+| Ngắt ngoài: `eip` của PLIC lên → lấy lệnh đầu tiên ở bộ xử lý trap của FreeRTOS | nhỏ nhất 3, trung bình 16, lớn nhất 58 chu kỳ (4 ngắt) | testbench so chu kỳ `irq_ext` lên với lần `imem_addr` = địa chỉ `freertos_risc_v_trap_handler` |
+| Ngắt ngoài → task uart chạy lại (lấy lệnh đầu của `mark_wake`, ngay sau `xSemaphoreTake`) | nhỏ nhất 470, trung bình 521, lớn nhất 623 chu kỳ (4 ngắt) | như trên, địa chỉ `mark_wake` |
+| Ngăn xếp còn trống nhỏ nhất (từ): uart / cons / prod / mon | 65 / 53 / 69 / 165 (trên 128 / 128 / 128 / 256) | `uxTaskGetStackHighWaterMark` |
+
+Con số ngắt đo ở pha riêng sau dòng `LAT`: mọi task đang ngủ (chỉ Idle chạy), testbench gửi 4 ký tự cách nhau 3.333 chu kỳ (không phải bội của chu kỳ tick). Trong 521 chu kỳ trung bình đến khi task chạy lại có toàn bộ đường lưu ngữ cảnh, ISR (claim, đọc FIFO, give, complete), `vTaskSwitchContext` và khôi phục ngữ cảnh; phần cứng chỉ chiếm 3 chu kỳ khi lõi đang rảnh. `vTaskSwitchContext` dùng `__clzsi2` của libgcc (không có Zbb), nên chọn task nhanh hơn được nếu lõi có `clz`.
+
+**Chỗ yếu của phần FreeRTOS, nói thẳng:**
+- Chỉ 4 mẫu cho mỗi số đo ngắt, nên không phải phân bố độ trễ và càng không phải trường hợp xấu nhất: khi ngắt đến lúc lõi đang ở trong bộ xử lý trap hoặc đoạn găng (MIE = 0) thì trễ lớn hơn nhiều. Lần thử đầu, khi ký tự đến đúng lúc task đang vào `xQueueReceive` (scheduler tạm khoá), task uart chạy lại sau khoảng 970-1.150 chu kỳ; đây là số liệu bị bỏ, không đưa vào bảng, nhưng cho thấy bảng chỉ mô tả trường hợp rảnh.
+- Con số chuyển ngữ cảnh là đường `taskYIELD` giữa hai task cùng ưu tiên (đã gồm lệnh `ecall` và hai lần đọc `mtime`), không phải mọi đường chuyển (từ ISR, từ tick, khi mutex đảo ưu tiên).
+- Chỉ nối nguồn UART RX vào FreeRTOS; ngắt TX, GPIO và 4 nguồn ngoài chỉ được thử ở các bài C trần. Không có ngắt lồng nhau, không có `timers.c`, event group, notification, cấp phát tĩnh.
+- Chưa so từng lệnh với Spike khi chạy FreeRTOS: harness Spike hiện có (`cosim/irq/`) dùng bản đồ bộ nhớ và thiết bị của riêng nó, còn SoC này có UART, PLIC, CLINT ở địa chỉ khác nên cần dựng thêm mô hình thiết bị trong Spike; phần này chưa làm.
+- Nhân được lấy từ GitHub lúc build (cần mạng), chỉ ghim theo commit; kết quả đúng với đúng commit đó.
+
+## STA trước P&R cho SoC
+
+`soc/synth/run_soc_sta.sh <thư mục lib sg13g2_stdcell>` tổng hợp `soc_top` có `-flatten` (yosys + ABC như `run_soc_area.sh`) rồi chạy OpenSTA (build từ mã nguồn, bản 3.2.0, cùng thư viện SG13G2 góc chậm 1,08 V 125 °C). Ràng buộc như flow của lõi: chu kỳ 15 ns, trễ vào/ra 20 % chu kỳ, bỏ đường reset. ROM/RAM là blackbox (chưa có macro) nên được mô hình bằng cell không có cung thời gian (`mem_stub_lib.py`) với giả định: chân vào của bộ nhớ là điểm cuối có output delay `D_MEM` = 3 ns, chân ra là điểm đầu với input delay 0.
+
+| Kết quả (15 ns, trước P&R) | Giá trị |
+|---|---|
+| Diện tích tổng hợp (flatten, không ROM/RAM) | 440.532 µm² |
+| Slack xấu nhất (WNS) | −0,754 ns (TNS −22,4 ns) |
+| Đường tới hạn | `ifid_instr[20]` → `pc[7]` (nhảy sớm ở ID), trễ 15,53 ns, setup 0,22 ns; chu kỳ tối thiểu ≈ 15,75 ns (≈ 63 MHz) |
+| Tới chân bộ nhớ (thời điểm tín hiệu tới) | ROM 0,81 ns; RAM 3,45 ns (xấu nhất là `wstrb`) |
+| Từ chân ra bộ nhớ tới flip-flop | 5,45 ns |
+| Từ cổng vào / tới cổng ra | slack +11,6 ns / +11,5 ns |
+
+- Đường tới hạn là **cùng đường** với bản lõi riêng (`ifid_instr` → `pc`, mục Tổng hợp và STA), nên SoC không đưa thêm đường dài nào vào; ngoại vi và PLIC có slack lớn. Lệch 0,78 ns so với +0,023 ns của lõi riêng nằm trong sai số cỡ 1 ns của tổng hợp trước P&R đã nêu ở trên (và lõi đã đổi từ lúc đo đó).
+- Flip-flop đầu đường có fanout 438 và ABC không dựng cây buffer, nên riêng clk→Q là 6,75 ns của 15,5 ns; số này bi quan, resizer của OpenROAD sẽ sửa. Không có ký sinh dây (lạc quan). Không dùng làm kết quả cuối; flow LibreLane cho SoC vẫn chưa chạy.
+- Từ số liệu trên, bộ nhớ tổ hợp phải đọc xong trong khoảng 8,5 ns (ROM) / 5,9 ns (RAM, tính theo đường `wstrb` xấu nhất) thì không thành đường tới hạn; macro SRAM đồng bộ thật sẽ cần thêm một chu kỳ chờ (`dmem_ready`), SoC hiện coi bộ nhớ phản hồi ngay.
+
 ## Giới hạn
-- Ngắt và `WFI` chỉ có ở pipeline RV32IM; chỉ có chế độ M (chưa có chế độ User/Supervisor), chưa có PLIC
+- Ngắt và `WFI` chỉ có ở pipeline RV32IM; chỉ có chế độ M (chưa có chế độ User/Supervisor); PLIC của SoC chỉ có một context M-mode
 - Pipeline RV32I chưa dự đoán JALR; ở RV32IM, BTB chỉ nhớ 1 đích cho mỗi JALR gián tiếp, RAS cập nhật ở EX nên lệnh trả về ngay sau lời gọi có thể đoán sai; gshare dùng chung bảng 64 mục nên dễ dẫm chỉ số
 - Bộ chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); bộ nhân song song chỉ có ở pipeline RV32IM và mới có tổng hợp + STA trước P&R, chưa qua flow; chứng minh hình thức của bộ nhân không phủ phép chia và phần ghép vào pipeline
 - Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chưa chạy trên Spike; so vết ngắt với Spike trên CI chỉ chạy bản rút gọn (2 cấu hình lõi)
