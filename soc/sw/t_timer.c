@@ -10,7 +10,7 @@ void trap_c(void) {
         u32 cmp = MTIMECMP_LO, now = MTIME_LO;
         if (ticks < 6) {
             if (now < cmp) early++;
-            if (now - cmp > 60) late++;
+            if (now - cmp > T_LAT_MAX) late++;
         }
         if (ticks < 5) MTIMECMP_LO = cmp + PERIOD;                      /* ngat thu 1..5 nap lai; ngat thu 6 (va sau do) cam mtimecmp */
         else { MTIMECMP_HI = 0xFFFFFFFFu; MTIMECMP_LO = 0xFFFFFFFFu; }
@@ -21,16 +21,17 @@ void trap_c(void) {
 }
 int main(void) {
     u32 a = MTIME_LO; wait_mtime(10); u32 b = MTIME_LO;
-    puts_((b - a >= 10 && b - a < 40) ? "mtime ok\n" : "mtime BAD\n");
+    puts_((b - a >= 10 && b - a < T_WAIT_MAX) ? "mtime ok\n" : "mtime BAD\n");
 
     MTIMECMP_HI = 0; MTIMECMP_LO = MTIME_LO + PERIOD;
+    sync_io();
     csr_write(mie, MIE_MTIE);
     u32 t0 = MTIME_LO;
     WAIT_IRQ(ticks >= 6);
     u32 span = MTIME_LO - t0;
     puts_("ticks="); put_dec(ticks);
     puts_(" early="); put_dec(early); puts_(" late="); put_dec(late);
-    if (span >= 6 * PERIOD - 30 && span < 6 * PERIOD + 200) puts_(" span ok\n");
+    if (span >= 6 * PERIOD - 30 && span < 6 * PERIOD + T_SPAN_SLACK) puts_(" span ok\n");
     else { puts_(" span BAD "); put_dec(span); putc_('\n'); }
 
     csr_write(mie, MIE_MSIE);

@@ -43,6 +43,7 @@ module rv32_dcache #(
     // phia bus
     output wire        m_req,
     output wire        m_we,
+    output wire        m_fill,                 // 1 = yeu cau doc la nap dong (bat dau tu dau dong, doc tuan tu WORDS tu): bo noi AXI doi thanh 1 burst
     output wire [31:0] m_addr,
     output wire [31:0] m_wdata,
     output wire [3:0]  m_wstrb,
@@ -165,6 +166,7 @@ module rv32_dcache #(
 
     assign m_req   = (state != IDLE);
     assign m_we    = (state == DRN);
+    assign m_fill  = (state == FILL);
     assign m_addr  = (state == FILL) ? {w[29:WB], fill_cnt, 2'b00} :
                      (state == DRN)  ? {q_addr[q_head], 2'b00} : {w, 2'b00};
     assign m_wdata = q_data[q_head];

@@ -4,29 +4,29 @@
 
 Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đưa qua flow RTL-to-GDS (LibreLane, PDK mở IHP SG13G2 130 nm):
 
-| Lõi | Tập lệnh | Chu kỳ tối thiểu (góc chậm) | CPI bench (RV32I / nặng M) | Số cell |
+| Lõi | Cấu hình đã chạy flow (RTL hiện tại có thêm) | Chu kỳ tối thiểu (góc chậm, sau P&R) | CPI bench, RTL hiện tại (RV32I / nặng M) | Số cell (flow) |
 |---|---|---|---|---|
-| `rv32i_core.v`: single-cycle | RV32IM + CSR + trap | ≈ 23,0 ns (ngoại suy) * | 1,00 / 7,95 | 28.775 * |
-| `rv32i_pipeline.v`: 5 tầng | RV32I | ≈ 11,98 ns, ≈ 83 MHz | 1,29 / - | 36.466 |
-| `rv32im_pipeline.v`: 5 tầng | RV32IM(C) + CSR + trap + ngắt + WFI, BTB + RAS | ≈ 13,67 ns, ≈ 73 MHz ** | 1,16 / 3,55 (tắt BTB/RAS, nhân lặp: 1,32 / 5,00) | 51.623 ** |
-| như trên + cache 2 × 256 B, bộ đệm ghi 4 mục | RV32IMC, bộ nhớ có độ trễ | ≈ 18,76 ns, ≈ 53 MHz *** | 1,20-1,37 / 4,98-5,18 | 137.359 *** |
+| `rv32i_core.v`: single-cycle | RV32I thuần (nay: + M, CSR, trap) * | ≈ 23,0 ns (ngoại suy) | 1,00 / 7,95 | 28.775 |
+| `rv32i_pipeline.v`: 5 tầng | RV32I, dự đoán nhánh ở ID | ≈ 11,98 ns, ≈ 83 MHz | 1,29 / - | 36.466 |
+| `rv32im_pipeline.v`: 5 tầng | RV32IMC + CSR + trap + ngắt + WFI, nhân lặp (nay: + BTB/RAS, nhân song song, Zicntr/Zihpm, `mtvec` vectored, Zb* tùy chọn) ** | ≈ 13,67 ns, ≈ 73 MHz | 1,16 / 3,55 (tắt BTB/RAS, nhân lặp: 1,32 / 5,00) | 51.623 |
+| như trên + cache 2 × 256 B | RV32IMC, cache ánh xạ trực tiếp, chưa có bộ đệm ghi, không đạt 15 ns *** | ≈ 18,76 ns, ≈ 53 MHz (ngoại suy) | 1,20-1,37 / 4,98-5,18 | 137.359 |
 
-**Toàn bộ số liệu flow trong bảng (chu kỳ, số cell) đo trên RTL cũ, ngày 22/11/2026 trở về trước; chưa chạy lại cho RTL hiện tại** (chưa gồm BTB/RAS, bộ nhân song song, bộ đệm ghi, cache set-associative, `mtvec` vectored).  
+**Cột chu kỳ và số cell là kết quả flow trên RTL cũ (ngày 22/11/2026 trở về trước), không phải RTL hiện tại; cột CPI đo trên RTL hiện tại.** Lõi hiện tại mới có tổng hợp + STA trước P&R (yosys + ABC + OpenSTA, không có dây, sai số cỡ 1 ns): RV32IMC mặc định (có PMP 8 mục) 498.444 µm² cell, slack xấu nhất ≈ −0,05 ns ở 15 ns (đường bộ chia lặp, nằm trong sai số), xem mục Tổng hợp và STA. Flow LibreLane cho RTL hiện tại chưa chạy.  
 \* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
-\*\* Bản đầy đủ với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC. Số liệu flow đo trước khi có BTB/RAS và bộ nhân song song (sẽ chạy lại cùng các flow còn lại).
-\*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. Số liệu flow đo trước khi thêm bộ đệm ghi và BTB/RAS; CPI đo với bộ nhớ trễ tối đa 1 / 4 / 8 chu kỳ, khi còn bộ nhân lặp.
+\*\* Bản đầy đủ với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC.
+\*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. CPI đo với bộ nhớ trễ tối đa 1 / 4 / 8 chu kỳ, khi còn bộ nhân lặp.
 
 - **Pipeline**: forwarding tính sẵn ở ID, dự đoán nhánh ở ID (bảng đếm 2 bit 64 mục, JAL nhảy ngay ở ID), `redirect` được đăng ký ở RV32IM để cắt đường tới hạn, bộ nhân song song 2 chu kỳ, bộ chia lặp 2 bit mỗi chu kỳ.
 - **CoreMark**: 2,75 CoreMark/MHz (pipeline RV32IMC, `-O2`, mô phỏng, CRC đúng chuẩn, so từng lệnh với Spike), tăng 44 % so với 1,91 khi còn bộ nhân lặp.
 - **Bộ nhân song song**: Booth radix-4 + cây CSA, 1 hoặc 2 chu kỳ (tham số), chứng minh hình thức đúng với mọi cặp toán hạng 33 bit (tách bổ đề, yosys + z3), 18 đột biến đều bị bắt.
-- **Ngắt so với Spike**: Spike làm thư viện, đi từng lệnh theo vết RTL; 19 triệu lệnh, 386.235 ngắt trên 6 cấu hình lõi khớp hoàn toàn, 52 đột biến phần ngắt, bộ đếm và PMP đều bị bắt; `mtvec` vectored; tìm ra lỗi `mepc` mất bit 1 với lệnh nén.
+- **Ngắt so với Spike**: Spike làm thư viện, đi từng lệnh theo vết RTL; 19 triệu lệnh, 386.235 ngắt trên 6 cấu hình lõi khớp hoàn toàn, 54 đột biến phần ngắt, bộ đếm và PMP đều bị bắt; `mtvec` vectored; tìm ra lỗi `mepc` mất bit 1 với lệnh nén.
 - **Bộ đếm hiệu năng**: Zicntr / Zihpm (mcycle, minstret, 4 bộ đếm sự kiện), `minstret` khớp Spike từng lệnh kể cả khi ghi / inhibit.
 - **PMP**: 8 mục (TOR / NA4 / NAPOT, khoá), kiểm load / store / fetch ở EX, khớp Spike từng lệnh kể cả `mtval` của lệnh 32 bit bị cấm nửa sau.
 - **Chế độ Supervisor / User** (tham số `SU`): ủy quyền trap (`medeleg` / `mideleg`), `SRET`, CSR của S, ngắt S, `MPRV`, `TSR` / `TW`, `mcounteren` / `scounteren`, PMP cho S / U; khớp Spike từng lệnh trên bài test riêng và 18 bài riscv-tests rv32si / rv32mi.
 - **Cache và bộ nhớ có độ trễ**: pipeline RV32IM có bắt tay bộ nhớ (`imem_ready`, `dmem_ready`), cache lệnh và cache dữ liệu set-associative tham số hoá (1 / 2 / 4 đường, pseudo-LRU), bộ đệm ghi có forward vào lần nạp dòng, bộ phân xử bus chung; chạy đúng từng lệnh so với Spike với bộ nhớ trễ ngẫu nhiên 1-8 chu kỳ mỗi từ.
 - **Lệnh nén C** (tham số `ENABLE_C` của pipeline RV32IM): giải nén ở IF nên ID/EX/MEM/WB không đổi; mã của benchmark nhỏ đi khoảng 29 % mà số chu kỳ giữ nguyên. Bộ giải nén được so với GNU objdump trên toàn bộ 49.152 mã lệnh 16 bit.
 - **Ngắt**: ngắt timer, ngắt phần mềm (khối `mtime`/`mtimecmp`/`msip` kiểu CLINT) và ngắt ngoài cho pipeline RV32IM, nhận chính xác ở tầng EX, cùng lệnh `WFI`; testbench riêng cho ngắt xen vào giữa vòng lặp nhân/chia/load/store hơn 300 lần, kèm 16 đột biến phần ngắt và WFI đều bị bắt.
-- **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, so từng lệnh với Spike (trình mô phỏng chuẩn của RISC-V) trên riscv-tests và benchmark, riscv-tests chính thức (rv32ui, rv32um), mutation test (42 / 28 / 66 lỗi chèn cố ý đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push (riêng bộ mutation mở rộng chạy khi bấm Run workflow và hàng tuần).
+- **Kiểm chứng**: so từng lệnh với ISS Python trên chương trình ngẫu nhiên, so từng lệnh với Spike (trình mô phỏng chuẩn của RISC-V) trên riscv-tests và benchmark, riscv-tests chính thức (rv32ui, rv32um), mutation test (mỗi khối một bộ riêng, ví dụ 42 / 28 / 66 đột biến cho ba lõi, 58 cho cache, 151 cho SoC, đều bị bắt), benchmark C so checksum giữa các lõi, mô phỏng gate-level trên netlist sau P&R. Kiểm chứng chạy tự động bằng GitHub Actions mỗi lần push, nhưng ở quy mô rút gọn (chương trình ngẫu nhiên 12 mỗi cấu hình thay vì 400, so vết ngắt 2 cấu hình thay vì 6); các con số lớn trong README là lần chạy đầy đủ trên máy. Bộ mutation mở rộng (C, cache, dự đoán nhánh, bộ nhân, SoC, Zb*, ngắt) chạy khi bấm Run workflow và hàng tuần (job `mutation` và `mutation-ext` trong tab Actions).
 - **Thiết kế vật lý**: mọi run flow trong bảng đều đạt DRC, LVS, antenna; mọi số liệu flow nằm trong `results/` và `metrics.json`.
 
 ```mermaid
@@ -78,7 +78,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
 | `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca` hoặc số bước), in một dòng kết quả mỗi bước |
-| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus, ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
+| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus ánh xạ bộ nhớ và bản bus AXI4 đầy đủ (interconnect, DMA 2 kênh, bộ kiểm giao thức, `soc/axi/`), ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
@@ -86,6 +86,8 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 Thêm: `FENCE` (coi như NOP), `FENCE.I` (Zifencei: pipeline RV32IM xoá cache lệnh và nạp lại; single-cycle và pipeline RV32I coi như NOP), `ECALL`, `EBREAK`, `MRET`, `CSRRW CSRRS CSRRC CSRRWI CSRRSI CSRRCI`.
 Phần mở rộng M: `MUL MULH MULHSU MULHU DIV DIVU REM REMU`.
 Phần mở rộng C (chỉ pipeline RV32IM, `ENABLE_C = 1`): mọi lệnh nén RV32C không dùng số thực.
+Bộ đếm (chỉ pipeline RV32IM, `ZICNTR = 1`, mặc định bật): Zicntr `mcycle`/`minstret` (và `cycle`/`instret`), Zihpm với `HPM_N` (mặc định 4) bộ đếm sự kiện `mhpmcounter3..`, `mcountinhibit`.
+Zba / Zbb / Zbs / Zbc / Zicond (chỉ pipeline RV32IM, tham số `ZBA`, `ZBB`, `ZBS`, `ZBC`, `ZICOND`, mặc định tắt): kiểm bằng so vết ISS, so vết Spike, riscv-tests `rv32uzb*` và `zb/mutate_zb.py`; chưa qua riscv-formal, chưa có số timing (chỉ diện tích trước P&R).
 
 ## Phần mở rộng M
 - Bộ nhân/chia lặp, mỗi chu kỳ xử lý 1 bit, một lệnh M mất 34 chu kỳ (1 nhận toán hạng, 32 lặp, 1 hoàn tất). Trong lúc đó lõi giữ nguyên PC (stall).
@@ -128,6 +130,20 @@ Tổng hợp với thư viện cell thật và STA trước P&R (`synth/run_synt
 - `MUL_LAT = 2` thì bộ nhân không còn là đường tới hạn: tầng 1 (forwarding → Booth → cây CSA → thanh ghi) 8,3 ns, dư 6,5 ns; tầng 2 (bộ cộng 66 bit → chọn kết quả → `exmem_result`) 12,9 ns, dư 1,9 ns. Đây là lý do chọn `MUL_LAT = 2` làm mặc định (chỉ kém bản 1 chu kỳ 2,6 % CoreMark).
 - Bộ nhân làm diện tích cell tăng khoảng 20 % (123 flop chốt sum/carry, phần còn lại là cây Booth + CSA và bộ cộng).
 - Cách đọc: bản lặp và bản 2 chu kỳ có **cùng** đường tới hạn nhưng chênh nhau 1,16 ns, tức sai số của tổng hợp trước P&R cỡ 1 ns; không nên hiểu là bản 2 chu kỳ nhanh hơn. ABC chèn buffer thô hơn resizer của OpenROAD (bi quan), còn không có ký sinh dây (lạc quan). Lần flow trước của bản RV32IMC (chưa có BTB/RAS) đạt slack +1,33 ns ở 15 ns sau P&R. Vì vậy bảng này chỉ dùng để so tương đối giữa các cấu hình; số liệu timing và diện tích thật vẫn chờ flow LibreLane.
+
+### Tổng hợp và STA cho RTL hiện tại (25/11/2026)
+
+Bảng trên đo trước khi có Zicntr/Zihpm, `mtvec` vectored và PMP. Chạy lại cùng script cho `MUL_LAT = 2` (mặc định, `HPM_N = 4`, `PMP_N = 8`, Zb* tắt), OpenSTA build từ mã nguồn cùng CUDD:
+
+| RV32IMC mặc định | Diện tích cell | Slack xấu nhất ở 15 ns | Đường tới hạn |
+|---|---|---|---|
+| Trước khi sửa | 497.912 µm² | −1,173 ns (TNS −3,80 ns) | `exmem_trap` → `minstret` + lệnh còn trong pipeline (64 bit) → trừ lại khi ghi (64 bit) → `minstret_r[63]` |
+| Sau khi sửa | 498.444 µm² (+0,1 %) | −0,050 ns | bộ chia lặp `STEPS = 2` (`u_m.m` → `u_m.p`, hai bộ trừ 33 bit nối tiếp) |
+
+- Slack xấu nhất của nhóm thanh ghi `minstret_r`: −1,17 → +0,82 ns (đo trước khi có PMP: −0,42 → +0,63 ns, đường bắt đầu ở `trap_q`; sau khi thêm PMP cùng đường này còn −1,17 ns, phần chênh chưa tách được giữa thay đổi logic và dao động của ABC). Hai thay đổi, không đổi hành vi: (1) `minstret + 0/1/2` tính sẵn từ flip-flop, số lệnh còn trong pipeline (đến muộn) chỉ còn đi qua bộ chọn; (2) bỏ phép trừ 64 bit khi ghi `minstret`: lệnh cũ hơn còn ở MEM đã nằm trong giá trị ghi nên được đánh dấu `memwb_skip` và không tăng thêm khi hoàn tất. Kiểm bằng `counters.S` so với Spike (6 cấu hình) và 11 đột biến bộ đếm, gồm 3 đột biến mới cho chính hai thay đổi này.
+- Đường còn lại xấu nhất là bộ chia, ở bản trước khi sửa nó còn +0,35 ns: các nhóm khác dao động 0,5-1 ns giữa hai lần tổng hợp chỉ vì ABC chọn cấu trúc khác, đúng mức sai số đã nói ở trên. Flow 15 ns trước đây của `STEPS = 2` đạt +0,60 ns sau P&R. Nên coi bộ chia là đường sát biên chứ chưa phải lỗi timing; nếu flow trên RTL hiện tại không đạt thì giảm về `STEPS = 1` (thêm 16 chu kỳ mỗi lệnh chia) hoặc đăng ký giữa hai bước.
+- Đường `ifid_instr` → `pc` (nhảy sớm ở ID) mà bảng trên và mục STA của SoC nêu là đường tới hạn thì ở lõi hiện tại dư khoảng 1,9 ns; ở SoC nó xấu đi chủ yếu vì flip-flop đầu đường có fanout 438 không được dựng cây buffer.
+- Vẫn là số trước P&R; con số chốt chờ flow LibreLane.
 
 Hiệu năng (pipeline RV32IM(C), BTB 16 + RAS 4, bộ nhớ tổ hợp):
 
@@ -334,10 +350,10 @@ sh irq/build.sh        # biên dịch lại irq_test.hex, cần riscv64-unknown-
 ### Bộ đếm hiệu năng (Zicntr / Zihpm, pipeline RV32IM)
 - `mcycle`, `minstret` 64 bit và bản chỉ đọc `cycle`, `instret` (+ nửa cao); `mcountinhibit` (CY, IR, HPM3..); `HPM_N` bộ đếm sự kiện `mhpmcounter3..` chọn sự kiện qua `mhpmevent` (mặc định 4); các `mhpmcounter` / `mhpmevent` còn lại đọc 0. `time` không có (bộ đếm thời gian nằm ngoài lõi). Tắt bằng `ZICNTR = 0`.
 - Sự kiện: 1 chờ bộ nhớ, 2 lệnh M chiếm EX, 3 redirect ở EX, 4 load-use, 5 ID nhảy sớm, 6 chờ nạp lệnh (1-6 loại trừ nhau theo thứ tự ưu tiên, giống phân tích chu kỳ của testbench), 7 nhánh, 8 nhánh đoán sai, 9 JALR, 10 JALR đoán sai, 11 ngắt, 12 exception, 13 lệnh hoàn tất.
-- `minstret` đếm ở WB nhưng CSR đọc ở EX: giá trị trả về cộng thêm các lệnh cũ hơn còn ở MEM / WB (chắc chắn hoàn tất vì trap chỉ xảy ra ở EX); lệnh ghi `minstret` không tự tăng ("ghi thay cho tăng") và trừ lại số lệnh cũ hơn còn tăng sau đó; mỗi lệnh mang cờ "được đếm" quyết định ở EX nên `mcountinhibit.IR` có hiệu lực đúng từ lệnh sau lệnh ghi; lệnh gây trap / bị ngắt không được đếm.
-- Kiểm chứng: `cosim/irq/counters.S` so từng lệnh với Spike (`minstret` / `instret` là đại lượng kiến trúc nên phải khớp tuyệt đối; `mcycle`, `mhpmcounter`, `mhpmevent` phụ thuộc hiện thực nên harness lấy giá trị RTL, chương trình tự kiểm: inhibit, nhớ sang nửa cao, số nhánh đúng 106, số exception đúng 3, bộ đếm lệnh hoàn tất lệch `minstret` ≤ 8) trên 6 cấu hình lõi; 9 đột biến bộ đếm trong `cosim/irq/mutate_irq_cosim.py` đều bị bắt. Lúc viết, cosim bắt được 2 lỗi trong chính RTL bộ đếm (đọc ngay sau lệnh ghi `minstret` ra 1001 thay vì 1000; bật `mcountinhibit.IR` làm mất lượt đếm của lệnh cũ hơn còn trong pipeline), đã sửa trước khi commit.
+- `minstret` đếm ở WB nhưng CSR đọc ở EX: giá trị trả về cộng thêm các lệnh cũ hơn còn ở MEM / WB (chắc chắn hoàn tất vì trap chỉ xảy ra ở EX); lệnh ghi `minstret` không tự tăng ("ghi thay cho tăng"); giá trị ghi đã tính cả lệnh cũ hơn còn ở MEM nên lệnh đó được đánh dấu `memwb_skip` và không tăng thêm khi hoàn tất; mỗi lệnh mang cờ "được đếm" quyết định ở EX nên `mcountinhibit.IR` có hiệu lực đúng từ lệnh sau lệnh ghi; lệnh gây trap / bị ngắt không được đếm.
+- Kiểm chứng: `cosim/irq/counters.S` so từng lệnh với Spike (`minstret` / `instret` là đại lượng kiến trúc nên phải khớp tuyệt đối; `mcycle`, `mhpmcounter`, `mhpmevent` phụ thuộc hiện thực nên harness lấy giá trị RTL, chương trình tự kiểm: inhibit, nhớ sang nửa cao, số nhánh đúng 106, số exception đúng 3, bộ đếm lệnh hoàn tất lệch `minstret` ≤ 8) trên 6 cấu hình lõi; 11 đột biến bộ đếm trong `cosim/irq/mutate_irq_cosim.py` đều bị bắt. Lúc viết, cosim bắt được 2 lỗi trong chính RTL bộ đếm (đọc ngay sau lệnh ghi `minstret` ra 1001 thay vì 1000; bật `mcountinhibit.IR` làm mất lượt đếm của lệnh cũ hơn còn trong pipeline), đã sửa trước khi commit.
 - Cùng lúc sửa `misa` thiếu bit M ở cả pipeline RV32IM và lõi single-cycle (trả 0x4000_0100 thay vì 0x4000_1100; chương trình tự kiểm `asm.py` và ISS Python cũng ghi sai giá trị này nên không phát hiện); `counters.S` đọc `misa` và so với Spike. Bộ sinh chương trình ngẫu nhiên dùng 0xB00 / 0xC00 làm ví dụ CSR không tồn tại, nay đổi sang 0xB01 / 0xC01 (vị trí của `time`, không hiện thực).
-- Chi phí (tổng hợp SG13G2 trước P&R, `synth/`): chỉ `mcycle` + `minstret` (`HPM_N = 0`) +5,2 % diện tích cell; mặc định `HPM_N = 4` +15,2 % (khoảng 9.500 µm² mỗi bộ đếm sự kiện 64 bit); slack thay đổi trong mức sai số ~1 ns của tổng hợp trước P&R.
+- Chi phí (tổng hợp SG13G2 trước P&R, `synth/`): chỉ `mcycle` + `minstret` (`HPM_N = 0`) +5,2 % diện tích cell; mặc định `HPM_N = 4` +15,2 % (khoảng 9.500 µm² mỗi bộ đếm sự kiện 64 bit). Ghi chú cũ ở đây nói slack chỉ đổi trong mức sai số là **sai**: STA lại ngày 25/11 cho thấy chính `minstret` là đường tới hạn của cả lõi (−0,42 ns ở 15 ns), do hai chuỗi nhớ 64 bit nối tiếp (cộng các lệnh còn trong pipeline, rồi trừ lại khi ghi); đã sửa, xem mục Tổng hợp và STA cho RTL hiện tại.
 
 ### PMP: bảo vệ bộ nhớ vật lý (pipeline RV32IM, `PMP_N`)
 - `PMP_N` mục (mặc định 8, tối đa 16), độ mịn 4 byte (G = 0): `pmpcfg0..` (0x3A0-0x3AF) và `pmpaddr0..` (0x3B0-0x3EF); mục ngoài `PMP_N` đọc 0. Chế độ địa chỉ OFF / TOR / NA4 / NAPOT, quyền R / W / X, bit khoá L.
@@ -345,7 +361,7 @@ sh irq/build.sh        # biên dịch lại irq_test.hex, cần riscv64-unknown-
 - Ghi CSR theo WARL giống Spike: mục khoá bỏ qua ghi `pmpcfg` / `pmpaddr`, mục TOR khoá còn chặn ghi `pmpaddr` của mục trước; R = 0 thì W bị xoá (tổ hợp dự phòng); bit 5-6 đọc 0.
 - Kiểm ở EX cùng chỗ với các exception khác, nên lệnh bị cấm không ghi thanh ghi / bộ nhớ: load → `mcause` 5, store → 7, `mtval` = địa chỉ; fetch thiếu X → 1, `mtval` = pc. Fetch kiểm từng nửa lệnh 2 byte như Spike: lệnh 32 bit ở địa chỉ lẻ 2 byte mà nửa sau bị cấm cho `mtval` = pc + 2. Truy cập lệch (`MISALIGNED = 1`) phải nằm trọn trong một mục, khớp một phần hoặc trải hai mục là lỗi.
 - Kiểm chứng: `cosim/irq/pmp.S` so từng lệnh với Spike (`pmpregions = 8`) trên 6 cấu hình lõi, gồm WARL, khoá, ưu tiên mục, cận TOR, NAPOT / NA4, lệnh bị cấm không ghi rd / bộ nhớ, fetch bị cấm (cả trường hợp pc + 2), truy cập lệch trải hai mục; mỗi trap tự kiểm `mcause` / `mtval` / `mepc`. 20 đột biến PMP trong `mutate_irq_cosim.py` đều bị bắt.
-- Chi phí (tổng hợp SG13G2 trước P&R, `synth/`, bản RV32IMC): `PMP_N = 8` +14,6 % diện tích cell (434.077 → 497.635 µm²), `PMP_N = 4` +7,6 %. Phần lớn là bộ so sánh: mỗi mục cần so 3 địa chỉ (pc, pc + 2 khi lệnh 32 bit nằm lệch 2 byte, địa chỉ load / store; thêm từ cuối của truy cập lệch khi `MISALIGNED = 1`). Ba cách đã giảm diện tích từ +18,6 % xuống: cận dưới TOR của mục k dùng lại so sánh cận trên của mục k-1, NA4 và NAPOT dùng chung một bộ so sánh bằng có mặt nạ tính sẵn cho từng mục, bỏ bộ so sánh từ thứ hai khi `MISALIGNED = 0` hoặc `ENABLE_C = 0`. Logic khớp viết bằng mảng bit (generate) thay vì hàm có vòng lặp: bản dùng hàm làm mô phỏng iverilog chậm khoảng 50 %, bản mảng bit chạy nhanh ngang lõi không có PMP. Slack thay đổi trong mức sai số ~1 ns của tổng hợp trước P&R; đường kiểm load / store nối tiếp bộ cộng địa chỉ ở EX nên cần xem lại khi chạy flow.
+- Chi phí (tổng hợp SG13G2 trước P&R, `synth/`, bản RV32IMC): `PMP_N = 8` +14,6 % diện tích cell (434.077 → 497.635 µm²), `PMP_N = 4` +7,6 %. Phần lớn là bộ so sánh: mỗi mục cần so 3 địa chỉ (pc, pc + 2 khi lệnh 32 bit nằm lệch 2 byte, địa chỉ load / store; thêm từ cuối của truy cập lệch khi `MISALIGNED = 1`). Ba cách đã giảm diện tích từ +18,6 % xuống: cận dưới TOR của mục k dùng lại so sánh cận trên của mục k-1, NA4 và NAPOT dùng chung một bộ so sánh bằng có mặt nạ tính sẵn cho từng mục, bỏ bộ so sánh từ thứ hai khi `MISALIGNED = 0` hoặc `ENABLE_C = 0`. Logic khớp viết bằng mảng bit (generate) thay vì hàm có vòng lặp: bản dùng hàm làm mô phỏng iverilog chậm khoảng 50 %, bản mảng bit chạy nhanh ngang lõi không có PMP. Ghi chú ban đầu ở đây nói slack chỉ đổi trong mức sai số là chưa đúng: đường tới hạn của lõi (`minstret`) đo được −0,42 ns trước PMP và −1,17 ns sau PMP (đã sửa ở phía `minstret`, xem mục Tổng hợp và STA cho RTL hiện tại); đường kiểm load / store nối tiếp bộ cộng địa chỉ ở EX nên cần xem lại khi chạy flow.
 
 ### Chế độ Supervisor / User (pipeline RV32IM, `SU`)
 - `SU = 1` thêm chế độ S và U (mặc định `SU = 0`: lõi chỉ có chế độ M, RTL và số liệu cũ giữ nguyên). Chưa có MMU nên hành vi theo Spike khi không có MMU: `satp` đọc 0, `SUM` / `MXR` / `TVM` đọc 0, `medeleg` không có page fault.
@@ -364,7 +380,7 @@ Thời điểm nhận ngắt phụ thuộc chu kỳ nên Spike chạy độc l�
 - Kiểm thêm những gì so vết không thấy: lệnh bị ngắt chặn lại (chạy lại sau `mret`) không được ghi gì; `WFI` chỉ được hoàn tất khi có ngắt đang chờ và được bật (Spike chạy `WFI` như NOP); RTL không được để ngắt đã được phép chờ quá 8 lệnh (chống "bỏ đói").
 - Chương trình: `irq_storm.S` (ngắt timer 15-142 chu kỳ, ngắt phần mềm, ngắt ngoài testbench phát ngẫu nhiên, xen mọi loại lệnh, ECALL, đoạn khoá ngắt, che từng bit `mie` đúng lúc ngắt đó đang chờ, `WFI` khi ngắt đang chờ nhưng bị che; checksum phải bằng lần chạy không ngắt), và bench, bench_m, bench_call, CoreMark chạy dưới "bão" ngắt qua `crt0_irq.S`.
 - 6 cấu hình lõi (RV32IMC; + cache 2 × 2 trễ 1-8; nhân lặp; RV32IM + cache 2 đường; truy cập lệch phần cứng + cache; bộ dự đoán ép lỗi + cache) × 2 seed: **132 lần chạy (gồm `counters.S`, `pmp.S`), 18.959.802 lệnh khớp Spike, 386.235 ngắt** (ngoài 133.345, phần mềm 49.469, timer 203.421), 2.836 exception, độ trễ nhận ngắt lớn nhất 4 lệnh. Ngắt rơi vào lệnh nén 182.586 lần, nhánh 50.094, load 37.395, store 6.977, CSR 3.321, nhảy 753; không rơi vào lệnh M vì lõi chỉ nhận ngắt khi không có lệnh nhân/chia đang chạy ở EX.
-- `mutate_irq_cosim.py`: 52 đột biến (16 của `irq/mutate_irq.py`, 7 đột biến phần ngắt / trap chỉ lộ ra khi so với Spike, gồm 2 của `mtvec` vectored, 9 của bộ đếm Zicntr / Zihpm và 20 của PMP), đều bị bắt. Lần chạy đầu lọt 5 đột biến (bỏ qua `mie.MTIE`, `mie.MEIE`, `WFI` như NOP, `WFI` thức khi ngắt bị che, `MPIE` không lưu), đã bổ sung test và kiểm tra cho cả 5.
+- `mutate_irq_cosim.py`: 54 đột biến (16 của `irq/mutate_irq.py`, 7 đột biến phần ngắt / trap chỉ lộ ra khi so với Spike, gồm 2 của `mtvec` vectored, 11 của bộ đếm Zicntr / Zihpm và 20 của PMP), đều bị bắt. Lần chạy đầu lọt 5 đột biến (bỏ qua `mie.MTIE`, `mie.MEIE`, `WFI` như NOP, `WFI` thức khi ngắt bị che, `MPIE` không lưu), đã bổ sung test và kiểm tra cho cả 5.
 - **Lỗi RTL tìm ra**: `mepc` chỉ lưu bit [31:2]. Với lệnh nén, trap hoặc ngắt ở lệnh có địa chỉ lẻ 2 byte làm `mret` quay về sai chỗ (bộ test ngắt cũ dùng mã không nén nên không thấy). Đã sửa (`mepc` lưu bit 1 khi `ENABLE_C = 1`), thêm đột biến tái hiện.
 - Hai lỗi của chính môi trường test cũng lộ ra và đã sửa: testbench phát ngắt nhanh hơn tốc độ xử lý ở cấu hình bộ nhớ chậm gây livelock (nay chờ tối thiểu một số lệnh sau mỗi lần ack, khoảng cách ngắt timer cộng thêm theo cấu hình), và bản truy cập lệch không xoá vùng dữ liệu giữa 2 lần chạy.
 - `mtvec` hỗ trợ cả chế độ vectored (`MODE = 1`: ngắt nhảy tới `BASE + 4 × mã nguyên nhân`, exception vẫn về `BASE`); `irq_storm` có bản `-DVEC` dùng bảng vector, so với Spike như các bản khác.
@@ -692,7 +708,7 @@ riscv-tests và benchmark chỉ là vài chục chương trình cố định. Đ
 |---|---|
 | Chương trình ngẫu nhiên khớp Spike | **7.600** (0 lệch, 0 lỗi của bộ sinh) |
 | Lệnh hoàn tất khớp Spike | **11.576.845** |
-| Coverage chức năng (catalog 568 bin, tính từ vết Spike của chương trình đã khớp RTL) | **568 / 568**: lệnh 83/83, toán hạng ALU 21/21, MUL/DIV 58/58, nhánh 32/32, hazard 215/215, load/store 25/25 + 17/17 (lệch), CSR 54/54, trap 55/55, luồng điều khiển 8/8 |
+| Coverage chức năng (catalog **tự định nghĩa** 568 bin, không gồm Zb* / Zicond, ngắt và `mhpm*`; tính từ vết Spike của chương trình đã khớp RTL) | **568 / 568**: lệnh 83/83, toán hạng ALU 21/21, MUL/DIV 58/58, nhánh 32/32, hazard 215/215, load/store 25/25 + 17/17 (lệch), CSR 54/54, trap 55/55, luồng điều khiển 8/8 |
 | Code coverage Verilator, gộp 19 cấu hình × 15 chương trình = 285 lần chạy (chỉ tính file RTL, không tính testbench) | dòng **387/407 = 95,1 %**, nhánh **220/238 = 92,4 %**, toggle **10.828/12.941 = 83,7 %** |
 | Mutation: số đột biến RTL bị so vết ngẫu nhiên bắt (`cosim/mutate_random.py`, tối đa 80 chương trình mỗi đột biến) | **16 / 16** (có thêm một dòng đối chứng không đột biến, 160 chương trình, phải thoát sạch) |
 
@@ -886,6 +902,55 @@ Con số ngắt đo ở pha riêng sau dòng `LAT`: mọi task đang ngủ (ch�
 - Đường tới hạn là **cùng đường** với bản lõi riêng (`ifid_instr` → `pc`, mục Tổng hợp và STA), nên SoC không đưa thêm đường dài nào vào; ngoại vi và PLIC có slack lớn. Lệch 0,78 ns so với +0,023 ns của lõi riêng nằm trong sai số cỡ 1 ns của tổng hợp trước P&R đã nêu ở trên (và lõi đã đổi từ lúc đo đó).
 - Flip-flop đầu đường có fanout 438 và ABC không dựng cây buffer, nên riêng clk→Q là 6,75 ns của 15,5 ns; số này bi quan, resizer của OpenROAD sẽ sửa. Không có ký sinh dây (lạc quan). Không dùng làm kết quả cuối; flow LibreLane cho SoC vẫn chưa chạy.
 - Từ số liệu trên, bộ nhớ tổ hợp phải đọc xong trong khoảng 8,5 ns (ROM) / 5,9 ns (RAM, tính theo đường `wstrb` xấu nhất) thì không thành đường tới hạn; macro SRAM đồng bộ thật sẽ cần thêm một chu kỳ chờ (`dmem_ready`), SoC hiện coi bộ nhớ phản hồi ngay.
+
+## Bus AXI4 và DMA cho SoC (`soc/axi/`)
+
+Bên cạnh bus ánh xạ bộ nhớ đơn giản ở trên, `soc/axi/axi_soc_top.v` là một SoC thứ hai (cùng lõi, cùng ngoại vi, cùng phần mềm C) dùng **AXI4 đầy đủ 5 kênh** (AW, W, B, AR, R) có burst, ID và nhiều master. Bản bus cũ vẫn còn và vẫn chạy trong `regress.sh`; hai bản dùng chung các test.
+
+**Kiến trúc**
+- `axi_xbar.v`: interconnect NM master × NS slave, tham số hoá. Burst INCR / WRAP / FIXED (len tới 256 beat, size ≤ 4 byte), ID, ghi và đọc song song. Trọng tài vòng tròn riêng cho từng slave (giữ master đã thắng tới hết burst, nên không bị bỏ đói); dữ liệu W đi theo đúng master vừa thắng AW; mỗi master có tối đa 4 giao dịch đang bay, và chỉ tới **cùng một slave** nên B/R luôn về đúng thứ tự mà không cần bộ sắp xếp lại. ID tới slave là `{chỉ số master, ID}` (4 bit → 6 bit với 3 master) để trả B/R về đúng master. Địa chỉ không thuộc vùng nào được một slave giả nội bộ trả **DECERR** (vẫn nuốt đủ W, trả đủ beat R, đúng RLAST), nên không treo bus.
+- 3 master: `axi_cache_if.v` ×2 (cổng lệnh: nạp dòng cache bằng một burst INCR; cổng dữ liệu: nạp dòng, ghi đồng bộ qua `rv32_dcache` và đọc thiết bị từng beat) và `axi_dma.v`.
+- 3 slave: ROM, RAM (`axi_mem.v`, mảng flip-flop, có tham số độ trễ đọc, tỉ lệ stall và độ trễ B để kiểm thử) và cầu `axi_periph_bridge.v` AXI4 → bus cũ cho CLINT, PLIC, UART, GPIO, SYSCON, thanh ghi DMA (cửa sổ ngoại vi không ánh xạ trả DECERR).
+- `axi_checker.v`: bộ kiểm giao thức gắn ở mọi cổng master và slave (VALID/DATA ổn định tới khi READY, không có VALID mà không có giao dịch, đếm beat đúng với LEN, WLAST/RLAST đúng chỗ, WRAP hợp lệ, INCR không vượt 4 KB, không có B/R thừa, không treo quá hạn...). Mọi vi phạm làm test thất bại.
+
+**Bản đồ địa chỉ thêm so với bản bus cũ:** thanh ghi DMA ở `0x2001_0000`; **bí danh RAM không qua cache ở `0x4000_0000`** (cùng RAM thật ở `0x1000_0000`). Vùng cache dữ liệu chỉ là `0x1xxx_xxxx`.
+
+**DMA** (`axi_dma.v`, 2 kênh, mỗi kênh cách nhau 0x20 byte):
+
+| Offset | Thanh ghi | Ghi chú |
+|---|---|---|
+| +0x00 | CTRL | bit 0 start (tự xoá), bit 1 IE |
+| +0x04 | STATUS | bit 0 busy, bit 1 done (ghi 1 để xoá), bit 2 err (ghi 1 để xoá) |
+| +0x08 / 0x0C | SRC / DST | địa chỉ byte, chia hết cho 4 |
+| +0x10 | LEN | số **từ** 32 bit (0 = xong ngay) |
+| +0x14 / 0x18 | SSTRIDE / DSTRIDE | 4 = burst INCR, 0 = burst FIXED, giá trị khác = từng từ một với bước đó (byte) |
+| +0x1C | CYCLES | số chu kỳ của lần chạy gần nhất |
+
+Mỗi lượt DMA cắt công việc thành mảnh ≤ 16 từ, không vượt ranh giới 4 KB (cả nguồn lẫn đích), đệm trong, hai kênh luân phiên từng mảnh. Hoàn thành làm nguồn ngắt 8 (kênh 0) và 9 (kênh 1) của PLIC (`NSRC` = 9) khi IE = 1. Lỗi từ bus (SLVERR/DECERR) làm dừng kênh với bit ERR.
+
+**Bất biến quan trọng (ghi “posted”)**: cổng dữ liệu của lõi báo xong lệnh `sw` ngay khi AW và W được nhận, không chờ B, để không làm chậm lõi. Cách này chỉ đúng nếu slave ghi vào bộ nhớ ngay ở lần bắt tay W cuối (đúng với `axi_mem` và cầu ngoại vi). Để giữ thứ tự, lệnh **đọc thiết bị** (vùng không cache) chờ hết B đang bay trước khi phát AR; lỗi từ B được báo qua `bus_err` đúng một xung cho mỗi giao dịch lỗi (về SYSCON.BUSERR).
+
+**Kiểm chứng**
+- `soc/tb/tb_axi_rand.v`: testbench ngẫu nhiên 3 master × 3 slave (RAM, RAM chậm có WRAP/FIXED, ROM) với mô hình tham chiếu byte-chính-xác, burst INCR/WRAP/FIXED ngẫu nhiên, size/strobe ngẫu nhiên, ghi nhiều giao dịch liên tiếp tới các slave khác nhau rồi mới nhận B (kiểm thứ tự B), đọc từ vùng ROM, vùng ghi ROM (SLVERR) và vùng trống (DECERR), READY ngẫu nhiên, và một pha **tranh chấp** có master chiếm bus liên tục để đo công bằng (số AR/AW được cấp lệch nhau không quá 1 giữa các master). Chạy 5 hạt ngẫu nhiên, mỗi hạt ≈ 70 nghìn chu kỳ, 0 lỗi và checker im lặng ở cả 6 cổng. Có watchdog nên deadlock hiện thành FAIL chứ không treo. Testbench này đã tìm ra một lỗi thật của `axi_mem`: payload R đổi khi master chưa nhận (một master ghi đúng từ mà master khác đang giữ R) làm checker báo "VALID rồi hoặc payload đổi trước READY"; đã sửa bằng cách giữ dữ liệu khi stall. Testbench riêng `soc/tb/tb_axi_br.v` kiểm cầu ngoại vi (W đến trễ, burst INCR/WRAP/FIXED, lỗi); `tb_soc` kiểm thêm độ dài burst nạp dòng của hai cache.
+- Toàn bộ chương trình C đã có (`soc/sw/`, bao gồm timer, ngắt, trap, bộ nhớ, ngoại vi) và FreeRTOS (`soc/freertos/`) chạy lại **nguyên xi** trên bản AXI với checker bật (`python3 soc/run_soc.py --axi`).
+- `soc/sw/t_dma.c`: chương trình C dùng DMA: sao chép 64 từ, scatter / gather có bước, FIXED, các đường lỗi (đích ngoài bản đồ, ROM, cửa sổ ngoại vi trống), ghi qua cầu vào SYSCON/CLINT, mảnh vượt ranh giới 4 KB, LEN = 0, ngắt vào PLIC (và không ngắt khi IE = 0), hai kênh chạy cùng lúc với lõi và chia băng thông công bằng. **Sao chép 64 từ: CPU (vòng lặp C) 513 chu kỳ so với DMA 197 chu kỳ** (cùng RTL, đo bằng `mcycle`).
+- `soc/mutate_axi.py`: **55 đột biến** (xbar, `axi_mem`, DMA, cầu ngoại vi, cầu cache, top) trên RTL; mỗi đột biến phải bị ít nhất một test (testbench ngẫu nhiên, hoặc t_dma / bộ C trên SoC) làm thất bại. Kết quả: **55/55 đột biến bị bắt** (tb_axi_rand 22, t_dma 20, t_mem 5, tb_axi_br 4, hello 3, còn lại do t_plic). Một đột biến ban đầu (WREADY trả sau khi W xong) hoá ra tương đương với slave `axi_mem` nên được thay bằng đột biến quan sát được; vài đột biến lọt ở vòng đầu đã buộc thêm test (gather, ranh giới 4 KB giữa mảnh, đọc lại hai từ khác nhau, BUSERR ngay sau ghi lỗi, testbench cầu ngoại vi). `python3 soc/mutate_axi.py --check` kiểm tra mọi chuỗi cần thay còn đúng một lần trong RTL.
+
+**Diện tích** (SG13G2, tổng hợp yosys + ABC trước P&R, không gồm ROM/RAM, `soc/synth/run_axi_area.sh`): tổng **3,306 mm²**, trong đó hai cache bằng mảng flip-flop chiếm 2,634 mm² (79,7 %), lõi + ngoại vi cũ 0,517 mm², còn **toàn bộ bus AXI4 + DMA + cầu chỉ 0,155 mm² (4,7 %)**: `axi_dma` 0,103 mm², `axi_xbar` 0,033 mm², cầu ngoại vi 0,011 mm², hai cầu cache 0,008 mm². Con số cache lớn vì dùng flip-flop thay SRAM (xem giới hạn); chưa có timing riêng cho bản AXI.
+
+**Giới hạn của phần AXI/DMA, nói thẳng**
+
+| Giới hạn | Hệ quả |
+|---|---|
+| Không có LOCK, CACHE, PROT, QOS, REGION, USER (không có truy cập độc quyền) | không dùng được cho lệnh nguyên tử; chưa có `A` extension |
+| Cache của lõi **không đồng bộ** với DMA | DMA phải dùng bí danh `0x4000_0000`, hoặc phần mềm tự `fence`/vô hiệu hoá; DMA đọc vùng đệm cache còn bẩn thì thấy dữ liệu cũ |
+| Ghi posted (xong khi nhận AW + W) | lỗi ghi chỉ báo muộn qua `bus_err`, không thành trap chính xác; slave mới phải ghi ngay ở W cuối |
+| Mỗi cổng cache chỉ 1 giao dịch đọc đang bay | không tận dụng hết khả năng nhiều ID |
+| DMA chỉ truy cập từ 32 bit chia hết cho 4; bước khác 4 và khác 0 chạy từng từ (không burst) | chậm hơn nhiều so với burst INCR |
+| Không có interleaving dữ liệu R giữa các ID, không sắp xếp lại | đủ cho AXI4 nhưng không dùng hết cấu hình cho phép |
+| ROM/RAM là mảng flip-flop (`axi_mem`) | chỉ đo diện tích khối bus + DMA + cache; chưa thay bằng macro SRAM |
+| Chưa P&R, chưa FPGA, chưa STA riêng cho SoC AXI | số diện tích là trước P&R |
+| Bộ kiểm giao thức và mô hình tham chiếu do cùng một người viết với RTL | bù bằng 55 đột biến và hai loại testbench, nhưng chưa dùng VIP độc lập |
 
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chế độ S / U (`SU = 1`) chưa có MMU Sv32, chưa có `menvcfg` / `senvcfg` và chưa có trong SoC hay riscv-formal; PLIC của SoC chỉ có một context M-mode; PMP chỉ có ở pipeline RV32IM, độ mịn cố định 4 byte, chưa có Smepmp (`mseccfg`); riscv-formal chạy với `PMP_N = 0` (bộ check không mô hình PMP), PMP chỉ được kiểm bằng so vết với Spike và đột biến

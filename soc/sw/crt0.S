@@ -64,5 +64,6 @@ trap_entry:
     lw    t4, 52(sp)
     lw    t5, 56(sp)
     lw    t6, 60(sp)
+    fence                       /* ghi xuyen qua bo dem ghi toi ngoai vi (xoa MSIP, nap mtimecmp) xong het truoc khi mret, neu khong ngat vua xu ly con hieu luc va bi nhan lai */
     addi  sp, sp, 64
     mret

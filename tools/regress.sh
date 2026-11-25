@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
-#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15, 17, 19; khoang 2 gio)
-#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16, 18, 20, 21; vai gio)
+#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15, 17, 19, 22, 24; khoang 2 gio)
+#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16, 18, 20, 21, 23, 25; vai gio)
 #   bash tools/regress.sh tat-ca          # ca hai nhom
 #   bash tools/regress.sh 2 7             # chi cac buoc 2 va 7
 # Can moi truong cua tools/setup_env.sh. Thoat ma 1 o buoc dau tien that bai (in 20 dong cuoi cua log buoc do).
@@ -20,7 +20,8 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 15 cau hinh" "bo nhan: 
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
        "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (152 mutant)" \
        "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y" "mutation Zba/Zbb/Zbs/Zbc/Zicond" \
-       "so vet ngau nhien voi Spike (19 loi, 8 chuong trinh moi loi) + test co huong csr_mie" "mutation so vet ngau nhien (16 dot bien)")
+       "so vet ngau nhien voi Spike (19 loi, 8 chuong trinh moi loi) + test co huong csr_mie" "mutation so vet ngau nhien (16 dot bien)" \
+       "SoC AXI4 + DMA: interconnect ngau nhien, giao thuc, chuong trinh C, DMA, FreeRTOS" "mutation AXI4 + DMA (55 mutant)")
 
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
@@ -57,14 +58,16 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     21) python3 zb/mutate_zb.py ;;
     22) python3 cosim/run_random.py --n 8 --seed0 1000 --jobs 2 --spike "$SPIKE" && python3 cosim/run_directed.py --spike "$SPIKE" ;;
     23) python3 cosim/mutate_random.py --n 80 --spike "$SPIKE" ;;
+    24) AXI=1 sh soc/sw/build.sh && AXI=1 sh soc/freertos/build.sh && python3 soc/run_soc.py --axi ;;
+    25) AXI=1 sh soc/sw/build.sh && python3 soc/mutate_axi.py --jobs 2 ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
 }
 
 case "${1:-nhanh}" in
-    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17 19 22" ;;
-    dot-bien) STEPS="10 11 12 13 14 16 18 20 21 23" ;;
-    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 19 22 10 11 12 13 14 16 18 20 21 23" ;;
+    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17 19 22 24" ;;
+    dot-bien) STEPS="10 11 12 13 14 16 18 20 21 23 25" ;;
+    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 19 22 24 10 11 12 13 14 16 18 20 21 23 25" ;;
     *)       STEPS="$*" ;;
 esac
 n=$(echo $STEPS | wc -w); k=0; t0=$(date +%s)

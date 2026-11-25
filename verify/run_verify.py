@@ -412,7 +412,7 @@ if __name__ == "__main__":
     if any(e not in rv32_zb.ALL_EXTS for e in ZB) or (ZB and not a.pipem):
         sys.exit("--zb chi dung voi --pipem, danh sach: " + ",".join(rv32_zb.ALL_EXTS) + " hoac all")
     ZB_PROBE = a.zb_probe and a.pipem
-    STOP_FAIL = a.stop_on_fail
+    STOP_FAIL = a.stop_on_fail or a.mutate   # mutation: mot chuong trinh lech la du bat (chuong trinh treo chay toi gioi han chu ky)
     CACHE = a.cache and a.pipem
     BPSTRESS = a.bpstress and a.pipem
     WAYS = a.ways

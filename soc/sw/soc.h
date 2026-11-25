@@ -2,6 +2,17 @@
 #ifndef SOC_H
 #define SOC_H
 typedef unsigned int u32;
+/* Bien dich cho SoC AXI4 (-DAXI_SOC): cache + cau ngoai vi lam tre truy cap va ngat vao ISR phai nap dong cache, nen cac nguong thoi gian rong hon. */
+#ifdef AXI_SOC
+#define T_WAIT_MAX   400u
+#define T_LAT_MAX    1500u
+#define T_SPAN_SLACK 6000u
+#else
+#define T_WAIT_MAX   40u
+#define T_LAT_MAX    60u
+#define T_SPAN_SLACK 200u
+#endif
+#define sync_io() __asm__ volatile ("fence" ::: "memory")   /* cho moi store truoc do toi dich (bo dem ghi cua cache du lieu) */
 typedef unsigned char u8;
 #define REG(a)       (*(volatile u32 *)(a))
 #define REG8(a)      (*(volatile u8 *)(a))
@@ -43,6 +54,19 @@ typedef unsigned char u8;
 #define PLIC_EN      REG(PLIC_BASE + 0x2000u)
 #define PLIC_THR     REG(PLIC_BASE + 0x200000u)
 #define PLIC_CLAIM   REG(PLIC_BASE + 0x200004u)      /* doc = claim, ghi = complete */
+#define DMA_BASE     0x20010000u                      /* chi co tren SoC AXI4 (soc/axi/axi_soc_top.v) */
+#define DMA_REG(c, r) REG(DMA_BASE + 0x20u * (c) + (r))
+#define DMA_CTRL 0x00u
+#define DMA_STAT 0x04u
+#define DMA_SRC  0x08u
+#define DMA_DST  0x0Cu
+#define DMA_LEN  0x10u
+#define DMA_SS   0x14u
+#define DMA_DS   0x18u
+#define DMA_CYC  0x1Cu
+#define IRQ_DMA0     8u
+#define IRQ_DMA1     9u
+#define RAM_ALIAS(p) ((volatile u32 *)((u32)(p) + 0x30000000u))   /* RAM 0x1000_0000 nhin lai qua 0x4000_0000: khong qua cache du lieu */
 #define IRQ_UART_RX  1u                               /* ID nguon PLIC */
 #define IRQ_UART_TX  2u
 #define IRQ_GPIO     3u
@@ -51,6 +75,7 @@ typedef unsigned char u8;
 #define SYS_BASE     0x20002000u
 #define SYS_ID       REG(SYS_BASE + 0x00)
 #define SYS_SCRATCH  REG(SYS_BASE + 0x04)
+#define SYS_SCRATCH_ADDR (SYS_BASE + 0x04u)
 #define SYS_EXIT     REG(SYS_BASE + 0x08)
 #define SYS_BUSERR   REG(SYS_BASE + 0x0C)
 
