@@ -171,7 +171,7 @@ m("T11", "soc_top.v", ".sel(sel_clint), .addr(dmem_addr[4:2])", ".sel(sel_clint)
 m("T12", "soc_top.v", "wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err;", "wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err; wire dummy_m = 1'b0;", "(kiem tra nguoc: dot bien vo hai, KHONG duoc tinh)")
 # ---- LOI: sua mepc (bit 1 cua mepc voi lenh nen) ----
 m("C1", "../rv32im_pipeline.v", "tepc_q       <= idex_pc[31:1];", "tepc_q       <= {idex_pc[31:2], 1'b0};", "loi: mepc bo bit 1 khi trap")
-m("C2", "../rv32im_pipeline.v", "mret_ex ? mepc_v           :\n                         fencei_ex ? pc_next :", "mret_ex ? {mepc_r[31:2], 2'b00} :\n                         fencei_ex ? pc_next :", "loi: MRET bo bit 1 cua mepc")
+m("C2", "../rv32im_pipeline.v", "mret_ex ? mepc_v           :\n                         sret_ex ? sepc_v", "mret_ex ? {mepc_r[31:2], 2'b00} :\n                         sret_ex ? sepc_v", "loi: MRET bo bit 1 cua mepc")
 m("C3", "../rv32im_pipeline.v", "12'h341: csr_rdata = mepc_v;", "12'h341: csr_rdata = {mepc_r[31:2], 2'b00};", "loi: doc mepc bo bit 1")
 m("C4", "../rv32im_pipeline.v", "12'h341: mepc_r   <= csr_new[31:1];", "12'h341: mepc_r   <= {csr_new[31:2], 1'b0};", "loi: ghi mepc bo bit 1")
 
