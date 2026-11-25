@@ -50,16 +50,14 @@ module rv32_mmu #(
     reg [5:0]  t_fl  [0:TLB_N-1];
     reg [TB-1:0] rr;
 
-    // ---- tra cuu ----
-    function [TLB_N-1:0] match(input [31:0] va);
-        integer k;
-        begin
-            for (k = 0; k < TLB_N; k = k + 1)
-                match[k] = t_v[k] & (t_g[k] | (t_asid[k] == asid)) &
-                           (t_sp[k] ? (t_vpn[k][19:10] == va[31:22]) : (t_vpn[k] == va[31:12]));
-        end
-    endfunction
-    wire [TLB_N-1:0] im = match(i_va), dm = match(d_va);
+    // ---- tra cuu (mang bit theo tung muc, khong dung ham: iverilog khong theo doi mang doc trong ham) ----
+    wire [TLB_N-1:0] im, dm;
+    genvar g;
+    generate for (g = 0; g < TLB_N; g = g + 1) begin : g_m
+        wire base_ok = t_v[g] & (t_g[g] | (t_asid[g] == asid));
+        assign im[g] = base_ok & (t_sp[g] ? (t_vpn[g][19:10] == i_va[31:22]) : (t_vpn[g] == i_va[31:12]));
+        assign dm[g] = base_ok & (t_sp[g] ? (t_vpn[g][19:10] == d_va[31:22]) : (t_vpn[g] == d_va[31:12]));
+    end endgenerate
     reg  [33:0] ipa, dpa;
     reg  [5:0]  ifl, dfl;
     integer j;

@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 // Testbench cho so vet voi Spike: chuong trinh dat o 0x8000_0000 (giong ban do bo nho mac dinh cua Spike),
-// loi khoi dong o RESET_PC = 0x8000_0000, bo nho lenh va du lieu dung chung 256 KB (dia chi [17:2]).
+// loi khoi dong o RESET_PC = 0x8000_0000, bo nho lenh va du lieu dung chung 256 KB (dia chi [MEMB-1:2]).
 // Moi lenh hoan tat in 1 dong:  pc=.. ins=.. rd=.. val=.. st=.. addr=.. data=.. strb=..
 // Thanh ghi x1-x31 duoc dat 0 truoc khi chay nhu Spike. Ket thuc khi chuong trinh ghi vao TOHOST (0x8010_0000). Chon loi: -DSC (single-cycle), -DPIPE,
 // -DPIPE_FULL, -DPIPE_FULL -DRVC (pipeline RV32IM co ENABLE_C = 1).
@@ -66,7 +66,19 @@ module tb_cosim;
 `else
 `define SUP 0
 `endif
-`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP)
+// MMU Sv32: -DSU -DMMUON
+`ifdef MMUON
+`define MMUP 1
+`else
+`define MMUP 0
+`endif
+// dia chi in trong vet: dia chi ao (MMU dich load / store; Spike ghi dia chi ao)
+`ifdef PIPE_FULL
+`define TVA dut.memwb_tva
+`else
+`define TVA dut.memwb_taddr
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP)
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
@@ -98,7 +110,16 @@ module tb_cosim;
 `endif
     );
 
-    reg [31:0] mem [0:65535];
+`ifdef BIGMEM
+    localparam MEMB = 20;              // -DBIGMEM: 1 MB (bang trang cua moi truong "v" cua riscv-tests can > 512 KB)
+`else
+    localparam MEMB = 18;              // 256 KB
+`endif
+    localparam MEMW = 1 << (MEMB - 2);
+    function is_th(input [31:0] a);    // doc TOHOST (moi truong "v" cua riscv-tests cho tohost = 0): tra 0
+        is_th = (a[31:3] == TOHOST[31:3]);
+    endfunction
+    reg [31:0] mem [0:MEMW-1];
 
 `ifdef IRQ
     // ---- ngoai vi ngat: rv32_mtimer (0x0200_0000) va nguon ngat ngoai (0x0300_0000) ----
@@ -201,20 +222,20 @@ module tb_cosim;
                 m_ack   <= 1'b1;
                 n_bus    = n_bus + 1;
 `ifdef IRQ
-                m_rdata <= is_dev(m_addr) ? dev_rd(m_addr) : mem[m_addr[17:2]];
+                m_rdata <= is_th(m_addr) ? 32'd0 : is_dev(m_addr) ? dev_rd(m_addr) : mem[m_addr[MEMB-1:2]];
                 if (m_we && is_dev(m_addr)) dev_wr(m_addr, m_wdata, m_wstrb);
                 else
 `else
-                m_rdata <= mem[m_addr[17:2]];
+                m_rdata <= is_th(m_addr) ? 32'd0 : mem[m_addr[MEMB-1:2]];
 `endif
-                if (m_we && m_addr != TOHOST) begin
-                    if (m_addr[31:18] != BASE[31:18]) begin
+                if (m_we && !is_th(m_addr)) begin
+                    if (m_addr[31:MEMB] != BASE[31:MEMB]) begin
                         $display("ERROR: ghi ngoai vung nho: addr=%08x", m_addr); $finish;
                     end
-                    if (m_wstrb[0]) mem[m_addr[17:2]][7:0]   <= m_wdata[7:0];
-                    if (m_wstrb[1]) mem[m_addr[17:2]][15:8]  <= m_wdata[15:8];
-                    if (m_wstrb[2]) mem[m_addr[17:2]][23:16] <= m_wdata[23:16];
-                    if (m_wstrb[3]) mem[m_addr[17:2]][31:24] <= m_wdata[31:24];
+                    if (m_wstrb[0]) mem[m_addr[MEMB-1:2]][7:0]   <= m_wdata[7:0];
+                    if (m_wstrb[1]) mem[m_addr[MEMB-1:2]][15:8]  <= m_wdata[15:8];
+                    if (m_wstrb[2]) mem[m_addr[MEMB-1:2]][23:16] <= m_wdata[23:16];
+                    if (m_wstrb[3]) mem[m_addr[MEMB-1:2]][31:24] <= m_wdata[31:24];
                 end
                 wait_cnt = $urandom(seed) % lat;     // yeu cau sau: cho 0..lat-1 chu ky truoc khi ack
                 seed = seed + 1;
@@ -224,12 +245,12 @@ module tb_cosim;
     end
 `else
     // bo nho to hop: doc lenh tai dia chi chia het cho 2 (lenh 32 bit co the vat qua ranh gioi tu, mo rong C)
-    wire [15:0] iw = imem_addr[17:2];
-    assign imem_data  = imem_addr[1] ? {mem[iw + 16'd1][15:0], mem[iw][31:16]} : mem[iw];
+    wire [MEMB-3:0] iw = imem_addr[MEMB-1:2];
+    assign imem_data  = imem_addr[1] ? {mem[iw + 1'b1][15:0], mem[iw][31:16]} : mem[iw];
 `ifdef IRQ
-    assign dmem_rdata = is_dev(dmem_addr) ? dev_rd(dmem_addr) : mem[dmem_addr[17:2]];
+    assign dmem_rdata = is_th(dmem_addr) ? 32'd0 : is_dev(dmem_addr) ? dev_rd(dmem_addr) : mem[dmem_addr[MEMB-1:2]];
 `else
-    assign dmem_rdata = mem[dmem_addr[17:2]];
+    assign dmem_rdata = is_th(dmem_addr) ? 32'd0 : mem[dmem_addr[MEMB-1:2]];
 `endif
     assign imem_ready = 1'b1;
     assign dmem_ready = 1'b1;
@@ -239,14 +260,14 @@ module tb_cosim;
         if (dmem_we && is_dev(dmem_addr)) dev_wr(dmem_addr, dmem_wdata, dmem_wstrb);
         else
 `endif
-        if (dmem_we && dmem_addr != TOHOST) begin
-            if (dmem_addr[31:18] != BASE[31:18]) begin
+        if (dmem_we && !is_th(dmem_addr)) begin
+            if (dmem_addr[31:MEMB] != BASE[31:MEMB]) begin
                 $display("ERROR: ghi ngoai vung nho: addr=%08x", dmem_addr); $finish;
             end
-            if (dmem_wstrb[0]) mem[dmem_addr[17:2]][7:0]   <= dmem_wdata[7:0];
-            if (dmem_wstrb[1]) mem[dmem_addr[17:2]][15:8]  <= dmem_wdata[15:8];
-            if (dmem_wstrb[2]) mem[dmem_addr[17:2]][23:16] <= dmem_wdata[23:16];
-            if (dmem_wstrb[3]) mem[dmem_addr[17:2]][31:24] <= dmem_wdata[31:24];
+            if (dmem_wstrb[0]) mem[dmem_addr[MEMB-1:2]][7:0]   <= dmem_wdata[7:0];
+            if (dmem_wstrb[1]) mem[dmem_addr[MEMB-1:2]][15:8]  <= dmem_wdata[15:8];
+            if (dmem_wstrb[2]) mem[dmem_addr[MEMB-1:2]][23:16] <= dmem_wdata[23:16];
+            if (dmem_wstrb[3]) mem[dmem_addr[MEMB-1:2]][31:24] <= dmem_wdata[31:24];
         end
     end
 `endif
@@ -333,18 +354,18 @@ module tb_cosim;
 `ifdef CACHE
     // Bo dem ghi: store xong o MEM truoc khi toi bo nho. Mo hinh kien truc arch[] cap nhat khi store hoan tat (WB);
     // khi FENCE / FENCE.I hoan tat, moi store truoc no phai da toi bo nho (mem[] khop arch[] o moi dia chi).
-    reg [31:0] arch [0:65535];
+    reg [31:0] arch [0:MEMW-1];
     integer    ai, ab, n_fchk = 0;
     always @(posedge clk) begin
         if (rst_n && commit) begin
-            if (dut.memwb_tst && dut.memwb_taddr != TOHOST) begin
+            if (dut.memwb_tst && !is_th(dut.memwb_taddr)) begin
                 // store co the vat qua 2 tu (MISALIGNED = 1): wstrb 8 bit, du lieu 64 bit tinh tu tu chua dia chi
                 for (ab = 0; ab < 8; ab = ab + 1)
                     if ((dut.memwb_tstrb >> ab) & 1)
-                        arch[dut.memwb_taddr[17:2] + ab / 4][8 * (ab % 4) +: 8] = dut.memwb_tdata >> (8 * ab);
+                        arch[dut.memwb_taddr[MEMB-1:2] + ab / 4][8 * (ab % 4) +: 8] = dut.memwb_tdata >> (8 * ab);
             end
             if (dut.memwb_instr[6:0] == 7'b0001111 && dut.memwb_instr[14:13] == 2'b00) begin   // FENCE, FENCE.I
-                for (ai = 0; ai < 65536; ai = ai + 1)
+                for (ai = 0; ai < MEMW; ai = ai + 1)
                     if (mem[ai] !== arch[ai]) begin
                         $display("ERROR: FENCE tai pc=%08x hoan tat nhung bo nho tai tu %0d = %08x, dung la %08x",
                                  dut.memwb_pc, ai, mem[ai], arch[ai]);
@@ -408,22 +429,22 @@ module tb_cosim;
             else if (t_s[7:4] != 4'b0000)
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x mip=%03x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
-                         dut.memwb_tst, dut.memwb_taddr, t_d, t_s, mip_now);
+                         dut.memwb_tst, `TVA, t_d, t_s, mip_now);
             else
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x mip=%03x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
-                         dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0], mip_now);
+                         dut.memwb_tst, `TVA, t_d[31:0], t_s[3:0], mip_now);
             end
 `else
             if (quiet) ;
             else if (t_s[7:4] != 4'b0000)
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
-                         dut.memwb_tst, dut.memwb_taddr, t_d, t_s);
+                         dut.memwb_tst, `TVA, t_d, t_s);
             else
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%08x strb=%x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
-                         dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0]);
+                         dut.memwb_tst, `TVA, t_d[31:0], t_s[3:0]);
 `endif
             n = n + 1;
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
@@ -451,7 +472,7 @@ module tb_cosim;
     integer         tmax;
     integer i;
     initial begin
-        for (i = 0; i < 65536; i = i + 1) mem[i] = 32'd0;
+        for (i = 0; i < MEMW; i = i + 1) mem[i] = 32'd0;
         // thanh ghi khong co reset trong RTL; Spike bat dau voi 0, nen dat 0 de vet so sanh duoc
         // (vd. ham luu thanh ghi s0/s1 chua dung len stack)
         for (i = 1; i < 32; i = i + 1) dut.regs[i] = 32'd0;
@@ -469,7 +490,7 @@ module tb_cosim;
 `endif
         $readmemh(progfile, mem);
 `ifdef CACHE
-        for (i = 0; i < 65536; i = i + 1) arch[i] = mem[i];
+        for (i = 0; i < MEMW; i = i + 1) arch[i] = mem[i];
 `endif
         repeat (3) @(posedge clk);
         @(negedge clk);
