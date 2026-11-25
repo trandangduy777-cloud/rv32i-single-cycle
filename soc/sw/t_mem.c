@@ -40,8 +40,8 @@ int main(void) {
     volatile u32 *rom = at(0x00000100u);
     u32 old = *rom;
     *rom = ~old;                                             /* ghi ROM: bo qua + dem */
+    chk("be1", SYS_BUSERR, 1);                               /* ngay sau lenh ghi (bus AXI: B loi ve muon, doc SYSCON phai cho B) */
     chk("rom_ro", *rom, old);
-    chk("be1", SYS_BUSERR, 1);
     chk("unm_rd", *(volatile u32 *)0x30000000u, 0);          /* doc ngoai vung: 0 + dem */
     *(volatile u32 *)0x10004000u = 5;                        /* sau het RAM: bo qua + dem */
     chk("be3", SYS_BUSERR, 3);

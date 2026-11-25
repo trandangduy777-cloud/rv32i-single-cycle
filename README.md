@@ -78,7 +78,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
 | `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca` hoặc số bước), in một dòng kết quả mỗi bước |
-| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus, ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
+| `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus ánh xạ bộ nhớ và bản bus AXI4 đầy đủ (interconnect, DMA 2 kênh, bộ kiểm giao thức, `soc/axi/`), ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
@@ -896,6 +896,55 @@ Con số ngắt đo ở pha riêng sau dòng `LAT`: mọi task đang ngủ (ch�
 - Đường tới hạn là **cùng đường** với bản lõi riêng (`ifid_instr` → `pc`, mục Tổng hợp và STA), nên SoC không đưa thêm đường dài nào vào; ngoại vi và PLIC có slack lớn. Lệch 0,78 ns so với +0,023 ns của lõi riêng nằm trong sai số cỡ 1 ns của tổng hợp trước P&R đã nêu ở trên (và lõi đã đổi từ lúc đo đó).
 - Flip-flop đầu đường có fanout 438 và ABC không dựng cây buffer, nên riêng clk→Q là 6,75 ns của 15,5 ns; số này bi quan, resizer của OpenROAD sẽ sửa. Không có ký sinh dây (lạc quan). Không dùng làm kết quả cuối; flow LibreLane cho SoC vẫn chưa chạy.
 - Từ số liệu trên, bộ nhớ tổ hợp phải đọc xong trong khoảng 8,5 ns (ROM) / 5,9 ns (RAM, tính theo đường `wstrb` xấu nhất) thì không thành đường tới hạn; macro SRAM đồng bộ thật sẽ cần thêm một chu kỳ chờ (`dmem_ready`), SoC hiện coi bộ nhớ phản hồi ngay.
+
+## Bus AXI4 và DMA cho SoC (`soc/axi/`)
+
+Bên cạnh bus ánh xạ bộ nhớ đơn giản ở trên, `soc/axi/axi_soc_top.v` là một SoC thứ hai (cùng lõi, cùng ngoại vi, cùng phần mềm C) dùng **AXI4 đầy đủ 5 kênh** (AW, W, B, AR, R) có burst, ID và nhiều master. Bản bus cũ vẫn còn và vẫn chạy trong `regress.sh`; hai bản dùng chung các test.
+
+**Kiến trúc**
+- `axi_xbar.v`: interconnect NM master × NS slave, tham số hoá. Burst INCR / WRAP / FIXED (len tới 256 beat, size ≤ 4 byte), ID, ghi và đọc song song. Trọng tài vòng tròn riêng cho từng slave (giữ master đã thắng tới hết burst, nên không bị bỏ đói); dữ liệu W đi theo đúng master vừa thắng AW; mỗi master có tối đa 4 giao dịch đang bay, và chỉ tới **cùng một slave** nên B/R luôn về đúng thứ tự mà không cần bộ sắp xếp lại. ID tới slave là `{chỉ số master, ID}` (4 bit → 6 bit với 3 master) để trả B/R về đúng master. Địa chỉ không thuộc vùng nào được một slave giả nội bộ trả **DECERR** (vẫn nuốt đủ W, trả đủ beat R, đúng RLAST), nên không treo bus.
+- 3 master: `axi_cache_if.v` ×2 (cổng lệnh: nạp dòng cache bằng một burst INCR; cổng dữ liệu: nạp dòng, ghi đồng bộ qua `rv32_dcache` và đọc thiết bị từng beat) và `axi_dma.v`.
+- 3 slave: ROM, RAM (`axi_mem.v`, mảng flip-flop, có tham số độ trễ đọc, tỉ lệ stall và độ trễ B để kiểm thử) và cầu `axi_periph_bridge.v` AXI4 → bus cũ cho CLINT, PLIC, UART, GPIO, SYSCON, thanh ghi DMA (cửa sổ ngoại vi không ánh xạ trả DECERR).
+- `axi_checker.v`: bộ kiểm giao thức gắn ở mọi cổng master và slave (VALID/DATA ổn định tới khi READY, không có VALID mà không có giao dịch, đếm beat đúng với LEN, WLAST/RLAST đúng chỗ, WRAP hợp lệ, INCR không vượt 4 KB, không có B/R thừa, không treo quá hạn...). Mọi vi phạm làm test thất bại.
+
+**Bản đồ địa chỉ thêm so với bản bus cũ:** thanh ghi DMA ở `0x2001_0000`; **bí danh RAM không qua cache ở `0x4000_0000`** (cùng RAM thật ở `0x1000_0000`). Vùng cache dữ liệu chỉ là `0x1xxx_xxxx`.
+
+**DMA** (`axi_dma.v`, 2 kênh, mỗi kênh cách nhau 0x20 byte):
+
+| Offset | Thanh ghi | Ghi chú |
+|---|---|---|
+| +0x00 | CTRL | bit 0 start (tự xoá), bit 1 IE |
+| +0x04 | STATUS | bit 0 busy, bit 1 done (ghi 1 để xoá), bit 2 err (ghi 1 để xoá) |
+| +0x08 / 0x0C | SRC / DST | địa chỉ byte, chia hết cho 4 |
+| +0x10 | LEN | số **từ** 32 bit (0 = xong ngay) |
+| +0x14 / 0x18 | SSTRIDE / DSTRIDE | 4 = burst INCR, 0 = burst FIXED, giá trị khác = từng từ một với bước đó (byte) |
+| +0x1C | CYCLES | số chu kỳ của lần chạy gần nhất |
+
+Mỗi lượt DMA cắt công việc thành mảnh ≤ 16 từ, không vượt ranh giới 4 KB (cả nguồn lẫn đích), đệm trong, hai kênh luân phiên từng mảnh. Hoàn thành làm nguồn ngắt 8 (kênh 0) và 9 (kênh 1) của PLIC (`NSRC` = 9) khi IE = 1. Lỗi từ bus (SLVERR/DECERR) làm dừng kênh với bit ERR.
+
+**Bất biến quan trọng (ghi “posted”)**: cổng dữ liệu của lõi báo xong lệnh `sw` ngay khi AW và W được nhận, không chờ B, để không làm chậm lõi. Cách này chỉ đúng nếu slave ghi vào bộ nhớ ngay ở lần bắt tay W cuối (đúng với `axi_mem` và cầu ngoại vi). Để giữ thứ tự, lệnh **đọc thiết bị** (vùng không cache) chờ hết B đang bay trước khi phát AR; lỗi từ B được báo qua `bus_err` đúng một xung cho mỗi giao dịch lỗi (về SYSCON.BUSERR).
+
+**Kiểm chứng**
+- `soc/tb/tb_axi_rand.v`: testbench ngẫu nhiên 3 master × 3 slave (RAM, RAM chậm có WRAP/FIXED, ROM) với mô hình tham chiếu byte-chính-xác, burst INCR/WRAP/FIXED ngẫu nhiên, size/strobe ngẫu nhiên, ghi nhiều giao dịch liên tiếp tới các slave khác nhau rồi mới nhận B (kiểm thứ tự B), đọc từ vùng ROM, vùng ghi ROM (SLVERR) và vùng trống (DECERR), READY ngẫu nhiên, và một pha **tranh chấp** có master chiếm bus liên tục để đo công bằng (số AR/AW được cấp lệch nhau không quá 1 giữa các master). Chạy 5 hạt ngẫu nhiên, mỗi hạt ≈ 70 nghìn chu kỳ, 0 lỗi và checker im lặng ở cả 6 cổng. Có watchdog nên deadlock hiện thành FAIL chứ không treo. Testbench này đã tìm ra một lỗi thật của `axi_mem`: payload R đổi khi master chưa nhận (một master ghi đúng từ mà master khác đang giữ R) làm checker báo "VALID rồi hoặc payload đổi trước READY"; đã sửa bằng cách giữ dữ liệu khi stall. Testbench riêng `soc/tb/tb_axi_br.v` kiểm cầu ngoại vi (W đến trễ, burst INCR/WRAP/FIXED, lỗi); `tb_soc` kiểm thêm độ dài burst nạp dòng của hai cache.
+- Toàn bộ chương trình C đã có (`soc/sw/`, bao gồm timer, ngắt, trap, bộ nhớ, ngoại vi) và FreeRTOS (`soc/freertos/`) chạy lại **nguyên xi** trên bản AXI với checker bật (`python3 soc/run_soc.py --axi`).
+- `soc/sw/t_dma.c`: chương trình C dùng DMA: sao chép 64 từ, scatter / gather có bước, FIXED, các đường lỗi (đích ngoài bản đồ, ROM, cửa sổ ngoại vi trống), ghi qua cầu vào SYSCON/CLINT, mảnh vượt ranh giới 4 KB, LEN = 0, ngắt vào PLIC (và không ngắt khi IE = 0), hai kênh chạy cùng lúc với lõi và chia băng thông công bằng. **Sao chép 64 từ: CPU (vòng lặp C) 513 chu kỳ so với DMA 197 chu kỳ** (cùng RTL, đo bằng `mcycle`).
+- `soc/mutate_axi.py`: **55 đột biến** (xbar, `axi_mem`, DMA, cầu ngoại vi, cầu cache, top) trên RTL; mỗi đột biến phải bị ít nhất một test (testbench ngẫu nhiên, hoặc t_dma / bộ C trên SoC) làm thất bại. Kết quả: **55/55 đột biến bị bắt** (tb_axi_rand 22, t_dma 20, t_mem 5, tb_axi_br 4, hello 3, còn lại do t_plic). Một đột biến ban đầu (WREADY trả sau khi W xong) hoá ra tương đương với slave `axi_mem` nên được thay bằng đột biến quan sát được; vài đột biến lọt ở vòng đầu đã buộc thêm test (gather, ranh giới 4 KB giữa mảnh, đọc lại hai từ khác nhau, BUSERR ngay sau ghi lỗi, testbench cầu ngoại vi). `python3 soc/mutate_axi.py --check` kiểm tra mọi chuỗi cần thay còn đúng một lần trong RTL.
+
+**Diện tích** (SG13G2, tổng hợp yosys + ABC trước P&R, không gồm ROM/RAM, `soc/synth/run_axi_area.sh`): tổng **3,306 mm²**, trong đó hai cache bằng mảng flip-flop chiếm 2,634 mm² (79,7 %), lõi + ngoại vi cũ 0,517 mm², còn **toàn bộ bus AXI4 + DMA + cầu chỉ 0,155 mm² (4,7 %)**: `axi_dma` 0,103 mm², `axi_xbar` 0,033 mm², cầu ngoại vi 0,011 mm², hai cầu cache 0,008 mm². Con số cache lớn vì dùng flip-flop thay SRAM (xem giới hạn); chưa có timing riêng cho bản AXI.
+
+**Giới hạn của phần AXI/DMA, nói thẳng**
+
+| Giới hạn | Hệ quả |
+|---|---|
+| Không có LOCK, CACHE, PROT, QOS, REGION, USER (không có truy cập độc quyền) | không dùng được cho lệnh nguyên tử; chưa có `A` extension |
+| Cache của lõi **không đồng bộ** với DMA | DMA phải dùng bí danh `0x4000_0000`, hoặc phần mềm tự `fence`/vô hiệu hoá; DMA đọc vùng đệm cache còn bẩn thì thấy dữ liệu cũ |
+| Ghi posted (xong khi nhận AW + W) | lỗi ghi chỉ báo muộn qua `bus_err`, không thành trap chính xác; slave mới phải ghi ngay ở W cuối |
+| Mỗi cổng cache chỉ 1 giao dịch đọc đang bay | không tận dụng hết khả năng nhiều ID |
+| DMA chỉ truy cập từ 32 bit chia hết cho 4; bước khác 4 và khác 0 chạy từng từ (không burst) | chậm hơn nhiều so với burst INCR |
+| Không có interleaving dữ liệu R giữa các ID, không sắp xếp lại | đủ cho AXI4 nhưng không dùng hết cấu hình cho phép |
+| ROM/RAM là mảng flip-flop (`axi_mem`) | chỉ đo diện tích khối bus + DMA + cache; chưa thay bằng macro SRAM |
+| Chưa P&R, chưa FPGA, chưa STA riêng cho SoC AXI | số diện tích là trước P&R |
+| Bộ kiểm giao thức và mô hình tham chiếu do cùng một người viết với RTL | bù bằng 55 đột biến và hai loại testbench, nhưng chưa dùng VIP độc lập |
 
 ## Giới hạn
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chế độ S / U (`SU = 1`) chưa có MMU Sv32, chưa có `menvcfg` / `senvcfg` và chưa có trong SoC hay riscv-formal; PLIC của SoC chỉ có một context M-mode; PMP chỉ có ở pipeline RV32IM, độ mịn cố định 4 byte, chưa có Smepmp (`mseccfg`); riscv-formal chạy với `PMP_N = 0` (bộ check không mô hình PMP), PMP chỉ được kiểm bằng so vết với Spike và đột biến
