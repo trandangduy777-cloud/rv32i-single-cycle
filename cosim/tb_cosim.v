@@ -26,6 +26,12 @@ module tb_cosim;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we, dmem_re, dmem_fence, imem_ready, dmem_ready, icache_flush;
 
+// dia chi in trong vet: dia chi ao (MMU dich load / store; Spike ghi dia chi ao)
+`ifdef PIPE_FULL
+`define TVA dut.memwb_tva
+`else
+`define TVA dut.memwb_taddr
+`endif
 `ifdef PIPE_FULL
     // bo du doan nhanh: -DBTBN=<muc> -DRASN=<muc> -DGHRB=<bit> (mac dinh theo rv32im_pipeline.v; 0 0 0 = ban cu);
     // bo nhan: -DMULLAT=<0 lap | 1 song song 1 chu ky | 2 song song 2 tang>
@@ -71,12 +77,6 @@ module tb_cosim;
 `define MMUP 1
 `else
 `define MMUP 0
-`endif
-// dia chi in trong vet: dia chi ao (MMU dich load / store; Spike ghi dia chi ao)
-`ifdef PIPE_FULL
-`define TVA dut.memwb_tva
-`else
-`define TVA dut.memwb_taddr
 `endif
 `define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP)
 `ifdef MA
