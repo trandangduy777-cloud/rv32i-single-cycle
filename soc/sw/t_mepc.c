@@ -13,7 +13,7 @@ int main(void) {
     u32 a_irq, a_ecall, a_ebreak;
     /* 1. ngat phan mem dang cho, bat MIE bang CSRRS o 2 mod 4: ngat roi vao c.nop dau tien sau CSRRS (dia chi 2 mod 4 + 4 = 2 mod 4) */
     csr_write(mie, MIE_MSIE);
-    MSIP = 1;
+    MSIP = 1; sync_io();
     __asm__ volatile (
         ".option push\n.option rvc\n.balign 4\n"
         "c.nop\n"

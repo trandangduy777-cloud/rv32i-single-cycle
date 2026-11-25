@@ -19,7 +19,11 @@ module tb_soc;
     wire [31:0] exit_code;
 
     reg [3:0] ext_irq = 4'd0;
+`ifdef AXI
+    soc_axi_top #(.UART_DIV(DIV), .MTIME_PRESC(1)) dut (
+`else
     soc_top #(.UART_DIV(DIV), .MTIME_PRESC(1)) dut (
+`endif
         .clk(clk), .rst_n(rst_n), .uart_rx(uart_rx), .uart_tx(uart_tx), .ext_irq(ext_irq),
         .gpio_in(pad), .gpio_out(gpio_out), .gpio_oe(gpio_oe), .exit_valid(exit_valid), .exit_code(exit_code)
     );
@@ -79,6 +83,7 @@ module tb_soc;
                 else if (k == 9) begin
                     if (uart_tx !== 1'b1) begin errors = errors + 1; $display("[SOC] LOI UART: bit stop != 1"); end
                     if (out_n < 4096) out_buf[out_n] = sh;
+                    if ($test$plusargs("stamp")) $display("[STAMP] %0d %c", cyc, (sh == 8'h0A) ? 8'h7E : sh);
                     out_n = out_n + 1; frames = frames + 1;
                 end
             end
@@ -196,6 +201,35 @@ module tb_soc;
         end
     end
 
+
+`ifdef AXI
+    // Bo kiem giao thuc AXI4 (soc/axi/axi_checker.v) o 3 cong master va 3 cong slave cua interconnect; moi vi pham lam test that bai.
+    genvar gi;
+    generate
+        for (gi = 0; gi < 3; gi = gi + 1) begin : axm
+            axi_checker #(.NAME(gi == 0 ? "M0" : gi == 1 ? "M1" : "M2"), .IDW(4)) chk (.clk(clk), .rst_n(rst_n),
+                .awid(dut.s_awid[gi*4 +: 4]), .awaddr(dut.s_awaddr[gi*32 +: 32]), .awlen(dut.s_awlen[gi*8 +: 8]), .awsize(dut.s_awsize[gi*3 +: 3]), .awburst(dut.s_awburst[gi*2 +: 2]), .awvalid(dut.s_awvalid[gi]), .awready(dut.s_awready[gi]),
+                .wdata(dut.s_wdata[gi*32 +: 32]), .wstrb(dut.s_wstrb[gi*4 +: 4]), .wlast(dut.s_wlast[gi]), .wvalid(dut.s_wvalid[gi]), .wready(dut.s_wready[gi]),
+                .bid(dut.s_bid[gi*4 +: 4]), .bresp(dut.s_bresp[gi*2 +: 2]), .bvalid(dut.s_bvalid[gi]), .bready(dut.s_bready[gi]),
+                .arid(dut.s_arid[gi*4 +: 4]), .araddr(dut.s_araddr[gi*32 +: 32]), .arlen(dut.s_arlen[gi*8 +: 8]), .arsize(dut.s_arsize[gi*3 +: 3]), .arburst(dut.s_arburst[gi*2 +: 2]), .arvalid(dut.s_arvalid[gi]), .arready(dut.s_arready[gi]),
+                .rid(dut.s_rid[gi*4 +: 4]), .rdata(dut.s_rdata[gi*32 +: 32]), .rresp(dut.s_rresp[gi*2 +: 2]), .rlast(dut.s_rlast[gi]), .rvalid(dut.s_rvalid[gi]), .rready(dut.s_rready[gi]));
+            axi_checker #(.NAME(gi == 0 ? "S0" : gi == 1 ? "S1" : "S2"), .IDW(6)) chs (.clk(clk), .rst_n(rst_n),
+                .awid(dut.m_awid[gi*6 +: 6]), .awaddr(dut.m_awaddr[gi*32 +: 32]), .awlen(dut.m_awlen[gi*8 +: 8]), .awsize(dut.m_awsize[gi*3 +: 3]), .awburst(dut.m_awburst[gi*2 +: 2]), .awvalid(dut.m_awvalid[gi]), .awready(dut.m_awready[gi]),
+                .wdata(dut.m_wdata[gi*32 +: 32]), .wstrb(dut.m_wstrb[gi*4 +: 4]), .wlast(dut.m_wlast[gi]), .wvalid(dut.m_wvalid[gi]), .wready(dut.m_wready[gi]),
+                .bid(dut.m_bid[gi*6 +: 6]), .bresp(dut.m_bresp[gi*2 +: 2]), .bvalid(dut.m_bvalid[gi]), .bready(dut.m_bready[gi]),
+                .arid(dut.m_arid[gi*6 +: 6]), .araddr(dut.m_araddr[gi*32 +: 32]), .arlen(dut.m_arlen[gi*8 +: 8]), .arsize(dut.m_arsize[gi*3 +: 3]), .arburst(dut.m_arburst[gi*2 +: 2]), .arvalid(dut.m_arvalid[gi]), .arready(dut.m_arready[gi]),
+                .rid(dut.m_rid[gi*6 +: 6]), .rdata(dut.m_rdata[gi*32 +: 32]), .rresp(dut.m_rresp[gi*2 +: 2]), .rlast(dut.m_rlast[gi]), .rvalid(dut.m_rvalid[gi]), .rready(dut.m_rready[gi]));
+        end
+    endgenerate
+    // Kiem tra cap SoC (bo kiem giao thuc khong biet ma master "can" bao nhieu beat): burst nap dong cua cache dung bang so tu cua dong, cong lenh chi nap dong
+    integer len_errs = 0;
+    always @(posedge clk) if (rst_n) begin
+        if (dut.s_arvalid[0] & dut.s_arready[0] & (dut.s_arlen[7:0] !== dut.IC_WORDS - 1)) begin len_errs = len_errs + 1; $display("[SOC] M0 AR: ARLEN %0d khac so tu cua dong - 1", dut.s_arlen[7:0]); end
+        if (dut.s_arvalid[1] & dut.s_arready[1] & (dut.s_arlen[15:8] !== dut.DC_WORDS - 1) & (dut.s_arlen[15:8] !== 8'd0)) begin len_errs = len_errs + 1; $display("[SOC] M1 AR: ARLEN %0d khong phai nap dong hay 1 beat", dut.s_arlen[15:8]); end
+    end
+    wire [31:0] axi_errs = axm[0].chk.errors + axm[1].chk.errors + axm[2].chk.errors + axm[0].chs.errors + axm[1].chs.errors + axm[2].chs.errors + len_errs;
+`endif
+
     task show_out; integer j; begin $write("[SOC] da nhan: \""); for (j = 0; j < out_n && j < 4096; j = j + 1) $write("%c", out_buf[j]); $display("\""); end endtask
 
     task report;
@@ -218,6 +252,9 @@ module tb_soc;
             end
             if (exit_code !== want_code[31:0]) begin $display("[SOC] LOI ma thoat %08x, mong doi %08x (SCRATCH = mepc luc loi: %08x)", exit_code, want_code, dut.u_sys.scratch); bad = bad + 1; end
             if (errors != 0) bad = bad + 1;
+`ifdef AXI
+            if (axi_errs != 0) begin bad = bad + 1; $display("[SOC] LOI giao thuc AXI4: %0d vi pham (xem dong [AXI])", axi_errs); end
+`endif
             if (have_lat && (lat_n < 2 || wk_n < 2)) begin bad = bad + 1; $display("[SOC] LOI do tre ngat: chi do duoc %0d lan toi trap, %0d lan toi mark_wake", lat_n, wk_n); end
             if (bad == 0) begin
                 $display("[SOC] PASS %0d chu ky, %0d ky tu UART, ma thoat %0d", cyc, out_n, exit_code);
