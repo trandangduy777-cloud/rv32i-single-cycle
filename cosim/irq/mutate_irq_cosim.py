@@ -73,9 +73,9 @@ EXTRA += [(n, o, w, PMP) for n, o, w in [
     ("khop mot phan van duoc phep", "wire        ls_same = (|pmp_m2) & (|pmp_m3) & (pmp_oh2 == pmp_oh3);",
      "wire        ls_same = 1'b1;"),
     ("load / store lech chi kiem tu dau", "wire [29:0] pmp_w3 = ls_end[31:2];", "wire [29:0] pmp_w3 = ea[31:2];"),
-    ("store kiem quyen R thay vi W", "~(ls_same & |(pmp_oh2 & pmp_okw));", "~(ls_same & |(pmp_oh2 & pmp_okr));"),
+    ("store kiem quyen R thay vi W", "~(ls_same & |(pmp_oh2 & okw_d))", "~(ls_same & |(pmp_oh2 & okr_d))"),
     ("fetch khong kiem nua sau lenh 32 bit",
-     "wire        if_f2   = (ENABLE_C != 0) & ~idex_c & idex_pc[1] & (|pmp_m1) & ~|(pmp_oh1 & pmp_okx);",
+     "wire        if_f2   = (ENABLE_C != 0) & ~idex_c & idex_pc[1] & ((|pmp_m1) ? ~|(pmp_oh1 & okx_i) : ~pm_i);",
      "wire        if_f2   = 1'b0;"),
     ("mtval cua fetch luon la pc", "assign pmp_itval  = if_f1 ? idex_pc : if_p2;", "assign pmp_itval  = idex_pc;"),
     ("fetch bi cam khong gay trap", "assign pmp_ifault = (PMP_N != 0) & idex_valid & ~irq_take & (if_f1 | if_f2);",
@@ -94,15 +94,61 @@ EXTRA += [(n, o, w, PMP) for n, o, w in [
 ]]
 
 
+# Che do S / U (cosim/irq/su.S, riscv-tests rv32si / rv32mi): loi RV32IMC + S/U
+SUM = ["--only", "su-,rv32si,rv32mi", "--core", "6", "--seeds", "1", "--tmax", "300000"]
+EXTRA += [(n, o, w, SUM) for n, o, w in [
+    ("ECALL luon bao ma 11", "trap_cause = {28'd0, 2'b10, priv};", "trap_cause = 32'd11;"),
+    ("khong kiem cap CSR theo che do", "((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en))", "(1'b0 | (cnt_user & ~cnt_en))"),
+    ("mcounteren / scounteren bi bo qua", "((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en))", "((csr_addr[9:8] > priv))"),
+    ("scounteren bi bo qua o U", "((priv == 2'd1) | scounteren[csr_addr[4:0]])", "(1'b1)"),
+    ("MRET duoc phep o S / U", "(idex_mret & (priv != 2'd3))", "(1'b0)"),
+    ("TSR bi bo qua", "((priv == 2'd0) | ((priv == 2'd1) & st_tsr))", "((priv == 2'd0))"),
+    ("WFI duoc phep o U", "(idex_wfi & ((priv == 2'd0) | ((priv != 2'd3) & st_tw)))", "(idex_wfi & (((priv != 2'd3) & st_tw)))"),
+    ("TW bi bo qua", "(idex_wfi & ((priv == 2'd0) | ((priv != 2'd3) & st_tw)))", "(idex_wfi & ((priv == 2'd0)))"),
+    ("medeleg bi bo qua", "wire exc_deleg = (priv != 2'd3) & medeleg_v[trap_cause[4:0]];", "wire exc_deleg = 1'b0;"),
+    ("uy quyen ca exception xay ra o M", "wire exc_deleg = (priv != 2'd3) & medeleg_v[trap_cause[4:0]];",
+     "wire exc_deleg = medeleg_v[trap_cause[4:0]];"),
+    ("ngat S uy quyen van ve M", "wire trap_s    = (SU != 0) & (irq_take ? ~irq_m : exc_deleg);",
+     "wire trap_s    = (SU != 0) & (irq_take ? 1'b0 : exc_deleg);"),
+    ("ngat M o U van can MIE", "wire m_en   = (priv != 2'd3) | mstatus_mie;", "wire m_en   = mstatus_mie;"),
+    ("ngat S o U van can SIE", "wire s_en   = (priv == 2'd0) | ((priv == 2'd1) & st_sie);", "wire s_en   = (priv == 2'd1) & st_sie;"),
+    ("ngat S uy quyen nhan ca o M khi SIE", "wire s_en   = (priv == 2'd0) | ((priv == 2'd1) & st_sie);",
+     "wire s_en   = (priv == 2'd0) | st_sie;"),
+    ("uu tien SSI truoc SEI", ": (cs_sei ? 4'd9 : cs_ssi ? 4'd1 : 4'd5);", ": (cs_ssi ? 4'd1 : cs_sei ? 4'd9 : 4'd5);"),
+    ("stvec vectored bi bo qua", "wire        tvec_v     = trap_s ? stvec_vec : mtvec_vec;",
+     "wire        tvec_v     = trap_s ? 1'b0 : mtvec_vec;"),
+    ("trap ve S khong luu SPP", "st_spp       <= tpriv_q[0];", "st_spp       <= 1'b1;"),
+    ("trap ve M khong luu MPP", "st_mpp       <= tpriv_q;", "st_mpp       <= 2'd3;"),
+    ("SRET khong tra ve che do SPP", "priv_r       <= {1'b0, st_spp};", "priv_r       <= 2'd1;"),
+    ("MRET khong dat MPP ve U", "st_mpp       <= 2'd0;                           // MPP ve", "st_mpp       <= st_mpp;  // MPP ve"),
+    ("MRET ve U khong xoa MPRV", "if (st_mpp != 2'd3) st_mprv <= 1'b0;", "if (1'b0) st_mprv <= 1'b0;"),
+    ("MPRV bi bo qua (PMP)", "wire        pm_d    = ((SU != 0) & st_mprv) ? (st_mpp == 2'd3) : pm_i;",
+     "wire        pm_d    = pm_i;"),
+    ("PMP: S / U khong khop muc nao van duoc fetch", "wire        if_f1   = (|pmp_m0) ? ~|(pmp_oh0 & okx_i) : ~pm_i;",
+     "wire        if_f1   = (|pmp_m0) ? ~|(pmp_oh0 & okx_i) : 1'b0;"),
+    ("PMP: muc khong khoa khong rang buoc U", "wire [PN-1:0] okr_d = pm_d ? pmp_okr : pmp_pr;",
+     "wire [PN-1:0] okr_d = pmp_okr;"),
+    ("MPP = 2 khong ve U", "(csr_new[12:11] == 2'd2) ? 2'd0 : csr_new[12:11]", "csr_new[12:11]"),
+    ("SD khong theo FS", "wire        st_sd = (st_fs == 2'b11);", "wire        st_sd = 1'b0;"),
+    ("sie ghi ca bit khong uy quyen", "if (mideleg_ssi) mie_ssie <= csr_new[1];", "mie_ssie <= csr_new[1];"),
+    ("sip ghi SSIP khi khong uy quyen", "12'h144: if (mideleg_ssi) mip_ssip <= csr_new[1];", "12'h144: mip_ssip <= csr_new[1];"),
+    ("medeleg bit 0 ghi duoc khi co C", "csr_new[0] & (ENABLE_C == 0)", "csr_new[0]"),
+    ("misa thieu S / U", "((SU != 0) ? 32'h0014_0000 : 32'h0)", "((SU != 0) ? 32'h0 : 32'h0)"),
+]]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
     ap.add_argument("--pmp", action="store_true", help="chi chay cac dot bien PMP")
+    ap.add_argument("--su", action="store_true", help="chi chay cac dot bien che do S / U")
     ap.add_argument("--range", default="", help="a:b = chi chay dot bien thu a..b-1 (chia lan chay dai)")
     a = ap.parse_args()
     muts = list(mutate_irq.MUTATIONS) + EXTRA
     if a.pmp:
         muts = [m for m in muts if len(m) > 3 and m[3] is PMP]
+    if a.su:
+        muts = [m for m in muts if len(m) > 3 and m[3] is SUM]
     if a.range:
         lo, hi = (int(x) if x else None for x in a.range.split(":"))
         muts = muts[lo:hi]

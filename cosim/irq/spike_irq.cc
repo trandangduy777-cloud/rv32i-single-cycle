@@ -80,8 +80,9 @@ static bool parse(const std::string& l, Rec& r) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "dung: %s <bin> <vet RTL> [isa]\n", argv[0]); return 2; }
+    if (argc < 3) { fprintf(stderr, "dung: %s <bin> <vet RTL> [isa] [che do: M | MSU]\n", argv[0]); return 2; }
     const char* isa = argc > 3 ? argv[3] : "rv32imc_zicsr_zifencei";
+    const char* privs = argc > 4 ? argv[4] : "M";
     Sim sim;
     {
         std::ifstream f(argv[1], std::ios::binary);
@@ -104,13 +105,21 @@ int main(int argc, char** argv) {
     sim.cfg.pmpregions = 8;        // = PMP_N cua rv32im_pipeline.v
     sim.cfg.wfi_as_nop = true;     // RTL dung WFI cho toi khi co ngat dang cho; voi Spike WFI chi la mot lenh
     FILE* devnull = fopen("/dev/null", "w");
-    processor_t p(isa, "M", &sim.cfg, &sim, 0, false, devnull, std::cerr);
+    processor_t p(isa, privs, &sim.cfg, &sim, 0, false, devnull, std::cerr);
     sim.harts[0] = &p;
     p.reset();
     p.enable_log_commits();
     state_t* s = p.get_state();
     s->pc = BASE;
-    const reg_t IRQ_MASK = MIP_MEIP | MIP_MTIP | MIP_MSIP;
+    const reg_t IRQ_MASK = MIP_MEIP | MIP_MTIP | MIP_MSIP;            // chan ngat ngoai lo (testbench dieu khien)
+    const reg_t ALL_IRQ = IRQ_MASK | MIP_SEIP | MIP_STIP | MIP_SSIP;     // ngat S: phan mem ghi, Spike tu theo doi
+    // ngat dang cho va duoc phep theo trang thai kien truc cua Spike (che do, MIE / SIE, mideleg)
+    auto irq_allowed = [&](reg_t pend) -> bool {
+        reg_t ms = s->mstatus->read(), deleg = s->mideleg->read(), prv = s->prv;
+        bool m_en = prv < PRV_M || (ms & MSTATUS_MIE);
+        bool s_en = prv < PRV_S || (prv == PRV_S && (ms & MSTATUS_SIE));
+        return ((pend & ~deleg) && m_en) || ((pend & deleg) && s_en && prv <= PRV_S);
+    };
     s->mip->backdoor_write_with_mask(IRQ_MASK, 0);
 
     long n_ins = 0, n_exc = 0, n_patch = 0, lag = 0, maxlag_seen = 0;
@@ -141,8 +150,10 @@ int main(int argc, char** argv) {
             s->mip->backdoor_write_with_mask(IRQ_MASK, r.mip & IRQ_MASK);
             p.step(1);
             s->mip->backdoor_write_with_mask(IRQ_MASK, 0);
-            reg_t mc = (uint32_t)s->mcause->read(), me = (uint32_t)s->mepc->read(), mt = (uint32_t)s->mtvec->read();
-            reg_t tv = (mt & ~(reg_t)3) + ((mt & 1) ? 4 * (r.cause & 0x3f) : 0);   // mtvec vectored
+            bool to_s = s->prv == PRV_S && (uint32_t)s->scause->read() == r.cause && (uint32_t)s->sepc->read() == r.epc;
+            reg_t mc = (uint32_t)(to_s ? s->scause : s->mcause)->read(), me = (uint32_t)(to_s ? s->sepc : s->mepc)->read();
+            reg_t mt = (uint32_t)(to_s ? s->stvec : s->mtvec)->read();
+            reg_t tv = (mt & ~(reg_t)3) + ((mt & 1) ? 4 * (r.cause & 0x3f) : 0);   // xtvec vectored
             if (s->minstret->read() != ins0 || mc != (reg_t)r.cause || me != r.epc || (uint32_t)s->pc != tv) {
                 snprintf(buf, sizeof buf, "Spike khong nhan ngat giong RTL (mstatus=%08lx mie=%08lx): mcause %08lx (RTL %08x), "
                          "mepc %08lx (RTL %08x), pc %08lx (mtvec %08lx)", (long)s->mstatus->read(), (long)s->mie->read(),
@@ -170,8 +181,9 @@ int main(int argc, char** argv) {
             p.step(1);
             // exception: pc moi = mtvec (exception luon ve BASE) va mepc = pc cua lenh (khong dung minstret vi
             // mcountinhibit.IR co the dung no)
-            reg_t mt = (uint32_t)s->mtvec->read();
-            bool exc = (uint32_t)s->pc == (mt & ~(reg_t)3) && (uint32_t)s->mepc->read() == pc0;
+            reg_t mt = (uint32_t)s->mtvec->read(), st = (uint32_t)s->stvec->read();
+            bool exc = ((uint32_t)s->pc == (mt & ~(reg_t)3) && (uint32_t)s->mepc->read() == pc0) ||
+                       (s->prv == PRV_S && (uint32_t)s->pc == (st & ~(reg_t)3) && (uint32_t)s->sepc->read() == pc0);
             (void)ins0;
             if (exc) {
                 if (pc0 != r.pc || w != r.ins || r.rd != 0 || r.st != 0) {
@@ -195,10 +207,12 @@ int main(int argc, char** argv) {
                 if ((it.first & 0xf) == 0 && (it.first >> 4) != 0) { rd = it.first >> 4; val = (uint32_t)s->XPR[rd]; }
             bool csr_rd = (w & 0x7f) == 0x73 && ((w >> 12) & 3) != 0;
             uint32_t csr = w >> 20;
-            // gia tri phu thuoc hien thuc: mip, mcycle / cycle, mhpmcounter / hpmcounter, mhpmevent -> lay theo RTL.
+            // gia tri phu thuoc hien thuc: mip, mcycle / cycle, mhpmcounter / hpmcounter, mhpmevent, mvendorid / marchid /
+            // mimpid -> lay theo RTL.
             // minstret / instret la dai luong kien truc: phai khop Spike.
             bool impl = csr == CSR_MIP || ((csr >> 8) == 0xB || (csr >> 8) == 0xC) && ((csr >> 5) & 3) == 0 &&
-                        (csr & 0x1f) != 2 || (csr >= 0x323 && csr <= 0x33f);
+                        (csr & 0x1f) != 2 || (csr >= 0x323 && csr <= 0x33f) ||
+                        csr == CSR_MVENDORID || csr == CSR_MARCHID || csr == CSR_MIMPID;   // ma nha san xuat / kien truc
             if (csr_rd && rd && impl && rd == r.rd && val != r.val) {
                 s->XPR.write(rd, r.val); val = r.val; n_patch++;
             }
@@ -235,10 +249,10 @@ int main(int argc, char** argv) {
         if (!done) return fail(i, "khong hoan tat lenh nao");
         n_ins++;
         // WFI chi duoc hoan tat khi co ngat dang cho va duoc bat trong mie (Spike chay WFI nhu NOP nen phai kiem rieng)
-        if (r.ins == 0x10500073 && !(r.mip & s->mie->read() & IRQ_MASK))
+        if (r.ins == 0x10500073 && !(r.mip & s->mie->read() & ALL_IRQ))
             return fail(i, "WFI hoan tat khi khong co ngat nao dang cho va duoc bat trong mie");
         // chong bo doi: ngat dang cho cua RTL duoc phep theo trang thai cua Spike ma RTL chua nhan
-        bool want = (s->mstatus->read() & MSTATUS_MIE) && (r.mip & s->mie->read() & IRQ_MASK);
+        bool want = irq_allowed(r.mip & s->mie->read() & ALL_IRQ);
         lag = want ? lag + 1 : 0;
         if (lag > maxlag_seen) maxlag_seen = lag;
         if (lag > MAXLAG) return fail(i, "RTL de ngat duoc phep cho qua " + std::to_string(MAXLAG) + " lenh ma khong nhan");

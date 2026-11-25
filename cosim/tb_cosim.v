@@ -60,7 +60,13 @@ module tb_cosim;
 `ifndef ZICOND
 `define ZICOND 0
 `endif
-`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
+// che do Supervisor / User: -DSU
+`ifdef SU
+`define SUP 1
+`else
+`define SUP 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP)
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
@@ -370,7 +376,7 @@ module tb_cosim;
     reg [31:0] irq_cause, irq_epc, irq_tgt;
     reg [11:0] irq_mip;
     integer    n_irq = 0;
-    wire [11:0] mip_now = {dut.mip_meip, 3'b0, dut.mip_mtip, 3'b0, dut.mip_msip, 3'b0};
+    wire [11:0] mip_now = dut.mip_v[11:0];          // ca bit ngat S (SU = 1; bang 0 khi SU = 0)
     always @(posedge clk) begin
         if (rst_n && dut.irq_take && !irq_pend) begin
             irq_pend  <= 1'b1;

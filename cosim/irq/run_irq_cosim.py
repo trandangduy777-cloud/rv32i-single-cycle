@@ -30,6 +30,9 @@ CORES = [
      ["+lat=8", "+irqdly=600"]),
     ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DRVC -DBTBN=4 -DRASN=2 -DGHRB=2 -DBTAG=1 " + C22, CACHE, "rv32imc",
      ["+lat=6", "+irqdly=500"]),
+    # che do Supervisor / User (SU = 1): "xsu" chi la nhan noi bo (chuong trinh can S / U), Spike chay voi che do MSU
+    ("RV32IMC + S/U", "-DRVC -DSU", PIPE, "rv32imc_xsu", []),
+    ("RV32IM + S/U + cache 2x2, tre 1-8", "-DSU " + C22, CACHE, "rv32im_xsu", ["+lat=8", "+irqdly=600"]),
 ]
 
 
@@ -68,6 +71,64 @@ def build_pmp(march, tmp, ma=False):
     open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
     r = rc.sh(rc.GCC + [f"-march={march}_zicsr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE] + (["-DMA"] if ma else []) +
               ["-T", ld, os.path.join(HERE, "pmp.S"), "-o", elf])
+    if r.returncode:
+        sys.exit(r.stderr)
+    return name, elf
+
+
+def build_su(march, tmp):
+    name = f"su-{march[4:]}"
+    elf = os.path.join(tmp, name + ".elf")
+    ld = os.path.join(tmp, "irq80.ld")
+    open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
+    r = rc.sh(rc.GCC + [f"-march={march}_zicsr_zicntr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE, "-T", ld,
+                        os.path.join(HERE, "su.S"), "-o", elf])
+    if r.returncode:
+        sys.exit(r.stderr)
+    return name, elf
+
+
+# riscv-tests rv32si / rv32mi voi moi truong "p" chinh thuc (riscv-test-env): chay tren loi co S / U, Spike che do MSU.
+# Bo qua: rv32si-dirty (can MMU), rv32mi-breakpoint (can trigger / Sdtrig, lo khong co), rv32mi-ma_fetch (tat bit C cua
+# misa luc chay: Spike cho ghi, misa cua lo co dinh - WARL hop le nhung hai ben khac nhau)
+RT_SU = [("rv32si", t) for t in ("csr", "ma_fetch", "sbreak", "scall", "wfi")] + \
+        [("rv32mi", t) for t in ("csr", "mcsr", "illegal", "sbreak", "scall", "shamt", "zicntr",
+                                 "instret_overflow", "pmpaddr", "ma_addr", "lh-misaligned", "lw-misaligned",
+                                 "sh-misaligned", "sw-misaligned")]
+
+
+def rt_env(rt, tmp):
+    env = os.path.join(rt, "env", "p")
+    if not os.path.isfile(os.path.join(env, "riscv_test.h")):
+        env = os.path.join(tmp, "riscv-test-env", "p")
+        if not os.path.isdir(env):
+            r = rc.sh(["git", "clone", "-q", "--depth", "1", "https://github.com/riscv/riscv-test-env.git",
+                       os.path.join(tmp, "riscv-test-env")])
+            if r.returncode:
+                sys.exit("khong lay duoc riscv-test-env: " + r.stderr)
+    ld = os.path.join(tmp, "rt_su.ld")             # .tohost dat dung dia chi TOHOST cua testbench / harness
+    open(ld, "w").write(f"""OUTPUT_ARCH("riscv")
+ENTRY(_start)
+SECTIONS {{
+  . = 0x{BASE:x};
+  .text.init : {{ *(.text.init) }}
+  . = ALIGN(0x1000);
+  .text : {{ *(.text) }}
+  . = ALIGN(0x1000);
+  .data : {{ *(.data) }}
+  .bss : {{ *(.bss) }}
+  .tohost 0x{TOHOST:x} : {{ *(.tohost) }}
+}}
+""")
+    return env, ld
+
+
+def build_rt_su(rt, suite, test, march, tmp):
+    env, ld = rt_env(rt, tmp)
+    name = f"{suite}-{test}" + ("-c" if "c" in march[4:] else "")
+    elf = os.path.join(tmp, name + ".elf")
+    r = rc.sh(rc.GCC + [f"-march={march}_zicsr_zifencei", "-I", env, "-I", os.path.join(rt, "isa", "macros", "scalar"),
+                        "-T", ld, os.path.join(rt, "isa", suite, test + ".S"), "-o", elf])
     if r.returncode:
         sys.exit(r.stderr)
     return name, elf
@@ -115,6 +176,7 @@ def main():
     ap.add_argument("--stop-on-fail", action="store_true")
     ap.add_argument("--tmax", type=int, default=20_000_000, help="so chu ky toi da moi lan chay RTL")
     ap.add_argument("--rtl-dir", default=ROOT, help="thu muc chua RTL (mutation test dung ban sao)")
+    ap.add_argument("--riscv-tests", default="/tmp/riscv-tests", help="riscv-tests (rv32si / rv32mi cho loi co S / U)")
     a = ap.parse_args()
     tmp = tempfile.mkdtemp(prefix="irqcs_")
     exe = build_harness(a.spike, tmp)
@@ -125,21 +187,26 @@ def main():
              build_counters("rv32im", tmp) + ("rv32im",), build_counters("rv32imc", tmp) + ("rv32imc",),
              build_pmp("rv32im", tmp) + ("rv32im",), build_pmp("rv32imc", tmp) + ("rv32imc",),
              build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
+             build_su("rv32im", tmp) + ("rv32im_xsu",), build_su("rv32imc", tmp) + ("rv32imc_xsu",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32im", tmp) + ("rv32im",)]
+    if os.path.isdir(os.path.join(a.riscv_tests, "isa", "rv32si")):
+        for suite, t in RT_SU:
+            for m in ("rv32im", "rv32imc"):
+                progs.append(build_rt_su(a.riscv_tests, suite, t, m, tmp) + (m + "_xsu",))
     cores = CORES
     seeds = a.seeds
     if a.quick:
-        cores, seeds = [CORES[0], CORES[1]], 1
+        cores, seeds = [CORES[0], CORES[1], CORES[6]], 1
     elif not a.only or a.only in "coremark-irq-c":
         import run_coremark as cm
         cm.fetch_src()
         elf = cm.build("rv32imc", 1, tmp, crt0=os.path.join(HERE, "crt0_irq.S"), inc=[HERE])[0]
         progs.append(("coremark-irq-c", elf, "rv32imc"))
     if a.only:
-        progs = [p for p in progs if a.only in p[0]]
+        progs = [p for p in progs if any(o in p[0] for o in a.only.split(","))]   # nhieu chuoi cach nhau dau phay
     if a.core.isdigit():                  # so thu tu trong CORES (chia lan chay dai thanh nhieu phan)
         cores = [CORES[int(a.core)]]
     else:
@@ -167,7 +234,9 @@ def main():
                             f"+seed={sd}", f"+tmax={a.tmax}"] + plus, stdout=f, timeout=3600)
         cyc = re.search(r"DONE cycles=(\d+)", open(trf).read()[-4000:])
         base, *z = isa.split("_")
-        r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicntr", "zicsr", "zifencei", "zihpm"]))])
+        privs = "MSU" if "xsu" in z else "M"
+        z = [e for e in z if e != "xsu"]
+        r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicntr", "zicsr", "zifencei", "zihpm"])), privs])
         st = re.search(r"IRQSTAT (.*)", r.stdout)
         tag = f"[{j + 1}/{len(jobs)}] {name} / {title} / seed {sd}"
         if r.returncode or not st:
