@@ -260,7 +260,7 @@ PIPE_MUTATIONS = [
     ("P: du lieu store khong duoc forward", "exmem_store_val <= op_b;", "exmem_store_val <= idex_rs2_val;"),
     ("P: JALR dung rs1 chua forward", "wire [31:0] jalr_target = (op_a + idex_imm)", "wire [31:0] jalr_target = (idex_rs1_val + idex_imm)"),
     ("P: so sanh nhanh dung rs2 chua forward", "wire eq  = (op_a == op_b);", "wire eq  = (op_a == idex_rs2_val);"),
-    ("P: dia chi load/store dung rs1 chua forward", "wire [31:0] ea    = op_a + idex_imm;", "wire [31:0] ea    = idex_rs1_val + idex_imm;"),
+    ("P: dia chi load/store dung rs1 chua forward", "(idex_load | idex_store) ? (op_a + idex_imm)", "(idex_load | idex_store) ? (idex_rs1_val + idex_imm)"),
     ("P: SRA dich logic", "3'b101: alu_out = do_sra ? sra_out : srl_out;", "3'b101: alu_out = srl_out;"),
     ("P: LB khong mo rong dau", "3'b000:  ld_data = {{24{ld_byte[7]}},  ld_byte};", "3'b000:  ld_data = {24'b0, ld_byte};"),
     ("P: AUIPC cong pc+4", "idex_auipc            ? pc_imm          :", "idex_auipc            ? idex_pc + 32'd4 + idex_imm :"),
@@ -289,8 +289,10 @@ M_CORE_MUTATIONS = [
 # Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
 PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
                                                              "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
-                                                             "P: SH sai byte-enable",
+                                                             "P: SH sai byte-enable", "P: dia chi load/store dung rs1 chua forward",
                                                              "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID")] + [
+    # pipeline RV32IM: dia chi load / store tinh rieng (ea, dung chung cho PMP / MMU)
+    ("P: dia chi load/store dung rs1 chua forward", "wire [31:0] ea    = op_a + idex_imm;", "wire [31:0] ea    = idex_rs1_val + idex_imm;"),
     # bo du doan RV32IM (BTB / RAS, xem bpred/): ID sua hoac nhay som qua id_fix_tgt / id_fix_seq / id_late
     ("B: ID nhay som khi dang stall load-use", "assign id_redirect = ifid_valid & ~stall & (id_fix_tgt | id_fix_seq | id_late);",
      "assign id_redirect = ifid_valid & (id_fix_tgt | id_fix_seq | id_late);"),
