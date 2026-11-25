@@ -138,7 +138,7 @@ jobs:
           bash formal/div/run.sh
       - name: Liveness co WFI (mo hinh ngat cong bang)
         run: CFG=formal/checks_wfi.cfg WORK=/tmp/formal-wfi bash formal/run.sh run '^liveness_ch0$'
-      - name: MISALIGNED = 1 (load/store lech chay bang phan cung): 8 check insn + monitor muc bus
+      - name: "MISALIGNED = 1 (load/store lech chay bang phan cung) - 8 check insn + monitor muc bus"
         run: CFG=formal/checks_misal.cfg WORK=/tmp/formal-misal JOBS=$(nproc) bash formal/run.sh run '^insn_(lb|lbu|lh|lhu|lw|sb|sh|sw)_ch0$' '^mon_misal_ch0$'
       - name: Cache lenh / du lieu (k-quy nap tren RTL, 5 + 5 cau hinh, 18 dot bien)
         run: bash formal/cache/run.sh
