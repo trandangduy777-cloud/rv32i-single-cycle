@@ -24,7 +24,7 @@
 #define VA_UC   0x40000000              // ma U (trang A)
 #define VA_UC2  0x40001000              // ma U (trang B, vat ly khong lien voi A)
 #define VA_D0   0x40002000              // dpage0: U R W A D
-#define VA_RO   0x40003000              // dpage1: U R A
+#define VA_RO   0x40003000              // dpage1: U R A D (khong W: store loi do W, khong do D)
 #define VA_ND   0x40004000              // dpage0: U R W A (D = 0)
 #define VA_NA   0x40005000              // dpage1: U R W (A = 0)
 #define VA_S    0x40006000              // dpage0: R W A D (khong U)
@@ -126,7 +126,7 @@ _start:
     SETPTE  l0pt, 0, ucodeA, PTE_V | PTE_R | PTE_X | PTE_U | PTE_A
     SETPTE  l0pt, 1, ucodeB, PTE_V | PTE_R | PTE_X | PTE_U | PTE_A
     SETPTE  l0pt, 2, dpage0, PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D
-    SETPTE  l0pt, 3, dpage1, PTE_V | PTE_R | PTE_U | PTE_A
+    SETPTE  l0pt, 3, dpage1, PTE_V | PTE_R | PTE_U | PTE_A | PTE_D
     SETPTE  l0pt, 4, dpage0, PTE_V | PTE_R | PTE_W | PTE_U | PTE_A
     SETPTE  l0pt, 5, dpage1, PTE_V | PTE_R | PTE_W | PTE_U
     SETPTE  l0pt, 6, dpage0, PTE_V | PTE_R | PTE_W | PTE_A | PTE_D
@@ -155,7 +155,8 @@ m1:
     TRAP    3, 13, 0x15                 // trang khong U
     TRAP    3, 13, 0x16                 // chi X, MXR = 0
     TRAP    3, 13, 0x17                 // V = 0
-    TRAP    3, 13, 0x18                 // W khong R
+    TRAP    3, 13, 0x18                 // W khong R (load)
+    TRAP    3, 15, 0x28                 // W khong R (store: W = 1, D = 1 van loi)
     TRAP    3, 5, 0x19                  // dia chi vat ly >= 2^32: loi truy cap
     TVAL    VA_HI, 0x1a
     TRAP    3, 13, 0x1b                 // PTE khong la o muc 0
@@ -215,7 +216,7 @@ m3:
     GO      0, VA_UC + 0x300
 m4:
     NOTRAP  0x41
-    SETPTE  l0pt, 3, dpage1, PTE_V | PTE_R | PTE_U | PTE_A
+    SETPTE  l0pt, 3, dpage1, PTE_V | PTE_R | PTE_U | PTE_A | PTE_D
     sfence.vma
 
     // 5. MPRV + MPP = U: load cua M dich voi quyen U
@@ -387,6 +388,7 @@ ucodeA:
     lw      t0, 0(s0)                   // 13
     li      s0, VA_WNR
     lw      t0, 0(s0)                   // 13
+    sw      t0, 0(s0)                   // 15
     li      s0, VA_HI
     lw      t0, 0(s0)                   // 5
     li      s0, VA_L0T
