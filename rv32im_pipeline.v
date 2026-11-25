@@ -805,6 +805,7 @@ module rv32im_pipeline #(
     wire        pmp_ifault, pmp_lfault, pmp_sfault;        // vi pham PMP cua lenh o EX (fetch / load / store)
     wire [31:0] pmp_itval;                                 // mtval khi fetch bi PMP cam (pc hoac pc + 2)
     wire        cnt_icnt;
+    wire        cnt_wr_ir;             // EX ghi minstret / minstreth (xem Zicntr)
     wire        csr_we_req = (idex_funct3[1:0] == 2'b01) | (idex_rs1 != 5'd0);
     wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : op_a;
     reg  [31:0] csr_new;
@@ -1137,6 +1138,7 @@ module rv32im_pipeline #(
     reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
     reg         memwb_tirq;                        // lenh bi ngat chan lai o EX: khong thuc thi, se chay lai sau mret
     reg         memwb_trap, memwb_icnt;
+    reg         memwb_skip;                 // lenh nay da duoc tinh vao gia tri ghi minstret (xem Zicntr): khong tang them
     wire        wb_commit = memwb_valid & memwb_new;   // moi lenh hoan tat dung 1 chu ky (testbench in vet theo day)
 
     always @(posedge clk or negedge rst_n) begin
@@ -1147,6 +1149,7 @@ module rv32im_pipeline #(
             memwb_new   <= 1'b0;
             memwb_trap  <= 1'b0;
             memwb_icnt  <= 1'b0;
+            memwb_skip  <= 1'b0;
         end else if (frz) begin
             memwb_new   <= 1'b0;                     // MEM/WB giu nguyen: lenh trong do da duoc tinh la hoan tat
         end else begin
@@ -1160,6 +1163,7 @@ module rv32im_pipeline #(
             memwb_tirq  <= exmem_tirq;
             memwb_trap  <= exmem_trap;
             memwb_icnt  <= exmem_icnt;
+            memwb_skip  <= cnt_wr_ir;                // cnt_wr_ir da gom ~frz: dung canh lenh nay roi MEM
             memwb_tst   <= dmem_we;
             memwb_taddr <= dmem_we ? exmem_result : 32'd0;
             memwb_tdata <= dmem_we ? st_wide : 64'd0;      // st_wide chi co cac byte duoc ghi (con lai la 0)
@@ -1363,8 +1367,13 @@ module rv32im_pipeline #(
     wire        rt_inc    = wb_commit & ~memwb_trap;           // lenh hoan tat that su
     // moi lenh mang co icnt quyet dinh o EX: khong dem neu no ghi minstret (ghi thay cho tang) hoac mcountinhibit.IR
     // = 1 truoc lenh do. Cac lenh cu hon con trong pipeline van dem theo co cua chung.
-    wire [1:0]  ir_old    = {1'b0, exmem_valid & ~exmem_trap & exmem_icnt} + {1'b0, rt_inc & memwb_icnt};
-    wire [63:0] instret_v = minstret_r + {62'd0, ir_old};
+    wire        ir_wb     = rt_inc & memwb_icnt & ~memwb_skip;   // lenh o WB lam minstret tang o canh nay
+    wire [1:0]  ir_old    = {1'b0, exmem_valid & ~exmem_trap & exmem_icnt} + {1'b0, ir_wb};
+    // chon san (carry-select): 3 bo cong chi phu thuoc minstret_r (som), ir_old den muon chi qua bo chon. Truoc day
+    // minstret_r + ir_old roi tru lai khi ghi la 2 chuoi nho 64 bit noi tiep, la duong toi han cua ca loi (STA truoc P&R).
+    wire [63:0] ir_p1     = minstret_r + 64'd1;
+    wire [63:0] ir_p2     = minstret_r + 64'd2;
+    wire [63:0] instret_v = ir_old[1] ? ir_p2 : (ir_old[0] ? ir_p1 : minstret_r);
     wire [13:1] hpm_evt;
     assign hpm_evt[1]  = frz;
     assign hpm_evt[2]  = ~frz & ex_stall;
@@ -1402,7 +1411,7 @@ module rv32im_pipeline #(
         end
     end
     wire        cnt_wr    = csr_write & (ZICNTR != 0) & (csr_addr[11:8] == 4'hB) & (csr_addr[6:5] == 2'b00);
-    wire        cnt_wr_ir = cnt_wr & (cnt_idx == 5'd2);
+    assign      cnt_wr_ir = cnt_wr & (cnt_idx == 5'd2);
     assign      cnt_icnt  = ~cnt_wr_ir & ~mcinh[2];   // inhibit theo gia tri truoc lenh (lenh ghi mcountinhibit van duoc dem, giong Spike)
     // gia tri moi cua bo dem khi ghi nua thap / cao (tinh tren gia tri kien truc cnt_v)
     wire [63:0] cnt_new   = cnt_hi ? {csr_new, cnt_v[31:0]} : {cnt_v[63:32], csr_new};
@@ -1417,9 +1426,11 @@ module rv32im_pipeline #(
         end else if (ZICNTR != 0) begin
             if (cnt_wr && cnt_idx == 5'd0)  mcycle_r <= cnt_new;
             else if (!mcinh[0])             mcycle_r <= mcycle_r + 64'd1;
-            // lenh cu hon con o MEM se tang sau canh nay (lenh o WB tang ngay o canh nay: ghi de)
-            if (cnt_wr_ir)                  minstret_r <= cnt_new - {63'd0, exmem_valid & ~exmem_trap & exmem_icnt};
-            else if (rt_inc && memwb_icnt)  minstret_r <= minstret_r + 64'd1;
+            // ghi: gia tri moi da tinh ca lenh cu hon con o MEM (qua instret_v), nen lenh do duoc danh dau memwb_skip
+            // va khong tang them khi hoan tat (truoc day: ghi cnt_new - 1 roi de no tang lai, can them 1 bo tru 64 bit).
+            // Lenh o WB tang ngay o canh nay nen bi ghi de, gia tri cua no cung da nam trong instret_v.
+            if (cnt_wr_ir)                  minstret_r <= cnt_new;
+            else if (ir_wb)                 minstret_r <= ir_p1;
             for (hj = 0; hj < HPM_N; hj = hj + 1) begin
                 if (cnt_wr && cnt_idx == hj + 3) hpm_cnt[hj] <= cnt_new;
                 else if (!hpm_inh[hj] && hpm_ev[hj] != 4'd0 && hpm_ev[hj] <= 4'd13 && hpm_evt[hpm_ev[hj]])
