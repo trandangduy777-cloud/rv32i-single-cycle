@@ -29,6 +29,7 @@ module rvfi_wrapper (
 	rv32im_pipeline #(
 		.ENABLE_C   (1),
 		.MISALIGNED (0),
+		.PMP_N      (0),          // riscv-formal khong mo hinh PMP: muc khoa gay trap ma spec khong biet (PMP so vet voi Spike)
 `ifdef RV_FORMAL_SIMPLE_BP
 		.BTB_N(0), .RAS_N(0),
 `endif

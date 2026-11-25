@@ -43,9 +43,9 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     7) python3 riscv-tests/run_riscv_tests.py "$RT" ;;
     8) sh bench/run_bench.sh && python3 bpred/perf_bpred.py --check && python3 coremark/run_coremark.py --iter 1 --quick ;;
     9) python3 cosim/run_cosim.py "$RT" --spike "$SPIKE" ;;
-    10) (cd verify && python3 run_verify.py --mutate) ;;
-    11) (cd verify && python3 run_verify.py --pipe --mutate) ;;
-    12) (cd verify && python3 run_verify.py --pipem --mutate) ;;
+    10) (cd verify && python3 run_verify.py --mutate --stop-on-fail) ;;
+    11) (cd verify && python3 run_verify.py --pipe --mutate --stop-on-fail) ;;
+    12) (cd verify && python3 run_verify.py --pipem --mutate --stop-on-fail) ;;
     13) python3 rvc/mutate_rvc.py "$RT" --spike "$SPIKE" && python3 mul/mutate_mul.py && python3 bpred/mutate_bpred.py ;;
     14) python3 cache/mutate_cache.py "$RT" --spike "$SPIKE" ;;
     15) python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" ;;

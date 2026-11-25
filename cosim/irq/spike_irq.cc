@@ -101,6 +101,7 @@ int main(int argc, char** argv) {
             }
         }
     }
+    sim.cfg.pmpregions = 8;        // = PMP_N cua rv32im_pipeline.v
     sim.cfg.wfi_as_nop = true;     // RTL dung WFI cho toi khi co ngat dang cho; voi Spike WFI chi la mot lenh
     FILE* devnull = fopen("/dev/null", "w");
     processor_t p(isa, "M", &sim.cfg, &sim, 0, false, devnull, std::cerr);

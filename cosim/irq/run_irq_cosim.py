@@ -61,6 +61,18 @@ def build_counters(march, tmp):
     return name, elf
 
 
+def build_pmp(march, tmp, ma=False):
+    name = f"pmp-{march[4:]}" + ("-ma" if ma else "")
+    elf = os.path.join(tmp, name + ".elf")
+    ld = os.path.join(tmp, "irq80.ld")
+    open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
+    r = rc.sh(rc.GCC + [f"-march={march}_zicsr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE] + (["-DMA"] if ma else []) +
+              ["-T", ld, os.path.join(HERE, "pmp.S"), "-o", elf])
+    if r.returncode:
+        sys.exit(r.stderr)
+    return name, elf
+
+
 def build_bench_irq(bname, march, tmp):
     b = os.path.join(ROOT, "bench")
     ld = os.path.join(tmp, "irq80.ld")
@@ -96,7 +108,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
     ap.add_argument("--quick", action="store_true", help="2 cau hinh loi, 1 seed, khong CoreMark")
-    ap.add_argument("--core", default="")
+    ap.add_argument("--core", default="", help="chuoi con cua ten cau hinh loi, hoac so thu tu 0-5")
     ap.add_argument("--only", default="")
     ap.add_argument("--seeds", type=int, default=2, help="so seed nguon ngat ngoai cho moi cap (chuong trinh, loi)")
     ap.add_argument("--irqext", type=int, default=250, help="ngat ngoai ngau nhien: trung binh moi N chu ky")
@@ -111,6 +123,8 @@ def main():
              build_storm("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_storm("rv32imc", tmp, vec=True) + ("rv32imc",),
              build_counters("rv32im", tmp) + ("rv32im",), build_counters("rv32imc", tmp) + ("rv32imc",),
+             build_pmp("rv32im", tmp) + ("rv32im",), build_pmp("rv32imc", tmp) + ("rv32imc",),
+             build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),
@@ -119,14 +133,17 @@ def main():
     seeds = a.seeds
     if a.quick:
         cores, seeds = [CORES[0], CORES[1]], 1
-    else:
+    elif not a.only or a.only in "coremark-irq-c":
         import run_coremark as cm
         cm.fetch_src()
         elf = cm.build("rv32imc", 1, tmp, crt0=os.path.join(HERE, "crt0_irq.S"), inc=[HERE])[0]
         progs.append(("coremark-irq-c", elf, "rv32imc"))
     if a.only:
         progs = [p for p in progs if a.only in p[0]]
-    cores = [c for c in cores if a.core in c[0]]
+    if a.core.isdigit():                  # so thu tu trong CORES (chia lan chay dai thanh nhieu phan)
+        cores = [CORES[int(a.core)]]
+    else:
+        cores = [c for c in cores if a.core in c[0]]
 
     sims = []
     for k, (title, flags, files, isa, plus) in enumerate(cores):
