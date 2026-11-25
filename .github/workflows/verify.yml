@@ -197,34 +197,84 @@ jobs:
       - name: So vet voi Spike khi co ngat (Spike dang thu vien, irq_storm + bench duoi bao ngat, 2 cau hinh loi)
         run: python3 cosim/irq/run_irq_cosim.py --spike $HOME/spike/bin/spike --quick
 
-      - name: Mutation test mo rong C, cache, du doan nhanh, bo nhan, SoC, AXI4 + DMA, Zb* (khi bam Run workflow va hang tuan)
-        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
-        run: |
-          python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
-          python3 cosim/irq/mutate_irq_cosim.py --spike $HOME/spike/bin/spike
-          python3 cosim/mutate_random.py --n 80 --spike $HOME/spike/bin/spike
-          python3 cache/mutate_cache.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
-          python3 bpred/mutate_bpred.py
-          python3 mul/mutate_mul.py
-          sh soc/sw/build.sh
-          python3 soc/mutate_soc.py --jobs 4
-          AXI=1 sh soc/sw/build.sh
-          python3 soc/mutate_axi.py --jobs 2
-          python3 zb/mutate_zb.py
-
   mutation:
+    # Mutation 3 loi (so vet voi ISS). Truoc day vuot 60 phut (24/11/2026) roi 120 phut (25/11/2026) vi moi dot bien chay
+    # het 21 chuong trinh, chuong trinh treo chay toi gioi han chu ky; nay --mutate dung o chuong trinh lech dau tien
+    # (RV32IM: 66 dot bien trong 3 phut tren may 2 nhan).
     if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        core: ["", "--pipe", "--pipem"]
     steps:
       - uses: actions/checkout@v4
       - name: Cai iverilog
         run: |
           sudo apt-get update
           sudo apt-get install -y iverilog
-      - name: Mutation test (3 loi)
+      - name: Mutation test (loi ${{ matrix.core || 'single-cycle' }})
         working-directory: verify
+        run: python3 run_verify.py ${{ matrix.core }} --mutate
+
+  mutation-ext:
+    # Mutation mo rong (can Spike), tach khoi job cosim: chung mot job da mat 136 / 150 phut truoc khi them Zb*, SoC
+    # 151 dot bien va mutation chuong trinh ngau nhien.
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [rvc-irq-random, cache, bpred-mul-soc-zb, axi]
+    env:
+      SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cai iverilog, trinh bien dich RISC-V va dtc
         run: |
-          python3 run_verify.py --mutate
-          python3 run_verify.py --pipe --mutate
-          python3 run_verify.py --pipem --mutate
+          sudo apt-get update
+          sudo apt-get install -y iverilog gcc-riscv64-unknown-elf device-tree-compiler
+
+      - name: Cache Spike
+        id: cache-spike
+        uses: actions/cache@v4
+        with:
+          path: ~/spike
+          key: spike-${{ env.SPIKE_SHA }}-ubuntu-24.04
+
+      - name: Build Spike
+        if: steps.cache-spike.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
+          cd /tmp/spike-src
+          git checkout $SPIKE_SHA
+          git submodule update --init --depth 1
+          mkdir build && cd build
+          ../configure --prefix=$HOME/spike
+          make -j$(nproc)
+          make install
+
+      - name: Mutation ${{ matrix.group }}
+        run: |
+          git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
+          S=$HOME/spike/bin/spike
+          case "${{ matrix.group }}" in
+            rvc-irq-random)
+              python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $S
+              python3 cosim/irq/mutate_irq_cosim.py --spike $S
+              python3 cosim/mutate_random.py --n 80 --spike $S ;;
+            cache)
+              python3 cache/mutate_cache.py /tmp/riscv-tests --spike $S ;;
+            bpred-mul-soc-zb)
+              python3 bpred/mutate_bpred.py
+              python3 mul/mutate_mul.py
+              sh soc/sw/build.sh
+              python3 soc/mutate_soc.py --jobs 4
+              python3 zb/mutate_zb.py ;;
+            axi)
+              AXI=1 sh soc/sw/build.sh
+              python3 soc/mutate_axi.py --jobs 2 ;;
+          esac
