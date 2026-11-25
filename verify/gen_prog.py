@@ -51,7 +51,7 @@ class Gen:
         self.zb_probe = zb_probe   # True: sinh ca ma hop le cua phan mo rong DANG TAT va ma gan-hop-le (phai trap lenh bat hop le)
         self.base = (profile == "base")
         self.csrs = CSR_LIST + ([("mie", 0x304), ("mip", 0x344)] if profile == "irq" else [])
-        self.bad_csrs = [0x000, 0x7C0, 0xB01, 0xC01, 0x100, 0x3A0]
+        self.bad_csrs = [0x000, 0x7C0, 0xB01, 0xC01, 0x100, 0x3F0]          # 0x3A0-0x3EF la CSR PMP
 
     # Nhom thanh ghi "nong": chon thanh ghi nguon/dich tu nhom nho voi xac suat HOT_P de cac lenh sat nhau
     # hay phu thuoc du lieu (forwarding, load-use). x0 nam trong nhom de thu ghi/doc x0 giua chuoi phu thuoc.

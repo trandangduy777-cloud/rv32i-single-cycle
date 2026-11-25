@@ -40,7 +40,8 @@ module rv32im_pipeline #(
     parameter        BTB_TAG    = 10,            // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
     parameter        MUL_LAT    = 2,             // nhan: 0 = lap (~18 chu ky), 1 = song song 1 chu ky, 2 = song song 2 tang
     parameter        ZICNTR     = 1,             // 1: bo dem mcycle / minstret (Zicntr) va bo dem su kien (Zihpm)
-    parameter        HPM_N      = 4,              // so bo dem su kien mhpmcounter3.. that su dem (0-29; con lai doc 0)
+    parameter        HPM_N      = 4,             // so bo dem su kien mhpmcounter3.. that su dem (0-29; con lai doc 0)
+    parameter        PMP_N      = 8,             // so muc PMP (0-16), do mien 4 byte; muc khoa (L) ap dung ca che do M
     // Mo rong thao tac bit va lenh dieu kien (giai ma o ID, thuc thi 1 chu ky o EX, xem "Zba/Zbb/Zbs/Zbc/Zicond"):
     // mac dinh tat het (RTL, so lieu flow va CI cu giu nguyen); lenh cua phan mo rong dang tat la lenh bat hop le (trap 2)
     parameter        ZBA        = 0,             // sh1add sh2add sh3add
@@ -354,6 +355,8 @@ module rv32im_pipeline #(
                             id_csr_addr[11:8] == 4'hB && id_csr_addr[6:5] == 2'b00 && id_csr_addr[4:0] != 5'd1 ||
                             id_csr_addr[11:8] == 4'hC && id_csr_addr[6:5] == 2'b00 && id_csr_addr[4:0] != 5'd1))
             id_csr_exists = 1'b1;
+        // PMP: pmpcfg0-15 (0x3A0-0x3AF), pmpaddr0-63 (0x3B0-0x3EF); muc ngoai PMP_N doc 0 (WARL)
+        if (id_csr_addr >= 12'h3A0 && id_csr_addr <= 12'h3EF) id_csr_exists = 1'b1;
     end
     wire id_csr_we_req = (funct3[1:0] == 2'b01) | (rs1 != 5'd0);
     wire id_csr_ro     = (id_csr_addr[11:10] == 2'b11);
@@ -793,11 +796,14 @@ module rv32im_pipeline #(
             12'h342: csr_rdata = mcause_r;
             12'h343: csr_rdata = mtval_r;
             12'h344: csr_rdata = {20'b0, mip_meip, 3'b0, mip_mtip, 3'b0, mip_msip, 3'b0};
-            default: csr_rdata = cnt_rdata;                // bo dem (0 neu khong phai bo dem); 0xF14 mhartid = 0
+            default: csr_rdata = cnt_rdata | pmp_rdata;    // bo dem / PMP (0 neu khong phai); 0xF14 mhartid = 0
         endcase
     end
 
     reg  [31:0] cnt_rdata;                                 // doc bo dem (Zicntr / Zihpm), xem cuoi module
+    reg  [31:0] pmp_rdata;                                 // doc CSR PMP, xem cuoi module
+    wire        pmp_ifault, pmp_lfault, pmp_sfault;        // vi pham PMP cua lenh o EX (fetch / load / store)
+    wire [31:0] pmp_itval;                                 // mtval khi fetch bi PMP cam (pc hoac pc + 2)
     wire        cnt_icnt;
     wire        csr_we_req = (idex_funct3[1:0] == 2'b01) | (idex_rs1 != 5'd0);
     wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : op_a;
@@ -838,18 +844,22 @@ module rv32im_pipeline #(
     wire st_misal = (MISALIGNED == 0) & idex_store &
                     (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
 
-    wire trap_ex = irq_take | idex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal | st_misal;
+    wire trap_ex = irq_take | pmp_ifault | idex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal | st_misal |
+                   pmp_lfault | pmp_sfault;
     wire mret_ex = idex_mret & ~irq_take & ~frz;
 
     reg [31:0] trap_cause, trap_tval;
     always @* begin
         if (irq_take)           begin trap_cause = irq_meip ? 32'h8000_000B : (irq_msip ? 32'h8000_0003 : 32'h8000_0007);
                                       trap_tval = 32'd0; end
+        else if (pmp_ifault)    begin trap_cause = 32'd1;  trap_tval = pmp_itval;   end   // fetch bi PMP cam
         else if (idex_illegal)  begin trap_cause = 32'd2;  trap_tval = idex_instr; end
         else if (idex_ecall)    begin trap_cause = 32'd11; trap_tval = 32'd0;      end
         else if (idex_ebreak)   begin trap_cause = 32'd3;  trap_tval = idex_pc;    end
         else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;         end
         else if (st_misal)      begin trap_cause = 32'd6;  trap_tval = ea;         end
+        else if (pmp_lfault)    begin trap_cause = 32'd5;  trap_tval = ea;         end   // load bi PMP cam
+        else if (pmp_sfault)    begin trap_cause = 32'd7;  trap_tval = ea;         end   // store bi PMP cam
         else                    begin trap_cause = 32'd0;  trap_tval = bad_target; end
     end
 
@@ -1423,4 +1433,100 @@ module rv32im_pipeline #(
         end
     end
 
+
+    // ---- PMP (bao ve bo nho vat ly), PMP_N muc, do mien 4 byte (G = 0) ----
+    // Che do: 0 OFF, 1 TOR (pmpaddr[i-1] <= dia chi >> 2 < pmpaddr[i]), 2 NA4, 3 NAPOT. Muc so nho nhat khop duoc
+    // dung; muc khong khoa (L = 0) khong rang buoc che do M (loi chi co che do M). Moi byte cua truy cap phai khop cung
+    // mot muc, khop mot phan la loi. Kiem o EX: fetch (pc .. pc + do dai - 1), load / store (ea .. ea + kich thuoc - 1;
+    // truy cap lech toi 2 tu 4 byte). Ghi CSR: muc khoa bo qua ghi; pmpaddr[i] cung bo qua khi muc i+1 la TOR va khoa;
+    // R = 0 thi W bi xoa (to hop du phong), bit 5-6 doc 0 (giong Spike).
+    localparam PN = (PMP_N > 0) ? PMP_N : 1;
+    reg  [7:0]  pmp_cfg  [0:PN-1];
+    reg  [31:0] pmp_addr [0:PN-1];
+    // mat na cua tung muc, tinh mot lan dung chung cho 4 lan tra: NAPOT = cac bit 1 cuoi + bit 0 dau tien,
+    // NA4 = 0, nen NA4 va NAPOT dung chung mot bo so sanh bang co mat na; pmp_am = pmpaddr | mat na
+    wire [31:0] pmp_mk [0:PN-1];
+    wire [31:0] pmp_am [0:PN-1];
+    genvar gk;
+    generate for (gk = 0; gk < PN; gk = gk + 1) begin : g_pmk
+        assign pmp_mk[gk] = pmp_cfg[gk][3] ? pmp_addr[gk] ^ (pmp_addr[gk] + 32'd1) : 32'd0;
+        assign pmp_am[gk] = pmp_addr[gk] | pmp_mk[gk];
+    end endgenerate
+    // 4 dia chi kiem: 0 = pc, 1 = pc + 2 (nua sau lenh 32 bit, kiem rieng nhu Spike: loi thi mtval = pc + 2),
+    // 2 = tu dau, 3 = tu cuoi cua load / store (chi khac tu dau khi truy cap lech chay bang phan cung, MISALIGNED = 1;
+    // khi MISALIGNED = 0 truy cap lech da trap o ld_misal / st_misal nen bo luon bo so sanh thu tu).
+    // Moi (dia chi, muc) co mot bo so sanh nho hon (can tren TOR; can duoi TOR cua muc k la phu dinh so sanh can tren
+    // cua muc k-1) va mot bo so sanh bang co mat na (NA4 / NAPOT). Viet bang mang bit (khong dung ham co vong lap) de
+    // mo phong nhanh. Muc so nho nhat khop duoc dung: one-hot = m & -m.
+    wire [31:0] if_p2  = idex_pc + 32'd2;
+    wire [31:0] ls_end = (MISALIGNED == 0) ? ea :
+                         ea + {30'd0, idex_funct3[1:0] == 2'b10 ? 2'd3 : (idex_funct3[1:0] == 2'b01 ? 2'd1 : 2'd0)};
+    wire [29:0] pmp_w0 = idex_pc[31:2], pmp_w1 = if_p2[31:2], pmp_w2 = ea[31:2];
+    wire [29:0] pmp_w3 = ls_end[31:2];
+    wire [4*PN-1:0] pmp_lt_f, pmp_m_f, pmp_oh_f;            // [a*PN + k]: dia chi a nho hon pmpaddr k / khop muc k
+    wire [3*PN-1:0] pmp_ok3;                               // [3k +: 3] = {X, W, R} cho phep o che do M
+    genvar ga;
+    generate
+        for (gk = 0; gk < PN; gk = gk + 1) begin : g_pok
+            assign pmp_ok3[3 * gk +: 3] = ~{3{pmp_cfg[gk][7]}} | pmp_cfg[gk][2:0];     // khong khoa: khong rang buoc
+        end
+        for (ga = 0; ga < 4; ga = ga + 1) begin : g_pa
+            wire [31:0] W = {2'b00, (ga == 0) ? pmp_w0 : (ga == 1) ? pmp_w1 : (ga == 2) ? pmp_w2 : pmp_w3};
+            wire [PN-1:0] mm = pmp_m_f[ga * PN +: PN];
+            for (gk = 0; gk < PN; gk = gk + 1) begin : g_pe
+                wire lo_ok = (gk == 0) ? 1'b1 : ~pmp_lt_f[ga * PN + ((gk == 0) ? 0 : gk - 1)];
+                assign pmp_lt_f[ga * PN + gk] = W < pmp_addr[gk];
+                assign pmp_m_f[ga * PN + gk]  = (gk < PMP_N) &
+                    ((pmp_cfg[gk][4:3] == 2'd1) ? (lo_ok & pmp_lt_f[ga * PN + gk]) :
+                     (pmp_cfg[gk][4] & ((W | pmp_mk[gk]) == pmp_am[gk])));
+            end
+            assign pmp_oh_f[ga * PN +: PN] = mm & (~mm + 1'b1);
+        end
+    endgenerate
+    wire [PN-1:0] pmp_okr, pmp_okw, pmp_okx;
+    generate for (gk = 0; gk < PN; gk = gk + 1) begin : g_pv
+        assign {pmp_okx[gk], pmp_okw[gk], pmp_okr[gk]} = pmp_ok3[3 * gk +: 3];
+    end endgenerate
+    wire [PN-1:0] pmp_m0 = pmp_m_f[0 +: PN], pmp_m1 = pmp_m_f[PN +: PN], pmp_m2 = pmp_m_f[2 * PN +: PN];
+    wire [PN-1:0] pmp_m3 = pmp_m_f[3 * PN +: PN];
+    wire [PN-1:0] pmp_oh0 = pmp_oh_f[0 +: PN], pmp_oh1 = pmp_oh_f[PN +: PN], pmp_oh2 = pmp_oh_f[2 * PN +: PN];
+    wire [PN-1:0] pmp_oh3 = pmp_oh_f[3 * PN +: PN];
+    wire        if_f1   = (|pmp_m0) & ~|(pmp_oh0 & pmp_okx);
+    wire        if_f2   = (ENABLE_C != 0) & ~idex_c & idex_pc[1] & (|pmp_m1) & ~|(pmp_oh1 & pmp_okx);
+    // load / store: khong muc nao khop ca hai tu thi duoc phep; khop thi ca hai tu phai khop cung mot muc
+    wire        ls_hit  = (|pmp_m2) | (|pmp_m3);
+    wire        ls_same = (|pmp_m2) & (|pmp_m3) & (pmp_oh2 == pmp_oh3);
+    assign pmp_ifault = (PMP_N != 0) & idex_valid & ~irq_take & (if_f1 | if_f2);
+    assign pmp_itval  = if_f1 ? idex_pc : if_p2;
+    assign pmp_lfault = (PMP_N != 0) & idex_load  & ~ld_misal & ls_hit & ~(ls_same & |(pmp_oh2 & pmp_okr));
+    assign pmp_sfault = (PMP_N != 0) & idex_store & ~st_misal & ls_hit & ~(ls_same & |(pmp_oh2 & pmp_okw));
+    // doc CSR
+    integer pk;
+    always @* begin
+        pmp_rdata = 32'd0;
+        for (pk = 0; pk < PMP_N; pk = pk + 1) begin
+            if (csr_addr == 12'h3A0 + pk / 4) pmp_rdata = pmp_rdata | ({24'd0, pmp_cfg[pk]} << (8 * (pk % 4)));
+            if (csr_addr == 12'h3B0 + pk)     pmp_rdata = pmp_addr[pk];
+        end
+    end
+    // ghi CSR
+    reg [7:0] pmp_wcfg;
+    integer   pw;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (pw = 0; pw < PN; pw = pw + 1) begin pmp_cfg[pw] <= 8'd0; pmp_addr[pw] <= 32'd0; end
+        end else if (csr_write) begin
+            for (pw = 0; pw < PMP_N; pw = pw + 1) begin
+                if (csr_addr == 12'h3A0 + pw / 4 && !pmp_cfg[pw][7]) begin
+                    pmp_wcfg = csr_new[8 * (pw % 4) +: 8] & 8'h9F;
+                    if (!pmp_wcfg[0]) pmp_wcfg[1] = 1'b0;                   // R = 0, W = 1: du phong -> xoa W
+                    pmp_cfg[pw] <= pmp_wcfg;
+                end
+                if (csr_addr == 12'h3B0 + pw && !pmp_cfg[pw][7] &&
+                    !(pw + 1 < PMP_N && pmp_cfg[(pw + 1 < PMP_N) ? pw + 1 : pw][7] &&
+                      pmp_cfg[(pw + 1 < PMP_N) ? pw + 1 : pw][4:3] == 2'd1))
+                    pmp_addr[pw] <= csr_new;
+            end
+        end
+    end
 endmodule

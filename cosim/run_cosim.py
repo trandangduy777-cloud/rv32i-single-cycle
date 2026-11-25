@@ -324,8 +324,11 @@ def main():
         for title, vvp, arch, plus in sims:
             if not exts(march) <= exts(arch):            # chuong trinh dung mo rong ma loi khong co
                 continue
-            out = sh(["vvp", "-n", vvp, f"+prog={hexf}"] + plus, timeout=600).stdout.splitlines()
-            err = compare(ref, rtl_trace(out))
+            try:
+                out = sh(["vvp", "-n", vvp, f"+prog={hexf}"] + plus, timeout=600).stdout.splitlines()
+                err = compare(ref, rtl_trace(out))
+            except subprocess.TimeoutExpired:            # RTL treo (vong trap...): mo phong qua 600 s la loi
+                err = "RTL khong ket thuc sau 600 s (treo)"
             if err:
                 fails += 1
                 print(f"FAIL {name} tren {title}: {err}", flush=True)
