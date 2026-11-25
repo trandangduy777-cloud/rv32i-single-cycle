@@ -73,6 +73,11 @@ module rv32im_pipeline #(
     input  wire        irq_ext         // MEIP
 `ifdef RISCV_FORMAL
     // Cong RVFI (riscv-formal, 1 kenh): chi co khi bien dich voi -DRISCV_FORMAL, khong doi gi o ban thuong.
+    , output wire        fv_wfi_wait     // chi cho kiem chung: WFI dang cho ngat (cho cong bang cua liveness)
+    // chi cho kiem chung MISALIGNED = 1: truy cap logic cua lenh o MEM de monitor trong wrapper doi chieu voi giao dich tren bus
+    , output wire        fv_m_valid, fv_m_store, fv_m_last
+    , output wire [31:0] fv_m_addr, fv_m_sval, fv_m_ld
+    , output wire [1:0]  fv_m_size
     , output wire        rvfi_valid
     , output wire [63:0] rvfi_order
     , output wire [31:0] rvfi_insn
@@ -915,6 +920,9 @@ module rv32im_pipeline #(
     wire irq_any   = irq_m | irq_s;
     wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;
     assign wfi_wait = idex_wfi & ~irq_pend & ~ex_priv_ill;
+`ifdef RISCV_FORMAL
+    assign fv_wfi_wait = wfi_wait;
+`endif
 
     wire csr_write = idex_csr & csr_we_req & ~irq_take & ~frz & ~ex_priv_ill;   // idex_csr chi bat cho CSR hop le
 
@@ -1277,6 +1285,15 @@ module rv32im_pipeline #(
     end
 
     wire [31:0] mem_val = exmem_load ? ld_data : exmem_result;
+`ifdef RISCV_FORMAL
+    assign fv_m_valid = exmem_valid & (exmem_load | exmem_store);
+    assign fv_m_store = exmem_store;
+    assign fv_m_last  = mem_last;
+    assign fv_m_addr  = exmem_result;
+    assign fv_m_sval  = exmem_store_val;
+    assign fv_m_ld    = ld_sh;
+    assign fv_m_size  = exmem_funct3[1:0];
+`endif
 
     // ============================================================
     // MEM/WB (cac truong memwb_t* chi de testbench in vet)
@@ -1395,11 +1412,21 @@ module rv32im_pipeline #(
         memwb_rv_trap    <= xm_trap;   memwb_rv_irq    <= xm_irq;
         memwb_rv_csr     <= xm_csr;    memwb_rv_csr_w  <= xm_csr_w;
         memwb_rv_csr_rd  <= xm_csr_rd; memwb_rv_csr_new <= xm_csr_new;
+`ifdef RISCV_FORMAL_ALIGNED_MEM
         memwb_rv_maddr   <= (dmem_re | dmem_we) ? {exmem_result[31:2], 2'b00} : 32'd0;
         memwb_rv_mrmask  <= dmem_re ? rv_ld_mask : 4'd0;
         memwb_rv_mwmask  <= dmem_we ? dmem_wstrb : 4'd0;
         memwb_rv_mrdata  <= dmem_re ? dmem_rdata : 32'd0;
         memwb_rv_mwdata  <= dmem_we ? dmem_wdata : 32'd0;
+`else
+        // Khong ALIGNED_MEM (dung cho MISALIGNED = 1): bao truy cap LOGIC cua lenh, mot ban ghi cho ca truy cap vat qua tu:
+        // dia chi chinh xac, mat na theo kich thuoc (khong dich), du lieu da ghep 2 tu (load) / toan hang (store).
+        memwb_rv_maddr   <= (dmem_re | dmem_we) ? exmem_result : 32'd0;
+        memwb_rv_mrmask  <= dmem_re ? (exmem_funct3[1:0] == 2'b00 ? 4'b0001 : exmem_funct3[1:0] == 2'b01 ? 4'b0011 : 4'b1111) : 4'd0;
+        memwb_rv_mwmask  <= dmem_we ? (exmem_funct3[1:0] == 2'b00 ? 4'b0001 : exmem_funct3[1:0] == 2'b01 ? 4'b0011 : 4'b1111) : 4'd0;
+        memwb_rv_mrdata  <= dmem_re ? ld_sh : 32'd0;
+        memwb_rv_mwdata  <= dmem_we ? exmem_store_val : 32'd0;
+`endif
     end
 
     wire rv_ret = wb_commit & ~memwb_rv_irq;

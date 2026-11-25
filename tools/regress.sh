@@ -53,8 +53,8 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     16) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" ;;
     17) sh soc/sw/build.sh && sh soc/freertos/build.sh && python3 soc/run_soc.py ;;
     18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
-    19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' ;;
-    20) PATH=$HOME/.local/bin:$PATH bash formal/mutate.sh ;;
+    19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' && PATH=$HOME/.local/bin:$PATH CFG=formal/checks_wfi.cfg WORK=/tmp/formal-wfi bash formal/run.sh run '^liveness_ch0$' && PATH=$HOME/.local/bin:$PATH bash formal/stitch/run.sh nomut && PATH=$HOME/.local/bin:$PATH bash formal/cache/run.sh nomut && PATH=$HOME/.local/bin:$PATH CFG=formal/checks_misal.cfg WORK=/tmp/formal-misal bash formal/run.sh run '^insn_(lb|lbu|lh|lhu|lw|sb|sh|sw)_ch0$' '^mon_misal_ch0$' ;;
+    20) PATH=$HOME/.local/bin:$PATH bash formal/mutate.sh && PATH=$HOME/.local/bin:$PATH bash formal/stitch/run.sh && PATH=$HOME/.local/bin:$PATH bash formal/cache/run.sh ;;
     21) python3 zb/mutate_zb.py ;;
     22) python3 cosim/run_random.py --n 8 --seed0 1000 --jobs 2 --spike "$SPIKE" && python3 cosim/run_directed.py --spike "$SPIKE" ;;
     23) python3 cosim/mutate_random.py --n 80 --spike "$SPIKE" ;;

@@ -251,4 +251,91 @@ module rv32_dcache #(
             endcase
         end
     end
+
+`ifdef RISCV_FORMAL_CACHE
+    // ---- Chung minh hinh thuc (formal/cache): ghost chi doc, khong doi hanh vi RTL ----
+    // Theo doi MOT tu bo nho tuy y g_a. Mo hinh dac ta: g_sv = gia tri "theo chuong trinh" cua tu do (cap nhat khi store duoc nhan, tuc
+    // push); g_bm = noi dung bo nho that phia sau (chi doi khi bo dem ghi ghi ra bus, m_we & m_ack). Khang dinh:
+    //   (1) moi load tra ve (trung cache hoac doc ngoai vung) tu g_a co rdata == g_sv (load thay store moi nhat, qua cache + bo dem ghi + forward);
+    //   (2) fence xong thi bo nho that da bang g_sv (moi store truoc do da toi bo nho).
+    // Bat bien quy nap: bo nho that + cac muc bo dem cung dia chi, ap theo thu tu = g_sv; moi dong hop le chua tu g_a thi bang g_sv;
+    // dong dang nap: cac tu da nap bang g_sv.
+    (* anyconst *) reg [29:0] g_a;
+    (* anyconst *) reg [31:0] g_v0;
+    reg        g_started = 1'b0;
+    reg [31:0] g_sv_r, g_bm_r;
+    wire [31:0] g_sv = g_started ? g_sv_r : g_v0;
+    wire [31:0] g_bm = g_started ? g_bm_r : g_v0;
+    function [31:0] g_merge(input [31:0] o, input [31:0] n, input [3:0] st);
+        g_merge = (o & ~{{8{st[3]}}, {8{st[2]}}, {8{st[1]}}, {8{st[0]}}}) | (n & {{8{st[3]}}, {8{st[2]}}, {8{st[1]}}, {8{st[0]}}});
+    endfunction
+    // giao thuc loi: yeu cau giu nguyen cho toi khi ready (tang MEM dong bang pipeline)
+    reg        p_hold;
+    reg [31:0] p_addr, p_wdata;
+    reg        p_re, p_we, p_fence;
+    reg [3:0]  p_wstrb;
+    always @(posedge clk) begin
+        g_started <= 1'b1;
+        g_sv_r <= (rst_n && push && w == g_a) ? g_merge(g_sv, wdata, wstrb) : g_sv;
+        g_bm_r <= (rst_n && m_ack && m_we && m_addr[31:2] == g_a) ? g_merge(g_bm, m_wdata, m_wstrb) : g_bm;
+        p_hold <= (re | we | fence) & ~ready;
+        p_addr <= addr; p_re <= re; p_we <= we; p_fence <= fence; p_wstrb <= wstrb; p_wdata <= wdata;
+    end
+    wire g_live = rst_n & g_started;
+    // gia tri hieu dung cua tu g_a = bo nho that, ap cac muc bo dem cung dia chi theo thu tu FIFO
+    reg  [31:0] g_eff;
+    reg  [QB:0] g_fs;
+    integer     g_j;
+    always @* begin
+        g_eff = g_bm;
+        for (g_j = 0; g_j < WBUF; g_j = g_j + 1) begin
+            g_fs = q_head + g_j;
+            if (g_fs >= WBUF) g_fs = g_fs - WBUF;
+            if (g_j < q_cnt && q_addr[g_fs] == g_a) g_eff = g_merge(g_eff, q_data[g_fs], q_strb[g_fs]);
+        end
+    end
+    always @* begin
+        if (g_live) begin
+            assume (!(re & we) & !(re & fence) & !(we & fence));
+            assume (!m_ack | m_req);
+            if (p_hold) assume (addr == p_addr && re == p_re && we == p_we && fence == p_fence && (!we || (wstrb == p_wstrb && wdata == p_wdata)));
+            if (m_ack && !m_we && m_addr[31:2] == g_a) assume (m_rdata == g_bm);
+            if (ld_hit && w == g_a) assert (rdata == g_sv);
+            if (state == UNC && m_ack && w == g_a) assert (rdata == g_sv);
+            if (free && fence && ready) assert (g_bm == g_sv && wb_empty);
+        end
+    end
+`ifdef RISCV_FORMAL_CACHE_INV
+    integer gl, go;
+    reg [29:0] gaddr;
+    always @* if (g_live) begin
+        assert (g_eff == g_sv);
+        assert (q_cnt <= WBUF);
+        assert (q_head < WBUF && q_tail < WBUF);
+        assert (q_tail == ((q_head + q_cnt) % WBUF));
+        if (state == DRN) assert (q_cnt != 0);
+        if (state == UNC) assert (q_cnt == 0);
+        for (gl = 0; gl < LINES; gl = gl + 1)
+            for (go = 0; go < WAYS; go = go + 1)
+                if (go != gl % WAYS && val_r[gl] && val_r[(gl / WAYS) * WAYS + go] && tag_r[gl] == tag_r[(gl / WAYS) * WAYS + go])
+                    assert (1'b0);   // khong co 2 duong hop le cung tag trong mot tap
+        for (gl = 0; gl < LINES; gl = gl + 1)
+            for (go = 0; go < WORDS; go = go + 1) begin
+                gaddr = ({{(30-TB){1'b0}}, tag_r[gl]} << (LS + WB)) | ((gl / WAYS) << WB) | go;
+                if (val_r[gl]) assert ((({gaddr, 2'b00}) & CMASK) == CBASE);   // chi vung cacheable moi vao cache
+                if (val_r[gl] && gaddr == g_a)
+                    assert (mem_r[gl * WORDS + go] == g_sv);
+            end
+        if (state == FILL) begin
+            assert (fill_way < WAYS);
+            assert (!val_r[idx * WAYS + fill_way]);
+            for (go = 0; go < WAYS; go = go + 1) assert (!(val_r[idx * WAYS + go] && tag_r[idx * WAYS + go] == tg));
+            assert (p_hold && p_re && cacheable);
+            for (go = 0; go < WORDS; go = go + 1)
+                if (go < fill_cnt && {w[29:WB], go[WB-1:0]} == g_a)
+                    assert (mem_r[(idx * WAYS + fill_way) * WORDS + go] == g_sv);
+        end
+    end
+`endif
+`endif
 endmodule

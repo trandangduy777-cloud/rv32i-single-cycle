@@ -1,0 +1,26 @@
+[tasks]
+w1
+w2
+w4
+s1
+big
+
+[options]
+mode prove
+depth 6
+
+[engines]
+smtbmc boolector
+
+[script]
+read_verilog -formal -D RISCV_FORMAL_CACHE -D RISCV_FORMAL_CACHE_INV rv32_icache.v icache_harness.v
+w1: chparam -set LINES 4 -set WORDS 2 -set WAYS 1 icache_harness
+w2: chparam -set LINES 4 -set WORDS 2 -set WAYS 2 icache_harness
+w4: chparam -set LINES 4 -set WORDS 4 -set WAYS 2 icache_harness
+s1: chparam -set LINES 2 -set WORDS 2 -set WAYS 2 icache_harness
+big: chparam -set LINES 8 -set WORDS 4 -set WAYS 4 icache_harness
+prep -top icache_harness
+
+[files]
+../../rv32_icache.v
+icache_harness.v
