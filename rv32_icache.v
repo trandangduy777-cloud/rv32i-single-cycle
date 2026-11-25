@@ -173,4 +173,63 @@ module rv32_icache #(
             endcase
         end
     end
+
+`ifdef RISCV_FORMAL_CACHE
+    // ---- Chung minh hinh thuc (formal/cache): ghost chi doc, khong doi hanh vi RTL ----
+    // Theo doi MOT tu bo nho tuy y g_a (hang so tu do), gia tri g_mv. Bo nho chi duoc doi gia tri (g_chg) khi chua stale; sau do
+    // cache co the tra du lieu cu cho toi khi FENCE.I (flush): stale = bo nho da doi tu lan flush truoc.
+    // Khang dinh: khi khong stale, moi lan ready thi data khop g_mv (ke ca cua so 32 bit vat qua 2 tu khi addr[1] = 1).
+    (* anyconst *) reg [29:0] g_a;
+    (* anyconst *) reg [31:0] g_mv0;
+    (* anyseq *)   reg        g_chg;
+    (* anyseq *)   reg [31:0] g_new;
+    reg        g_started = 1'b0;
+    reg [31:0] g_mv_r;
+    reg        g_stale_r;
+    wire [31:0] g_mv    = g_started ? g_mv_r : g_mv0;
+    wire        g_stale = g_started & g_stale_r;
+    always @(posedge clk) begin
+        g_started <= 1'b1;
+        g_mv_r    <= g_chg ? g_new : g_mv;
+        g_stale_r <= flush ? 1'b0 : (g_stale | g_chg);
+    end
+    wire g_live = rst_n & g_started;
+    always @* begin
+        if (g_live) begin
+            assume (!(g_chg & flush));
+            assume (!m_ack | m_req);
+            if (m_ack && m_addr[31:2] == g_a && !g_stale && !g_chg) assume (m_rdata == g_mv);
+            if (ready && !g_stale && !g_chg && !flush) begin
+                if (!need1) begin
+                    if (w0 == g_a) assert (data == g_mv);
+                end else begin
+                    if (w0 == g_a) assert (data[15:0]  == g_mv[31:16]);
+                    if (w1 == g_a) assert (data[31:16] == g_mv[15:0]);
+                end
+            end
+        end
+    end
+`ifdef RISCV_FORMAL_CACHE_INV
+    // bat bien quy nap
+    integer gl, go;
+    reg [29:0] gaddr;
+    always @* if (g_live) begin
+        for (gl = 0; gl < LINES; gl = gl + 1)
+            for (go = 0; go < WORDS; go = go + 1) begin
+                gaddr = ({{(30-TB){1'b0}}, tag_r[gl]} << (LS + WB)) | ((gl / WAYS) << WB) | go;
+                if (val_r[gl] && !g_stale && gaddr == g_a)
+                    assert (mem_r[gl * WORDS + go] == g_mv);
+            end
+        if (state == FILL) begin
+            assert (fill_set == ((LS > 0) ? fill_line[WB +: SB] : {SB{1'b0}}));
+            assert (fill_way < WAYS);
+            assert (!val_r[fill_set * WAYS + fill_way]);
+            if (!g_stale && !fill_kill)
+                for (go = 0; go < WORDS; go = go + 1)
+                    if (go < fill_cnt && {fill_line, go[WB-1:0]} == g_a)
+                        assert (mem_r[(fill_set * WAYS + fill_way) * WORDS + go] == g_mv);
+        end
+    end
+`endif
+`endif
 endmodule

@@ -23,6 +23,7 @@ cp "$CFG" "$CORE/checks.cfg"
 cp "$HERE/formal/rvfi_csrw_check.sv" "$WORK/riscv-formal/checks/rvfi_csrw_check.sv"   # ban sua: CSR ghi mot phan
 RTL_DIR=${RTL_DIR:-$HERE}
 for f in formal/wrapper.sv rv32im_pipeline.v rv32i_core.v rv32c_decompress.v; do cp "$RTL_DIR/$f" "$CORE/$(basename $f)"; done
+cp "$HERE/formal/custom/rvfi_trapcsr_check.sv" "$WORK/riscv-formal/checks/rvfi_trapcsr_check.sv"   # check tu viet: mepc/mcause/mtval/mstatus that
 cmd=${1:-gen}; shift || true
 cd "$CORE"
 python3 ../../checks/genchecks.py > gen.log 2>&1 || { cat gen.log; exit 1; }
@@ -37,6 +38,8 @@ for f in glob.glob("checks/*.sby"):
     s = s.replace("[files]\n", "[files]\n" + "".join("../%s\n" % r for r in rtl), 1)
     open(f, "w").write(s)
 PY
+python3 "$HERE/formal/custom/gen_trapcsr.py"      # check tu viet (xem file do)
+python3 "$HERE/formal/custom/gen_split.py"         # chia pc_fwd / reg theo lop lenh (chi khi dat SPLIT_PC_DEPTH / SPLIT_REG_DEPTH)
 case $cmd in
     gen) ;;
     run)
