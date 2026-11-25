@@ -23,3 +23,4 @@ soc/sw/build/
 soc/synth/build/
 formal/div/div/
 formal/div/div_*/
+soc/sw/build_axi/

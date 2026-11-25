@@ -7,6 +7,11 @@ import os, subprocess, sys, time, shutil, argparse, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CORE = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_mtimer.v"]
+CORE_AXI = CORE + ["rv32_icache.v", "rv32_dcache.v"]
+AXI_RTL = ["axi/axi_soc_top.v", "axi/axi_xbar.v", "axi/axi_mem.v", "axi/axi_cache_if.v", "axi/axi_periph_bridge.v", "axi/axi_dma.v", "axi/axi_checker.v"]
+# bo kiem rieng cua bus AXI4: cau ngoai vi (W tre, burst), interconnect + bo nho + bo kiem giao thuc voi 3 master ngau nhien (nhieu hat giong)
+UNITS_AXI = [("axi_br", ["axi/axi_periph_bridge.v"], ["+seed=1", "+seed=2", "+seed=3"]),
+              ("axi_rand", ["axi/axi_xbar.v", "axi/axi_mem.v", "axi/axi_checker.v"], ["+seed=1", "+seed=2", "+seed=3", "+seed=4", "+seed=5"])]
 UNITS = [("bus", ["soc_bus.v", "soc_rom.v", "soc_ram.v", "soc_syscon.v"]),
          ("gpio", ["soc_gpio.v"]),
          ("uart", ["soc_uart.v"]),
@@ -22,7 +27,7 @@ def sh(cmd, cwd, timeout=600):
     return p.returncode, p.stdout
 
 
-def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False):
+def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False, axi=False, axi_units=True):
     """rtl_root: thu muc co soc/ va cac file loi; sw_dir: noi co <ten>.hex va .exp. Tra ve danh sach (ten, dat, thong_tin, giay)."""
     res = []
 
@@ -33,7 +38,7 @@ def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False
         return ok or not stop_first
 
     soc = lambda f: os.path.join(rtl_root, "soc", f)
-    for name, files in UNITS:
+    for name, files, *_ in ([] if axi else UNITS):
         t0 = time.time()
         exe = os.path.join(work, "tb_" + name)
         rc, out = sh(["iverilog", "-g2012", "-o", exe, soc("tb/tb_%s.v" % name)] + [soc(f) for f in files], rtl_root)
@@ -45,14 +50,37 @@ def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False
         ok = rc == 0 and any("PASS" in l for l in line)
         if not add("tb_" + name, ok, (line[-1] if line else out.strip()[-100:]), t0):
             return res
+    if axi and axi_units:
+        for name, files, seeds in UNITS_AXI:
+            t0 = time.time()
+            exe = os.path.join(work, "tb_" + name)
+            rc, out = sh(["iverilog", "-g2012", "-o", exe, soc("tb/tb_%s.v" % name)] + [soc(f) for f in files], rtl_root)
+            if rc != 0:
+                add("tb_" + name, False, "loi bien dich: " + (out.strip().splitlines()[-1][:100] if out.strip() else ""), t0)
+                return res
+            ok, info = True, ""
+            for sd in seeds:
+                rc, out = sh(["vvp", "-n", exe, sd], rtl_root, timeout=900)
+                line = [l for l in out.splitlines() if l.startswith("[%s]" % name.upper())]
+                ok = ok and rc == 0 and any("PASS" in l for l in line)
+                info = line[-1] if line else out.strip()[-100:]
+                if not ok:
+                    break
+            if not add("tb_" + name + " (%d hat)" % len(seeds), ok, info, t0):
+                return res
     t0 = time.time()
     exe = os.path.join(work, "tb_soc")
-    socfiles = [soc(f) for f in sorted(os.listdir(os.path.join(rtl_root, "soc"))) if f.startswith("soc_") and f.endswith(".v")]
-    rc, out = sh(["iverilog", "-g2012", "-o", exe, soc("tb/tb_soc.v")] + socfiles + [os.path.join(rtl_root, f) for f in CORE], rtl_root)
+    if axi:
+        socfiles = [soc(f) for f in sorted(os.listdir(os.path.join(rtl_root, "soc"))) if f.startswith("soc_") and f.endswith(".v") and f not in ("soc_top.v", "soc_rom.v", "soc_ram.v")] + [soc(f) for f in AXI_RTL]
+        core, defs, progs, tag = CORE_AXI, ["-DAXI"], PROGS + [("t_dma", 0)], "axi: "
+    else:
+        socfiles = [soc(f) for f in sorted(os.listdir(os.path.join(rtl_root, "soc"))) if f.startswith("soc_") and f.endswith(".v")]
+        core, defs, progs, tag = CORE, [], PROGS, ""
+    rc, out = sh(["iverilog", "-g2012"] + defs + ["-o", exe, soc("tb/tb_soc.v")] + socfiles + [os.path.join(rtl_root, f) for f in core], rtl_root)
     if rc != 0:
         add("tb_soc (bien dich)", False, out.strip().splitlines()[-1][:100], t0)
         return res
-    for prog, scn in PROGS:
+    for prog, scn in progs:
         t0 = time.time()
         args = ["vvp", "-n", exe, "+rom=%s/%s.hex" % (sw_dir, prog), "+exp=%s/../%s.exp" % (sw_dir, prog), "+scn=%d" % scn, "+max=400000"]
         try:
@@ -61,18 +89,19 @@ def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False
             rc, out = 1, "het gio (vvp)"
         line = [l for l in out.splitlines() if l.startswith("[SOC]")]
         ok = rc == 0 and any("PASS" in l for l in line) and not any("FAIL" in l or "LOI" in l for l in line)
-        if not add(prog, ok, (line[0] if ok and line else (line[-1] if line else out.strip()[-100:])), t0):
+        if not add(tag + prog, ok, (line[0] if ok and line else (line[-1] if line else out.strip()[-100:])), t0):
             return res
     if rtos:                                     # FreeRTOS: build bang soc/freertos/build.sh; trap/mark_wake lay tu ELF de do tre ngat
         t0 = time.time()
         fr = os.path.join(rtl_root, "soc", "freertos")
-        elf = os.path.join(fr, "build", "rtos_demo.elf")
+        bd = "build_axi" if axi else "build"
+        elf = os.path.join(fr, bd, "rtos_demo.elf")
         sym = {}
         for l in sh(["riscv64-unknown-elf-nm", elf], rtl_root)[1].splitlines():
             f = l.split()
             if len(f) == 3:
                 sym[f[2]] = f[0]
-        args = ["vvp", "-n", exe, "+rom=%s/build/rtos_demo.hex" % fr, "+exp=%s/rtos_demo.exp" % fr, "+scn=5", "+max=400000",
+        args = ["vvp", "-n", exe, "+rom=%s/%s/rtos_demo.hex" % (fr, bd), "+exp=%s/rtos_demo.exp" % fr, "+scn=5", "+max=400000",
                 "+trap=" + sym["freertos_risc_v_trap_handler"], "+wake=" + sym["mark_wake"]]
         try:
             rc, out = sh(args, rtl_root, timeout=600)
@@ -80,7 +109,7 @@ def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False
             rc, out = 1, "het gio (vvp)"
         line = [l for l in out.splitlines() if l.startswith("[SOC]")]
         ok = rc == 0 and any("PASS" in l for l in line) and not any("FAIL" in l or "LOI" in l for l in line)
-        add("rtos_demo (FreeRTOS)", ok, (line[0] if ok and line else (line[-1] if line else out.strip()[-100:])), t0)
+        add(tag + "rtos_demo (FreeRTOS)", ok, (line[0] if ok and line else (line[-1] if line else out.strip()[-100:])), t0)
         if ok and verbose:
             for l in line[1:]:
                 print("      " + l)
@@ -91,18 +120,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", action="store_true", help="bien dich lai phan mem truoc")
     ap.add_argument("--stop-first", action="store_true")
+    ap.add_argument("--axi", action="store_true", help="chay bo kiem tren SoC AXI4 (soc/axi/axi_soc_top.v, phan mem trong soc/sw/build_axi)")
     a = ap.parse_args()
     if a.build:
-        rc, out = sh(["sh", os.path.join(HERE, "sw", "build.sh")], ROOT)
-        print(out.strip())
-        if rc != 0:
-            sys.exit(1)
-    sw = os.path.join(HERE, "sw", "build")
+        for envx in ([{"AXI": "1"}] if a.axi else [{}]):
+            rc, out = subprocess.run(["sh", os.path.join(HERE, "sw", "build.sh")], cwd=ROOT, env=dict(os.environ, **envx), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).returncode, ""
+            if rc != 0:
+                sys.exit(1)
+    sw = os.path.join(HERE, "sw", "build_axi" if a.axi else "build")
     if not os.path.exists(os.path.join(sw, "hello.hex")):
         print("chua co soc/sw/build/*.hex: chay voi --build (can riscv64-unknown-elf-gcc)")
         sys.exit(1)
     with tempfile.TemporaryDirectory() as work:
-        res = run_suite(ROOT, sw, work, a.stop_first, rtos=os.path.exists(os.path.join(HERE, "freertos", "build", "rtos_demo.hex")))
+        res = run_suite(ROOT, sw, work, a.stop_first, rtos=os.path.exists(os.path.join(HERE, "freertos", "build_axi" if a.axi else "build", "rtos_demo.hex")), axi=a.axi)
     bad = [r for r in res if not r[1]]
     print("[soc] %s: %d/%d buoc dat" % ("DAT" if not bad else "THAT BAI", len(res) - len(bad), len(res)))
     sys.exit(1 if bad else 0)
