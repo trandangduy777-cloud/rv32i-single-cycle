@@ -12,7 +12,7 @@ MUTS=(
 "sh_strobe#rv32im_pipeline.v#st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0011;#st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0001;#^insn_sh_ch0$"
 "lb_dau#rv32im_pipeline.v#3'b000:  ld_data = {{24{ld_sh[7]}},  ld_sh[7:0]};#3'b000:  ld_data = {{24{ld_sh[6]}},  ld_sh[7:0]};#^insn_lb_ch0$"
 "fwd_sai_rs#rv32im_pipeline.v#(exmem_rd != 5'd0) & (exmem_rd == rs1);#(exmem_rd != 5'd0) & (exmem_rd == rs2);#^reg_ch0$"
-"fence_treo#rv32im_pipeline.v#assign ex_stall = (idex_mext & ~m_done) | wfi_wait;#assign ex_stall = (idex_mext & ~m_done) | wfi_wait | idex_fence_r;#^liveness_ch0$"
+"fence_treo#rv32im_pipeline.v#assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait;#assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait | idex_fence_r;#^liveness_ch0$"
 "mscratch_bit31#rv32im_pipeline.v#12'h340: mscratch <= csr_new;#12'h340: mscratch <= {1'b0, csr_new[30:0]};#^csrc_any_mscratch_ch0$"
 "mie_bit#rv32im_pipeline.v#mie_mtie <= csr_new[7];#mie_mtie <= csr_new[6];#^csrc_any_mie_ch0$"
 "mtvec_mode#rv32im_pipeline.v#mtvec_vec <= csr_new[0];#mtvec_vec <= csr_new[1];#^csrc_any_mtvec_ch0$"
