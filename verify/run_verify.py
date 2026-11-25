@@ -260,7 +260,7 @@ PIPE_MUTATIONS = [
     ("P: du lieu store khong duoc forward", "exmem_store_val <= op_b;", "exmem_store_val <= idex_rs2_val;"),
     ("P: JALR dung rs1 chua forward", "wire [31:0] jalr_target = (op_a + idex_imm)", "wire [31:0] jalr_target = (idex_rs1_val + idex_imm)"),
     ("P: so sanh nhanh dung rs2 chua forward", "wire eq  = (op_a == op_b);", "wire eq  = (op_a == idex_rs2_val);"),
-    ("P: dia chi load/store dung rs1 chua forward", "(idex_load | idex_store) ? (op_a + idex_imm)", "(idex_load | idex_store) ? (idex_rs1_val + idex_imm)"),
+    ("P: dia chi load/store dung rs1 chua forward", "wire [31:0] ea    = op_a + idex_imm;", "wire [31:0] ea    = idex_rs1_val + idex_imm;"),
     ("P: SRA dich logic", "3'b101: alu_out = do_sra ? sra_out : srl_out;", "3'b101: alu_out = srl_out;"),
     ("P: LB khong mo rong dau", "3'b000:  ld_data = {{24{ld_byte[7]}},  ld_byte};", "3'b000:  ld_data = {24'b0, ld_byte};"),
     ("P: AUIPC cong pc+4", "idex_auipc            ? pc_imm          :", "idex_auipc            ? idex_pc + 32'd4 + idex_imm :"),

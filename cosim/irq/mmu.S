@@ -5,7 +5,7 @@
 //   dia chi vat ly >= 2^32 -> loi truy cap; PMP cam doc bang trang -> loi truy cap khi duyet
 // - uy quyen loi trang (medeleg 12 / 13 / 15) ve S; MPRV + MPP = U cho load cua M
 // - sua PTE roi SFENCE.VMA; lenh 32 bit vat qua ranh gioi trang (2 trang vat ly khong lien nhau, chi khi co C),
-//   loi trang o nua sau (mtval = pc + 2)
+//   loi trang o nua sau (mtval = pc + 2); TVM (satp, SFENCE.VMA o S), SFENCE.VMA o U
 // Ma U chay o dia chi ao nen dung dia chi tuyet doi (lui / addi) thay cho la (theo pc).
 // Trinh xu ly M / S ghi (che do, cause, tval, epc) vao plog; ECALL voi a7 = 0x99: ve M tai a0. TOHOST = 1: dat.
 #include "irq_defs.h"
@@ -271,6 +271,26 @@ m7b:
     SETPTE  l0pt, 1, ucodeB, PTE_V | PTE_R | PTE_X | PTE_U | PTE_A
     sfence.vma
 #endif
+    // 8. TVM: S doc satp / chay SFENCE.VMA -> lenh bat hop le; U chay SFENCE.VMA -> bat hop le
+    li      t0, (1 << 20)
+    csrs    mstatus, t0
+    GOL     MPP_S, s8
+s8:
+    csrr    t0, satp
+    sfence.vma
+    li      a7, SVC
+    la      a0, m8
+    ecall
+m8:
+    TRAP    3, 2, 0x81
+    TRAP    3, 2, 0x82
+    NOTRAP  0x83
+    li      t0, (1 << 20)
+    csrc    mstatus, t0
+    GO      0, VA_UC + 0x600
+m8b:
+    TRAP    3, 2, 0x84
+    NOTRAP  0x85
     csrw    satp, zero
     li      a0, 1
 fail:
@@ -422,6 +442,12 @@ ucodeA:
     ecall
     .balign 0x100
 #endif
+    .skip   ucodeA + 0x600 - .
+    sfence.vma                          // 8. U: lenh bat hop le
+    li      a7, SVC
+    lui     a0, %hi(m8b)
+    addi    a0, a0, %lo(m8b)
+    ecall
     .skip   ucodeA + 0xFFE - .
     .half   0x8593                      // nua thap cua addi a1, a1, 85 (0x05558593)
 // ---- trang dem giua A va B (khong anh xa) ----

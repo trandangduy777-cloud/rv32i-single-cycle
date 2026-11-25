@@ -18,8 +18,8 @@ EXTRA = [
      "wire [31:0] mepc_v = {mepc_r[31:2], mepc_r[1] & (ENABLE_C != 0), 1'b0};",
      "wire [31:0] mepc_v = {mepc_r[31:2], 2'b00};"),
     ("ngat nhan ca khi pipeline dong bang cho bo nho",
-     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;",
-     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r;"),
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz & ~dwait;",
+     "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~dwait;"),
     ("lenh CSR bi ngat van ghi CSR",
      "wire csr_write = idex_csr & csr_we_req & ~irq_take & ~frz & ~ex_priv_ill;",
      "wire csr_write = idex_csr & csr_we_req & ~frz & ~ex_priv_ill;"),
@@ -97,8 +97,8 @@ EXTRA += [(n, o, w, PMP) for n, o, w in [
 SUM = ["--only", "su-,rv32si,rv32mi", "--core", "6", "--seeds", "1", "--tmax", "300000"]
 EXTRA += [(n, o, w, SUM) for n, o, w in [
     ("ECALL luon bao ma 11", "trap_cause = {28'd0, 2'b10, priv};", "trap_cause = 32'd11;"),
-    ("khong kiem cap CSR theo che do", "((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en))", "(1'b0 | (cnt_user & ~cnt_en))"),
-    ("mcounteren / scounteren bi bo qua", "((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en))", "((csr_addr[9:8] > priv))"),
+    ("khong kiem cap CSR theo che do", "((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en) |", "(1'b0 | (cnt_user & ~cnt_en) |"),
+    ("mcounteren / scounteren bi bo qua", "((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en) |", "((csr_addr[9:8] > priv) |"),
     ("scounteren bi bo qua o U", "((priv == 2'd1) | scounteren[csr_addr[4:0]])", "(1'b1)"),
     ("MRET duoc phep o S / U", "(idex_mret & (priv != 2'd3))", "(1'b0)"),
     ("TSR bi bo qua", "((priv == 2'd0) | ((priv == 2'd1) & st_tsr))", "((priv == 2'd0))"),
@@ -136,11 +136,52 @@ EXTRA += [(n, o, w, SUM) for n, o, w in [
 ]]
 
 
+# MMU Sv32 (cosim/irq/mmu.S, rv32si-dirty, rv32ui-v-*): loi RV32IMC + S/U + MMU (so 6); file rv32_mmu.v dung "M:" o dau ten
+MMUA = ["--only", "mmu-,rv32si-dirty,rv32ui-v-add,rv32ui-v-lw,rv32ui-v-sw,rv32ui-v-jalr", "--core", "6", "--seeds", "1",
+        "--tmax", "3000000"]
+EXTRA += [(n, o, w, MMUA) for n, o, w in [
+    ("trang lon tinh dia chi nhu trang 4 KiB (fetch)", "ipa = ipa | (t_sp[j] ? {t_ppn[j][21:10], i_va[21:0]} : {t_ppn[j], i_va[11:0]});",
+     "ipa = ipa | {t_ppn[j], i_va[11:0]};"),
+    ("trang lon tinh dia chi nhu trang 4 KiB (du lieu)", "dpa = dpa | (t_sp[j] ? {t_ppn[j][21:10], d_va[21:0]} : {t_ppn[j], d_va[11:0]});",
+     "dpa = dpa | {t_ppn[j], d_va[11:0]};"),
+    ("PTE tro bang co U / A / D van duoc", "if (table_ && st == S_L1 && !(pte[7] | pte[6] | pte[4])) begin",
+     "if (table_ && st == S_L1) begin"),
+    ("trang lon lech khong loi", "(st == S_L1 && pte[19:10] != 10'd0)", "(1'b0)"),
+    ("PTE W khong R van duoc", "wire        bad_leaf  = ~pv | (pw & ~pr);", "wire        bad_leaf  = ~pv;"),
+    ("PTE V = 0 van duoc", "wire        bad_leaf  = ~pv | (pw & ~pr);", "wire        bad_leaf  = (pw & ~pr);"),
+    ("PMP khong kiem dia chi PTE", "wire        ad_ok = (m_addr[33:32] == 2'b00) & pte_ok;", "wire        ad_ok = (m_addr[33:32] == 2'b00);"),
+    ("U doc duoc trang khong U", "((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3])", "((pd == 2'd1) ? (d_fl[3] & ~sum_v) : 1'b0)"),
+    ("SUM bi bo qua", "((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3])", "((pd == 2'd1) ? (d_fl[3]) : ~d_fl[3])"),
+    ("MXR bi bo qua", "~(d_fl[0] | (mxr_v & d_fl[2]))", "~(d_fl[0])"),
+    ("A = 0 khong loi (du lieu)", "~d_fl[4] | (idex_store & ~d_fl[5])", "(idex_store & ~d_fl[5])"),
+    ("store voi D = 0 khong loi", "~d_fl[4] | (idex_store & ~d_fl[5])", "~d_fl[4]"),
+    ("store khong can W", "(idex_store ? ~d_fl[1] :", "(idex_store ? 1'b0 :"),
+    ("S chay duoc trang U", "((priv == 2'd1) ? i_fl[3] : ~i_fl[3])", "((priv == 2'd1) ? 1'b0 : ~i_fl[3])"),
+    ("fetch khong can X", "wire        i_bad  = ~i_fl[2] | ~i_fl[4] |", "wire        i_bad  = ~i_fl[4] |"),
+    ("dia chi vat ly >= 2^32 khong loi (du lieu)", "(d_hit & ~d_bad & (d_pa[33:32] != 2'b00))", "(1'b0)"),
+    ("loi nua sau lenh vat trang: mtval = pc", "trap_tval = idex_ipf2 ? idex_pc + 32'd2 : idex_pc; end",
+     "trap_tval = idex_pc; end"),
+    ("khong lay rieng nua sau lenh vat trang", "wire        spl_start = (ENABLE_C != 0) & (MMU != 0) & xi & ~spl_q & i_hit & ~if_tfault &",
+     "wire        spl_start = 1'b0 & ~spl_q & i_hit & ~if_tfault &"),
+    ("SFENCE.VMA khong xoa TLB", "assign mmu_flush = sfence_ex | satp_wr;", "assign mmu_flush = satp_wr;"),
+    ("MPRV bi bo qua khi dich dia chi", "wire [1:0]  pd = ((SU != 0) & st_mprv) ? st_mpp : priv;", "wire [1:0]  pd = priv;"),
+    ("medeleg khong uy quyen duoc loi trang", "medeleg_pf <= {csr_new[15], csr_new[13], csr_new[12]};", "medeleg_pf <= 3'b0;"),
+    ("loi truy cap khi duyet bao thanh loi trang", "dfr_v <= 1'b1; dfr_va <= wk_va; dfr_af <= mmu_af;",
+     "dfr_v <= 1'b1; dfr_va <= wk_va; dfr_af <= 1'b0;"),
+    ("TVM bi bo qua (satp)", "((csr_addr == 12'h180) & (priv == 2'd1) & tvm_v)", "(1'b0)"),
+    ("SFENCE.VMA duoc phep o U", "(idex_sfence & ((priv == 2'd0) | ((priv == 2'd1) & tvm_v)))",
+     "(idex_sfence & (((priv == 2'd1) & tvm_v)))"),
+    ("toan hang load / store khong chot khi cho duyet", "            idex_rs1_val <= op_a;\n            idex_rs2_val <= op_b;",
+     "            idex_rs1_val <= idex_rs1_val;\n            idex_rs2_val <= idex_rs2_val;"),
+]]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
     ap.add_argument("--pmp", action="store_true", help="chi chay cac dot bien PMP")
     ap.add_argument("--su", action="store_true", help="chi chay cac dot bien che do S / U")
+    ap.add_argument("--mmu", action="store_true", help="chi chay cac dot bien MMU")
     ap.add_argument("--range", default="", help="a:b = chi chay dot bien thu a..b-1 (chia lan chay dai)")
     a = ap.parse_args()
     muts = list(mutate_irq.MUTATIONS) + EXTRA
@@ -148,21 +189,24 @@ def main():
         muts = [m for m in muts if len(m) > 3 and m[3] is PMP]
     if a.su:
         muts = [m for m in muts if len(m) > 3 and m[3] is SUM]
+    if a.mmu:
+        muts = [m for m in muts if len(m) > 3 and m[3] is MMUA]
     if a.range:
         lo, hi = (int(x) if x else None for x in a.range.split(":"))
         muts = muts[lo:hi]
-    src = open(os.path.join(ROOT, F)).read()
+    srcs = {f: open(os.path.join(ROOT, f)).read() for f in (F, "rv32_mmu.v")}   # dot bien o pipeline hoac MMU
     caught, t0 = 0, time.time()
     for k, (name, old, new, *args) in enumerate(muts):
         args = args[0] if args else ["--quick"]
-        if src.count(old) != 1:
+        tgt = [f for f, t in srcs.items() if t.count(old) == 1]
+        if len(tgt) != 1:
             print(f"  [{k + 1}/{len(muts)}] BO QUA {name}: khong tim thay chuoi goc", flush=True)
             continue
         tmp = tempfile.mkdtemp(prefix="mutirq_")
         for f in ("rv32i_core.v", "rv32c_decompress.v", "rv32_mtimer.v", "rv32_icache.v", "rv32_dcache.v",
-                  "rv32_bus_arbiter.v"):
+                  "rv32_bus_arbiter.v", F, "rv32_mmu.v"):
             shutil.copy(os.path.join(ROOT, f), tmp)
-        open(os.path.join(tmp, F), "w").write(src.replace(old, new))
+        open(os.path.join(tmp, tgt[0]), "w").write(srcs[tgt[0]].replace(old, new))
         try:
             r = subprocess.run([sys.executable, os.path.join(HERE, "run_irq_cosim.py"), "--spike", a.spike] + args + [
                                 "--stop-on-fail", "--rtl-dir", tmp] + ([] if "--tmax" in args else ["--tmax", "3000000"]), capture_output=True, text=True, timeout=3000)
