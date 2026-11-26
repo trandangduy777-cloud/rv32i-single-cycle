@@ -8,6 +8,7 @@ K=FreeRTOS-Kernel
 P=$K/portable/GCC/RISC-V
 OUT=build; EXTRA=""
 if [ -n "$AXI" ]; then OUT=build_axi; EXTRA="-DAXI_SOC"; fi   # AXI=1: bien dich cho SoC AXI4 vao build_axi/
+if [ -n "$SU" ]; then OUT=${OUT}_su; EXTRA="$EXTRA -DCLINT_STD"; fi   # SU=1: SoC cau hinh Linux (CLINT bo cuc chuan) vao build_su/ hoac build_axi_su/
 mkdir -p $OUT
 CC=riscv64-unknown-elf-gcc
 COMMON="$EXTRA -march=rv32imc_zicsr -mabi=ilp32 -Os -g0 -ffreestanding -fno-builtin -fno-pic -mno-relax -ffunction-sections -fdata-sections"

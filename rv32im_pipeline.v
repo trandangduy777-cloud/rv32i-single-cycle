@@ -79,6 +79,9 @@ module rv32im_pipeline #(
     input  wire        irq_timer,      // MTIP, tu bo dem mtime/mtimecmp ben ngoai (rv32_mtimer.v)
     input  wire        irq_soft,       // MSIP, thanh ghi msip cua rv32_mtimer.v
     input  wire        irq_ext         // MEIP
+`ifdef SEIP_PIN
+    , input  wire        irq_sext        // SEIP phan cung (ngat ngoai den che do S, tu context S cua PLIC); chi co khi bien dich voi -DSEIP_PIN
+`endif
 `ifdef RISCV_FORMAL
     // Cong RVFI (riscv-formal, 1 kenh): chi co khi bien dich voi -DRISCV_FORMAL, khong doi gi o ban thuong.
     , output wire        fv_wfi_wait     // chi cho kiem chung: WFI dang cho ngat (cho cong bang cua liveness)
@@ -919,6 +922,14 @@ module rv32im_pipeline #(
     reg         mideleg_ssi, mideleg_sti, mideleg_sei;
     reg         mie_ssie, mie_stie, mie_seie;
     reg         mip_ssip, mip_stip, mip_seip;              // chi phan mem ghi
+    // SEIP: bit phan mem (mip.SEIP ghi duoc) HOAC chan phan cung irq_sext (qua 1 flip-flop nhu cac chan ngat khac); khong co chan thi chi phan mem
+`ifdef SEIP_PIN
+    reg         seip_hw;
+    always @(posedge clk or negedge rst_n) if (!rst_n) seip_hw <= 1'b0; else seip_hw <= irq_sext;
+`else
+    wire        seip_hw = 1'b0;
+`endif
+    wire        seip_eff = mip_seip | seip_hw;
     wire        st_sd = (st_fs == 2'b11);
     wire [31:0] mstatus_v = (SU != 0) ?
         {st_sd, 8'b0, st_tsr, st_tw, tvm_v, mxr_v, sum_v, st_mprv, 2'b00, st_fs, st_mpp, 2'b00, st_spp, mstatus_mpie,
@@ -927,7 +938,7 @@ module rv32im_pipeline #(
     wire [31:0] sstatus_v = {st_sd, 11'b0, mxr_v, sum_v, 3'b0, st_fs, 4'b0, st_spp, 2'b0, st_spie, 3'b0, st_sie, 1'b0};
     wire [31:0] mie_v  = {20'b0, mie_meie, 1'b0, mie_seie & (SU != 0), 1'b0, mie_mtie, 1'b0, mie_stie & (SU != 0), 1'b0,
                           mie_msie, 1'b0, mie_ssie & (SU != 0), 1'b0};
-    wire [31:0] mip_v  = {20'b0, mip_meip, 1'b0, mip_seip & (SU != 0), 1'b0, mip_mtip, 1'b0, mip_stip & (SU != 0), 1'b0,
+    wire [31:0] mip_v  = {20'b0, mip_meip, 1'b0, seip_eff & (SU != 0), 1'b0, mip_mtip, 1'b0, mip_stip & (SU != 0), 1'b0,
                           mip_msip, 1'b0, mip_ssip & (SU != 0), 1'b0};
     wire [31:0] mideleg_v = {22'b0, mideleg_sei, 3'b0, mideleg_sti, 3'b0, mideleg_ssi, 1'b0} & {32{SU != 0}};
     reg  [2:0]  medeleg_pf;                                // bit 12, 13, 15 (loi trang, chi khi MMU = 1)
@@ -1009,7 +1020,7 @@ module rv32im_pipeline #(
     wire pe_mei = mip_meip & mie_meie;
     wire pe_msi = mip_msip & mie_msie;
     wire pe_mti = mip_mtip & mie_mtie;
-    wire pe_sei = (SU != 0) & mip_seip & mie_seie;
+    wire pe_sei = (SU != 0) & seip_eff & mie_seie;
     wire pe_ssi = (SU != 0) & mip_ssip & mie_ssie;
     wire pe_sti = (SU != 0) & mip_stip & mie_stie;
     wire m_en   = (priv != 2'd3) | mstatus_mie;

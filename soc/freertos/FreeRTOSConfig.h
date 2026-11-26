@@ -3,8 +3,13 @@
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
+#ifdef CLINT_STD
+#define configMTIME_BASE_ADDRESS        ( 0x0200BFF8UL )
+#define configMTIMECMP_BASE_ADDRESS     ( 0x02004000UL )
+#else
 #define configMTIME_BASE_ADDRESS        ( 0x02000000UL )
 #define configMTIMECMP_BASE_ADDRESS     ( 0x02000008UL )
+#endif
 #define configCPU_CLOCK_HZ              ( 2000000UL )
 #define configTICK_RATE_HZ              ( ( TickType_t ) 1000 )
 #define configISR_STACK_SIZE_WORDS      ( 128 )

@@ -1,0 +1,30 @@
+SU
+clint 00000007 ffffffff 0
+S
+ecall ok
+unmapped-ld 1 13 70000000 1
+unmapped-st 1 15 70000000 1
+two-level 1234abcd 1234abcd
+rw-page 0 0 00000000 0
+ro-st 1 15 c0001f80 1
+ro-ld 0 0 00000000 0
+a0-ld 1 13 c0002f80 1
+d0-ld 0 0 00000000 0
+d0-st 1 15 c0003f80 1
+fetch-ram 1 12 10000000 1
+u-ld-nosum 1 13 c0004f80 1
+sum 00000077
+sum-ok 0 0 00000000 0
+sfence 00000099
+sfence-ok 0 0 00000000 0
+user 600df00d 600df00d 1
+user-fault 1 13 10000000 0
+stip 1
+ssip 1
+P1
+masked 0 1
+seip-ids 2 45
+mctx 0
+P2
+done 2 0
+OK

@@ -29,3 +29,7 @@ formal/div/div_*/
 # Verilator coverage: tep .dat trung gian (bao cao text results/vlcov/*.txt thi giu)
 results/vlcov/dat*/
 soc/sw/build_axi/
+soc/sw/build_su/
+soc/sw/build_axi_su/
+soc/freertos/build_su/
+soc/freertos/build_axi_su/
