@@ -64,7 +64,12 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC + Zba/Zbb/Zbs/Zbc/Zicond", "-DPIPE_FULL -DRVC " + ZBFLAGS,
           ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"], "rv32imc_zifencei_" + ZBARCH),
          ("RV32IMC + Zb* + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2 " + ZBFLAGS,
-          CACHE_FILES, "rv32imc_zifencei_" + ZBARCH, ["+lat=8", "+seed=17"])]
+          CACHE_FILES, "rv32imc_zifencei_" + ZBARCH, ["+lat=8", "+seed=17"]),
+         # huong nhanh doan bang TAGE (rv32_tage.v, TAGE = 1): bo nho to hop, va qua cache 2x2 tre ngau nhien
+         ("RV32IMC TAGE", "-DPIPE_FULL -DRVC -DTAGEON", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v",
+          "rv32_tage.v"], "rv32imc_zifencei"),
+         ("RV32IMC TAGE + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DTAGEON -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
+          CACHE_FILES + ["rv32_tage.v"], "rv32imc_zifencei", ["+lat=8", "+seed=19"])]
 
 
 def exts(march):

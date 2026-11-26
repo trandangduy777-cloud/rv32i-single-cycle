@@ -78,7 +78,13 @@ module tb_cosim;
 `else
 `define MMUP 0
 `endif
-`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP)
+// bo du doan huong TAGE: -DTAGEON
+`ifdef TAGEON
+`define TAGEP 1
+`else
+`define TAGEP 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP), .TAGE(`TAGEP)
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
