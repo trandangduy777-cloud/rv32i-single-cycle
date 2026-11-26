@@ -1,10 +1,14 @@
 #!/bin/bash
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
-#   bash tools/regress.sh                 # nhom "nhanh" (buoc 1-9, 15, 17, 19, 22, 24, 26; khoang 2 gio)
-#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 10-14, 16, 18, 20, 21, 23, 25, 27; vai gio)
-#   bash tools/regress.sh tat-ca          # ca hai nhom
-#   bash tools/regress.sh 2 7             # chi cac buoc 2 va 7
+#   bash tools/regress.sh                 # nhom "nhanh" (buoc 0-9, 15, 17, 19, 22, 24, 26; khoang 2 gio)
+#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 0, 10-14, 16, 18, 20, 21, 23, 25, 27; vai gio)
+#   bash tools/regress.sh tat-ca          # ca hai nhom, tuan tu
+#   bash tools/regress.sh may-2-nhan      # ca hai nhom, 2 hang chay song song (A: mo phong / SoC / Spike, B: so vet ngat,
+#                                         #   mutation ngat, riscv-formal); khong dung o buoc that bai, tong ket o cuoi
+#   bash tools/regress.sh 2 7 16b         # chi cac buoc 2, 7 va 16b
+# Buoc dai co buoc con de chia lan chay (moi buoc con <= ~90 phut tren may 2 nhan): 13 = 13a-c, 15 = 15a-d (theo cau hinh
+# loi), 16 = 16a-d (theo doan --range). Buoc 0: chuoi goc cua moi dot bien xuat hien dung 1 lan, YAML cua CI doc duoc.
 # Can moi truong cua tools/setup_env.sh. Thoat ma 1 o buoc dau tien that bai (in 20 dong cuoi cua log buoc do).
 set -u
 cd "$(dirname "$0")/.."
@@ -13,7 +17,7 @@ SPIKE=${SPIKE:-/opt/spike/bin/spike}
 LOGDIR=${LOGDIR:-/tmp/regress_logs}
 mkdir -p "$LOGDIR"
 
-NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 15 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
+NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet voi ISS, 15 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (17 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
@@ -24,8 +28,25 @@ NAMES=("" "testbench tu kiem tra 3 loi" "so vet voi ISS, 15 cau hinh" "bo nhan: 
        "SoC AXI4 + DMA: interconnect ngau nhien, giao thuc, chuong trinh C, DMA, FreeRTOS" "mutation AXI4 + DMA (55 mutant)" \
        "TAGE: so tung du doan voi mo hinh tham chieu (35 vet, 4 cau hinh)" "mutation TAGE (28 dot bien)")
 
+# Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
+# 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77). Doi nhom bang
+# bien IRQ_CORES_A..D neu them loi. Buoc 16 (mutate_irq_cosim.py, 109 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
+# 21:28 ~ 22-32, 28:42 = 22, 42: = 10 (may 2 nhan cham hon khoang 1,5 lan).
+declare -A SUBNAMES=(
+    [13a]="mutation lenh C (so vet Spike)" [13b]="mutation bo nhan song song" [13c]="mutation du doan nhanh"
+    [15a]="so vet ngat voi Spike: loi ${IRQ_CORES_A:-8}" [15b]="so vet ngat voi Spike: loi ${IRQ_CORES_B:-1 3}"
+    [15c]="so vet ngat voi Spike: loi ${IRQ_CORES_C:-6 7 4}" [15d]="so vet ngat voi Spike: loi ${IRQ_CORES_D:-0 2 5}"
+    [16a]="mutation ngat qua Spike, doan 0:14" [16b]="mutation ngat qua Spike, doan 14:21"
+    [16c]="mutation ngat qua Spike, doan 21:42" [16d]="mutation ngat qua Spike, doan 42:")
+name_of() { if [ -n "${SUBNAMES[$1]+x}" ]; then echo "${SUBNAMES[$1]}"; else echo "${NAMES[$1]:-?}"; fi; }
+irq_cores() { for c in $1; do python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" --core "$c" || return 1; done; }
+
 step() {   # step <so>: chay buoc, tra ve 0 neu dat
     case $1 in
+    0) python3 tools/check_mutants.py &&
+       if python3 -c "import yaml" 2>/dev/null; then
+           python3 -c "import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]; print('YAML CI: doc duoc', len(sys.argv) - 1, 'file')" .github/workflows/*.yml
+       else echo "YAML CI: bo qua (khong co PyYAML)"; fi ;;
     1) iverilog -g2012 -DNO_VCD -o /tmp/r_sc tb_rv32i_core.v rv32i_core.v && vvp /tmp/r_sc > /tmp/r1a && grep -q "\[TB\] PASS" /tmp/r1a &&
        iverilog -g2012 -DPIPE -DNO_VCD -o /tmp/r_p tb_rv32i_pipeline.v rv32i_pipeline.v && vvp /tmp/r_p +prog=prog_base.hex > /tmp/r1b && grep -q "\[TB\] PASS" /tmp/r1b &&
        iverilog -g2012 -DPIPE_FULL -DNO_VCD -o /tmp/r_pm tb_rv32i_pipeline.v rv32im_pipeline.v rv32i_core.v && vvp /tmp/r_pm +prog=prog.hex > /tmp/r1c && grep -q "\[TB\] PASS" /tmp/r1c &&
@@ -48,10 +69,21 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     10) (cd verify && python3 run_verify.py --mutate --stop-on-fail) ;;
     11) (cd verify && python3 run_verify.py --pipe --mutate --stop-on-fail) ;;
     12) (cd verify && python3 run_verify.py --pipem --mutate --stop-on-fail) ;;
-    13) python3 rvc/mutate_rvc.py "$RT" --spike "$SPIKE" && python3 mul/mutate_mul.py && python3 bpred/mutate_bpred.py ;;
+    13) step 13a && step 13b && step 13c ;;
+    13a) python3 rvc/mutate_rvc.py "$RT" --spike "$SPIKE" ;;
+    13b) python3 mul/mutate_mul.py ;;
+    13c) python3 bpred/mutate_bpred.py ;;
     14) python3 cache/mutate_cache.py "$RT" --spike "$SPIKE" ;;
-    15) python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" ;;
-    16) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" ;;
+    15) step 15a && step 15b && step 15c && step 15d ;;
+    15a) irq_cores "${IRQ_CORES_A:-8}" ;;
+    15b) irq_cores "${IRQ_CORES_B:-1 3}" ;;
+    15c) irq_cores "${IRQ_CORES_C:-6 7 4}" ;;
+    15d) irq_cores "${IRQ_CORES_D:-0 2 5}" ;;
+    16) step 16a && step 16b && step 16c && step 16d ;;
+    16a) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 0:14 ;;
+    16b) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 14:21 ;;
+    16c) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 21:42 ;;
+    16d) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 42: ;;
     17) sh soc/sw/build.sh && sh soc/freertos/build.sh && python3 soc/run_soc.py ;;
     18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
     19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' && PATH=$HOME/.local/bin:$PATH CFG=formal/checks_wfi.cfg WORK=/tmp/formal-wfi bash formal/run.sh run '^liveness_ch0$' && PATH=$HOME/.local/bin:$PATH bash formal/stitch/run.sh nomut && PATH=$HOME/.local/bin:$PATH bash formal/cache/run.sh nomut && PATH=$HOME/.local/bin:$PATH CFG=formal/checks_misal.cfg WORK=/tmp/formal-misal bash formal/run.sh run '^insn_(lb|lbu|lh|lhu|lw|sb|sh|sw)_ch0$' '^mon_misal_ch0$' ;;
@@ -67,20 +99,36 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     esac
 }
 
+run_one() {   # run_one <buoc> <tien to>: chay 1 buoc, in DUNG 1 dong ket qua (in mot lan de 2 hang khong xen dong)
+    local s=$1 ts=$(date +%s) line
+    if step "$s" > "$LOGDIR/step$s.log" 2>&1; then
+        line="$2buoc $s: $(name_of "$s") ... DAT ($(( $(date +%s) - ts )) s) | $(grep -v '^\s*$' "$LOGDIR/step$s.log" | tail -1 | cut -c1-110)"
+        printf '%s\n' "$line"; return 0
+    fi
+    line="$2buoc $s: $(name_of "$s") ... THAT BAI ($(( $(date +%s) - ts )) s), log: $LOGDIR/step$s.log"
+    printf '%s\n' "$line"; return 1
+}
+
+QA="0 1 2 3 4 5 6 7 8 9 10 11 12 13a 13b 13c 14 17 18 21 22 23 24 25 26 27"   # cac buoc dung chung thu muc build (bench, soc/sw) o cung hang
+QB="15a 15b 15c 15d 16a 16b 16c 16d 19 20"                               # 20 can riscv-formal do 19 dung, nen di sau 19
 case "${1:-nhanh}" in
-    nhanh)   STEPS="1 2 3 4 5 6 7 8 9 15 17 19 22 24 26" ;;
-    dot-bien) STEPS="10 11 12 13 14 16 18 20 21 23 25 27" ;;
-    tat-ca)  STEPS="1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 10 11 12 13 14 16 18 20 21 23 25 27" ;;
+    nhanh)   STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26" ;;
+    dot-bien) STEPS="0 10 11 12 13 14 16 18 20 21 23 25 27" ;;
+    tat-ca)  STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 10 11 12 13 14 16 18 20 21 23 25 27" ;;
+    may-2-nhan)
+        t0=$(date +%s); fails="$LOGDIR/fails"; : > "$fails"
+        # ma nguon CoreMark (coremark/eembc) duoc ca buoc 8 (hang A) va 15 (hang B) tu clone khi chua co: lay truoc mot lan,
+        # neu khong hai hang clone cung luc va mot ben bien dich tren thu muc dang clone do (gap 26/11/2026)
+        (cd coremark && python3 -c "import run_coremark as c; c.fetch_src()") || exit 1
+        queue() { local q=$1 k=0 n; shift; n=$#; for s; do k=$((k + 1)); run_one "$s" "[$q $k/$n] " || echo "$s" >> "$fails"; done; }
+        queue A $QA & queue B $QB & wait
+        if [ -s "$fails" ]; then echo "REGRESSION THAT BAI o buoc: $(tr '\n' ' ' < "$fails")($(( ($(date +%s) - t0) / 60 )) phut)"; exit 1; fi
+        echo "REGRESSION DAT: $(echo $QA $QB | wc -w) buoc tren 2 hang, $(( ($(date +%s) - t0) / 60 )) phut"; exit 0 ;;
     *)       STEPS="$*" ;;
 esac
 n=$(echo $STEPS | wc -w); k=0; t0=$(date +%s)
 for s in $STEPS; do
-    k=$((k + 1)); ts=$(date +%s)
-    printf "[%d/%d] buoc %s: %s ... " $k $n $s "${NAMES[$s]:-?}"
-    if step $s > "$LOGDIR/step$s.log" 2>&1; then
-        echo "DAT ($(( $(date +%s) - ts )) s) | $(grep -v '^\s*$' "$LOGDIR/step$s.log" | tail -1 | cut -c1-110)"
-    else
-        echo "THAT BAI ($(( $(date +%s) - ts )) s), log: $LOGDIR/step$s.log"; tail -20 "$LOGDIR/step$s.log"; exit 1
-    fi
+    k=$((k + 1))
+    run_one "$s" "[$k/$n] " || { tail -20 "$LOGDIR/step$s.log"; exit 1; }
 done
 echo "REGRESSION DAT: buoc $STEPS, $(( ($(date +%s) - t0) / 60 )) phut"
