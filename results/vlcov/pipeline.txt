@@ -1,27 +1,34 @@
-Verilator coverage cua pipeline: riscv-tests + bench + test tu viet + CoreMark, gop 14 tep (core1.dat, core10.dat, core11.dat, core12.dat, core13.dat, core14.dat, core2.dat, core3.dat, core4.dat, core5.dat, core6.dat, core7.dat, core8.dat, core9.dat)
-TONG: dong 311/348 = 89.4%, nhanh 213/246 = 86.6%, toggle 9076/12254 = 74.1%
+Verilator coverage cua pipeline: riscv-tests + bench + test tu viet + CoreMark, gop 21 tep (core1.dat, core10.dat, core11.dat, core12.dat, core13.dat, core14.dat, core2.dat, core3.dat, core4.dat, core5.dat, core6.dat, core7.dat, core8.dat, core9.dat, core90.dat, core91.dat, core92.dat, core93.dat, core94.dat, core95.dat, core96.dat)
+TONG: dong 523/635 = 82.4%, nhanh 414/464 = 89.2%, toggle 16148/21872 = 73.8%
 
-  rv32_bus_arbiter.v     dong     3/3     (100.0%)  nhanh     2/2     (100.0%)  toggle    147/182    ( 80.8%)
-  rv32_dcache.v          dong    17/21    ( 81.0%)  nhanh    32/40    ( 80.0%)  toggle   1059/1263   ( 83.8%)
+  rv32_bus_arbiter.v     dong     3/3     (100.0%)  nhanh     2/2     (100.0%)  toggle    155/182    ( 85.2%)
+  rv32_dcache.v          dong    19/21    ( 90.5%)  nhanh    34/40    ( 85.0%)  toggle   1071/1263   ( 84.8%)
   rv32_icache.v          dong    14/14    (100.0%)  nhanh    33/36    ( 91.7%)  toggle    596/817    ( 72.9%)
+  rv32_mmu.v             dong    11/11    (100.0%)  nhanh    12/12    (100.0%)  toggle    626/982    ( 63.7%)
+  rv32_mtimer.v          dong     7/10    ( 70.0%)  nhanh     9/10    ( 90.0%)  toggle    196/271    ( 72.3%)
+  rv32_tage.v            dong    11/13    ( 84.6%)  nhanh    49/52    ( 94.2%)  toggle    557/658    ( 84.7%)
   rv32c_decompress.v     dong    34/34    (100.0%)  nhanh    23/28    ( 82.1%)  toggle    158/174    ( 90.8%)
-  rv32i_core.v           dong    21/31    ( 67.7%)  nhanh    10/12    ( 83.3%)  toggle   1759/1872   ( 94.0%)
+  rv32i_core.v           dong    21/31    ( 67.7%)  nhanh    10/12    ( 83.3%)  toggle   1761/1872   ( 94.1%)
   rv32i_pipeline.v       dong    42/42    (100.0%)  nhanh    20/20    (100.0%)  toggle   1603/1802   ( 89.0%)
-  rv32im_pipeline.v      dong   180/203   ( 88.7%)  nhanh    93/108   ( 86.1%)  toggle   3754/6144   ( 61.1%)
+  rv32im_pipeline.v      dong   361/456   ( 79.2%)  nhanh   222/252   ( 88.1%)  toggle   9425/13851  ( 68.0%)
 
 VUNG CHUA PHU (dong hoac nhanh khong bao gio chay), theo khoang dong:
-  rv32_dcache.v: 9 dong, 7 khoang
+  rv32_dcache.v: 7 dong, 5 khoang
     92-92: if (WAYS > 1) begin
     94-95: for (lv = 0; lv < AB; lv = lv + 1) begin
     106-107: if (WAYS > 1)
     158-158: if (fs >= WBUF) fs = fs - WBUF;
-    224-224: end else if (rd_miss & wb_empty)             // ngoai vung cacheable, bo dem da rong
     241-241: if (fill_fwd) n_fwd <= n_fwd + 32'd1;
-    250-250: UNC: if (m_ack) state <= IDLE;                   // bo dem rong suot UNC (khong nhan store)
   rv32_icache.v: 3 dong, 3 khoang
     79-79: if (WAYS > 1) begin
     93-93: if (WAYS > 1)
     157-157: if (!flush) val_r[miss_set * WAYS + victim] <= 1'b0;   // dong cu bi thay
+  rv32_mtimer.v: 4 dong, 2 khoang
+    36-38: if (sel & we & (addr == 3'd0))      mtime[31:0]     <= (mtime[31:0]     & ~wmask) | (wdata & wmask);
+    52-52: default: rdata = 32'd0;
+  rv32_tage.v: 3 dong, 2 khoang
+    43-44: function integer hmax(input integer d);
+    136-136: else                  begin if (use_alt != 4'd0)  use_alt <= use_alt - 4'd1; end
   rv32c_decompress.v: 5 dong, 5 khoang
     74-74: if (nzimm_16sp == 10'd0) illegal = 1'b1;
     77-77: if (imm6 == 6'd0) illegal = 1'b1;
@@ -38,28 +45,50 @@ VUNG CHUA PHU (dong hoac nhanh khong bao gio chay), theo khoang dong:
     727-727: for (j = 0; j < lv; j = j + 1) r = 2 * (r / 3) + r % 3;
     731-731: function integer n_levels(input integer dummy);
     735-735: while (r > 2) begin r = 2 * (r / 3) + r % 3; j = j + 1; end
-  rv32im_pipeline.v: 37 dong, 24 khoang
-    311-311: default: ;
-    473-473: s_we = 1'b1; if (s_cnt == 0) s_cnt_n = 1;
-    735-735: default:  zb_out = 32'd0;
-    791-792: 12'h301: csr_rdata = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);   // MXL = 32, I, M (va C kh
-    796-798: 12'h342: csr_rdata = mcause_r;
-    854-854: if (irq_take)           begin trap_cause = irq_meip ? 32'h8000_000B : (irq_msip ? 32'h8000_0003 : 32
-    856-857: else if (pmp_ifault)    begin trap_cause = 32'd1;  trap_tval = pmp_itval;   end   // fetch bi PMP ca
-    860-863: else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;         end
-    935-936: 12'h300: begin mstatus_mie <= csr_new[3]; mstatus_mpie <= csr_new[7]; end
-    938-938: 12'h340: mscratch <= csr_new;
-    940-942: 12'h342: mcause_r <= csr_new;
-    973-973: a_we = 1'b1; if (a_cnt == 0) a_cnt_n = 1;
-    1012-1012: if (BTB_N > 0) begin
-    1022-1022: if (RAS_N > 0) begin
-    1403-1403: if (ZICNTR != 0) begin
-    1426-1428: end else if (ZICNTR != 0) begin
-    1432-1432: if (cnt_wr_ir)                  minstret_r <= cnt_new;
-    1435-1436: if (cnt_wr && cnt_idx == hj + 3) hpm_cnt[hj] <= cnt_new;
-    1438-1438: if (csr_write && csr_addr == 12'h323 + hj) hpm_ev[hj] <= csr_new[3:0];
-    1440-1440: if (csr_write && csr_addr == 12'h320) begin
-    1520-1520: if (csr_addr == 12'h3B0 + pk)     pmp_rdata = pmp_addr[pk];
-    1531-1531: if (csr_addr == 12'h3A0 + pw / 4 && !pmp_cfg[pw][7]) begin
-    1533-1533: if (!pmp_wcfg[0]) pmp_wcfg[1] = 1'b0;                   // R = 0, W = 1: du phong -> xoa W
-    1536-1536: if (csr_addr == 12'h3B0 + pw && !pmp_cfg[pw][7] &&
+  rv32im_pipeline.v: 121 dong, 46 khoang
+    311-311: wire [6:0]  opcode = instr[6:0];
+    346-367: {7'b0010000, 3'b010}: begin zb_reg_ok = (ZBA != 0); zb_op = Z_SH1ADD; end
+    373-373: {7'b0110000, 3'b001}: begin                   // clz ctz cpop sext.b sext.h: chon theo rs2
+    375-380: 5'd0:    begin zb_imm_ok = (ZBB != 0); zb_op = Z_CLZ; end
+    383-389: {7'b0110000, 3'b101}: begin zb_imm_ok = (ZBB != 0); zb_op = Z_ROR; end                 // rori
+    433-433: if (SU != 0)
+    473-473: //     - IF khong nhay: JAL nhay o ID; nhanh ma bang dem doan "nhay" nhay o ID; lenh tra ve (JALR rs
+    557-557: s_top_n = s_widx; if (s_cnt != RAS_N) s_cnt_n = s_cnt + 1'b1;
+    735-735: wire [31:0] op_a = idex_fa_mem ? exmem_result : (idex_fa_wb ? memwb_val : idex_rs1_val);
+    782-782: function [5:0] zb_pop32(input [31:0] x);
+    784-784: begin zb_pop32 = 6'd0; for (i = 0; i < 32; i = i + 1) zb_pop32 = zb_pop32 + {5'd0, x[i]}; end
+    786-786: function [63:0] zb_clmul64(input [31:0] x, input [31:0] y);   // nhan khong nho (carry-less), tich d
+    790-792: for (i = 0; i < 32; i = i + 1)
+    796-798: wire [31:0] z_sh2   = {zb_a[29:0], 2'b0} + zb_b;
+    810-814: Z_SH2ADD: zb_out = (ZBA != 0) ? z_sh2 : 32'd0;
+    816-837: Z_CTZ:    zb_out = (ZBB != 0) ? {26'd0, z_ctz_r} : 32'd0;
+    854-854: // nhanh
+    856-857: wire lt  = ($signed(op_a) < $signed(op_b));
+    860-863: case (idex_funct3)
+    935-936: 12'h300: csr_rdata = mstatus_v;
+    938-938: 12'h304: csr_rdata = mie_v;
+    940-942: 12'h340: csr_rdata = mscratch;
+    967-967: if (SU == 0) su_rdata = 32'd0;
+    973-973: wire [31:0] pmp_itval;                                 // mtval khi fetch bi PMP cam (pc hoac pc + 2
+    1012-1012: wire cm_sei = pe_sei & ~mideleg_sei & m_en, cm_ssi = pe_ssi & ~mideleg_ssi & m_en, cm_sti = pe_sti &
+    1022-1022: `ifdef RISCV_FORMAL
+    1249-1250: 12'h342: mcause_r <= csr_new;
+    1263-1264: 12'h142: scause_r <= csr_new;
+    1324-1324: a_top_n = a_widx; if (a_cnt != RAS_N) a_cnt_n = a_cnt + 1'b1;
+    1351-1351: if (GHR_BITS > 0 && ex_upd && idex_branch) ghr <= {ghr, take_branch};
+    1360-1361: if (BTB_N > 0) begin
+    1370-1370: if (RAS_N > 0) begin
+    1403-1403: exmem_icnt      <= cnt_icnt;                    // lenh nay co duoc dem vao minstret khi hoan tat kh
+    1426-1428: 2'b01:   begin st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0011; end
+    1432-1432: // so byte cua truy cap (load hoac store) vuot qua tu hien tai
+    1435-1436: wire       ma_cross  = (MISALIGNED != 0) & exmem_valid & (exmem_load | exmem_store) & (acc_strb8[7:4
+    1438-1438: 
+    1440-1440: wire [3:0]  st_strb = ma_phase ? st_strb8[7:4]  : st_strb8[3:0];
+    1458-1458: else if (ma_cross & dmem_ready) begin
+    1460-1460: if (!ma_phase) ma_lo <= dmem_rdata;
+    1520-1520: memwb_pc    <= exmem_pc;
+    1531-1531: end
+    1533-1533: 
+    1536-1536: // RVFI (riscv-formal Verification Interface), mot lenh hoan tat moi chu ky o tang WB.
+    1773-1773: if (ZICNTR != 0) begin
+    1796-1797: end else if (ZICNTR != 0) begin
