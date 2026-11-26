@@ -528,7 +528,12 @@ module rv32im_pipeline #(
     wire id_ctl   = is_jal | legal_branch | legal_jalr;
     wire [31:0] id_seq = ifid_pc + (ifid_c ? 32'd2 : 32'd4);
     assign id_target   = ifid_pc + imm;                       // imm da chon imm_b / imm_j theo opcode
-    wire id_fix_tgt = ifid_bp & (is_jal | legal_branch) & (ifid_bpt != id_target);   // BTB dich sai
+    // BTB dich sai: ifid_bpt != ifid_pc + imm, kiem khong can bo cong (so sanh tong khong lan nho): a + b == c khi
+    // va chi khi moi bit a ^ b ^ c bang nho vao suy tu bit duoi, nho = (a & b) | ((a | b) & ~c). Do sau co dinh thay
+    // cho chuoi nho 32 bit roi so sanh, vi duong nay noi tiep vao enable cua pc (redirect o ID).
+    wire [31:0] tgt_k   = {(ifid_pc[30:0] & imm[30:0]) | ((ifid_pc[30:0] | imm[30:0]) & ~ifid_bpt[30:0]), 1'b0};
+    wire        tgt_ok  = ((ifid_pc ^ imm ^ ifid_bpt) == tgt_k);                      // ifid_bpt == id_target
+    wire id_fix_tgt = ifid_bp & (is_jal | legal_branch) & ~tgt_ok;                   // BTB dich sai
     wire id_fix_seq = ifid_bp & ~id_ctl;                                             // BTB trung nham
     wire id_late    = ~ifid_bp & (is_jal | (legal_branch & ifid_ctr) | (id_ret & ras_ok & (RAS_N > 0)));
     wire id_pred_taken = legal_branch & (ifid_bp | ifid_ctr);
