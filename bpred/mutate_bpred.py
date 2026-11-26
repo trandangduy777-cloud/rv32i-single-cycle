@@ -21,6 +21,8 @@ MUTATIONS = [
      "wire jalr_ok       = idex_jp_v;", "rand"),
     ("ID khong sua khi dich BTB khac pc + imm",
      "wire id_fix_tgt = ifid_bp & (is_jal | legal_branch) & (ifid_bpt != id_target);", "wire id_fix_tgt = 1'b0;", "rand"),
+    ("IF cong dich bang imm cua nhanh cho ca JAL",
+     "ifid_tgt   <= pc + ((if_dec[6:0] == 7'b1101111) ? if_immj : if_immb);", "ifid_tgt   <= pc + if_immb;", "rand"),
     ("ID khong sua khi BTB trung nham lenh khong phai nhay", "wire id_fix_seq = ifid_bp & ~id_ctl;",
      "wire id_fix_seq = 1'b0;", "rand"),
     ("ID sua BTB trung nham ve dich thay vi lenh ke tiep", "wire [31:0] id_redir_pc = id_fix_seq ? id_seq :",
