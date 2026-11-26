@@ -1,0 +1,53 @@
+<html><head><meta charset='utf-8'><title>functional coverage dcache</title><style>body{font-family:sans-serif}table{border-collapse:collapse}td,th{border:1px solid #999;padding:2px 6px;font-size:13px}.z{background:#f9c}.ok{background:#cf9}</style></head><body><h2>functional coverage dcache</h2><p>51/51 bin = 100.0 %</p><table><tr><th>coverage point / cross</th><th>bin</th><th>so lan</th></tr>
+<tr class='ok'><td rowspan='5'>dc.event<br>5/5</td><td>fence_with_pending</td><td>523</td></tr>
+<tr class='ok'><td>forward</td><td>139</td></tr>
+<tr class='ok'><td>load_after_store_same_word</td><td>1148</td></tr>
+<tr class='ok'><td>none</td><td>20926</td></tr>
+<tr class='ok'><td>store_stall_full</td><td>1264</td></tr>
+<tr class='ok'><td rowspan='3'>dc.op<br>3/3</td><td>fence</td><td>1228</td></tr>
+<tr class='ok'><td>load</td><td>13240</td></tr>
+<tr class='ok'><td>store</td><td>9532</td></tr>
+<tr class='ok'><td rowspan='8'>dc.op_region_outcome<br>8/8</td><td>(&#x27;fence&#x27;, &#x27;cached&#x27;, &#x27;none&#x27;)</td><td>1054</td></tr>
+<tr class='ok'><td>(&#x27;fence&#x27;, &#x27;uncached&#x27;, &#x27;none&#x27;)</td><td>174</td></tr>
+<tr class='ok'><td>(&#x27;load&#x27;, &#x27;cached&#x27;, &#x27;hit&#x27;)</td><td>1337</td></tr>
+<tr class='ok'><td>(&#x27;load&#x27;, &#x27;cached&#x27;, &#x27;miss&#x27;)</td><td>10115</td></tr>
+<tr class='ok'><td>(&#x27;load&#x27;, &#x27;uncached&#x27;, &#x27;miss&#x27;)</td><td>1788</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;cached&#x27;, &#x27;hit&#x27;)</td><td>972</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;cached&#x27;, &#x27;miss&#x27;)</td><td>7371</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;uncached&#x27;, &#x27;miss&#x27;)</td><td>1189</td></tr>
+<tr class='ok'><td rowspan='3'>dc.outcome<br>3/3</td><td>hit</td><td>2309</td></tr>
+<tr class='ok'><td>miss</td><td>20463</td></tr>
+<tr class='ok'><td>none</td><td>1228</td></tr>
+<tr class='ok'><td rowspan='2'>dc.region<br>2/2</td><td>cached</td><td>20849</td></tr>
+<tr class='ok'><td>uncached</td><td>3151</td></tr>
+<tr class='ok'><td rowspan='16'>dc.store_strb_outcome<br>16/16</td><td>(&#x27;store&#x27;, &#x27;b0&#x27;, &#x27;hit&#x27;)</td><td>86</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b0&#x27;, &#x27;miss&#x27;)</td><td>790</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b1&#x27;, &#x27;hit&#x27;)</td><td>82</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b1&#x27;, &#x27;miss&#x27;)</td><td>772</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b2&#x27;, &#x27;hit&#x27;)</td><td>94</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b2&#x27;, &#x27;miss&#x27;)</td><td>799</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b3&#x27;, &#x27;hit&#x27;)</td><td>75</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;b3&#x27;, &#x27;miss&#x27;)</td><td>780</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;half_hi&#x27;, &#x27;hit&#x27;)</td><td>79</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;half_hi&#x27;, &#x27;miss&#x27;)</td><td>758</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;half_lo&#x27;, &#x27;hit&#x27;)</td><td>74</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;half_lo&#x27;, &#x27;miss&#x27;)</td><td>777</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;other&#x27;, &#x27;hit&#x27;)</td><td>288</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;other&#x27;, &#x27;miss&#x27;)</td><td>2346</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;word&#x27;, &#x27;hit&#x27;)</td><td>194</td></tr>
+<tr class='ok'><td>(&#x27;store&#x27;, &#x27;word&#x27;, &#x27;miss&#x27;)</td><td>1538</td></tr>
+<tr class='ok'><td rowspan='9'>dc.strb<br>9/9</td><td>b0</td><td>876</td></tr>
+<tr class='ok'><td>b1</td><td>854</td></tr>
+<tr class='ok'><td>b2</td><td>893</td></tr>
+<tr class='ok'><td>b3</td><td>855</td></tr>
+<tr class='ok'><td>half_hi</td><td>837</td></tr>
+<tr class='ok'><td>half_lo</td><td>851</td></tr>
+<tr class='ok'><td>none</td><td>14468</td></tr>
+<tr class='ok'><td>other</td><td>2634</td></tr>
+<tr class='ok'><td>word</td><td>1732</td></tr>
+<tr class='ok'><td rowspan='5'>dc.wb_occupancy<br>5/5</td><td>0</td><td>13588</td></tr>
+<tr class='ok'><td>1</td><td>7464</td></tr>
+<tr class='ok'><td>2</td><td>2127</td></tr>
+<tr class='ok'><td>3</td><td>577</td></tr>
+<tr class='ok'><td>4</td><td>244</td></tr>
+</table></body></html>

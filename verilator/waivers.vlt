@@ -1,0 +1,161 @@
+// Danh sach waiver cho verilator --lint-only -Wall (verilator/lint.py). Moi muc: file, rule, dong, ly do.
+// Quy tac: chi waiver khi da doc dong lenh va xac nhan khong phai loi; loi that duoc sua o RTL (khong co muc nao trong day).
+`verilator_config
+
+// addr[0]: nhan dia chi byte, lenh 16 bit khong can bit 0 (dia chi lenh luon chan)
+lint_off -rule UNUSEDSIGNAL -file "*rv32_icache.v" -lines 22
+
+// d1[31:16]: chi lay nua thap cua tu ke tiep cho lenh 32 bit vat qua ranh gioi tu
+lint_off -rule UNUSEDSIGNAL -file "*rv32_icache.v" -lines 70
+
+// chi so duong (way) / bo dem nap rong 1-2 bit duoc cong, so sanh voi so nguyen 32 bit trong vong for; gia tri luon nho hon WAYS / WORDS nen khong tran
+lint_off -rule WIDTHEXPAND -file "*rv32_icache.v" -lines 69-70
+lint_off -rule WIDTHEXPAND -file "*rv32_icache.v" -lines 82
+lint_off -rule WIDTHEXPAND -file "*rv32_icache.v" -lines 95
+lint_off -rule WIDTHEXPAND -file "*rv32_icache.v" -lines 157
+lint_off -rule WIDTHEXPAND -file "*rv32_icache.v" -lines 163
+lint_off -rule WIDTHEXPAND -file "*rv32_icache.v" -lines 166-167
+
+// bien vong lap q / qv (integer) gan cho bit don hoac chi so duong; gia tri < WAYS, cat bit cao co chu y
+lint_off -rule WIDTHTRUNC -file "*rv32_icache.v" -lines 64-65
+lint_off -rule WIDTHTRUNC -file "*rv32_icache.v" -lines 95
+lint_off -rule WIDTHTRUNC -file "*rv32_icache.v" -lines 125
+
+// giong icache: chi so duong, con tro hang doi bo dem ghi (q_head, push, pop, fill_cnt) rong 1-3 bit cong voi hang so 32 bit; gia tri luon trong khoang hop le
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 84
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 95
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 108
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 135
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 157
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 178
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 205
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 222
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 234
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 240
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 244-245
+
+// bien vong lap (integer) -> chi so duong; fs = q_head + j da duoc tru WBUF khi vuot (dong 155-156) nen chi so < WBUF, bit thu 3 la dieu kien dung, khong dung lam chi so
+lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 81
+lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 108
+lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 117
+lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 157
+lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 159-161
+
+// imm[0]: cac nhanh nhay cua lenh C luon chan (offset nhan 2), bit 0 khong ton tai trong ma hoa
+lint_off -rule UNUSEDSIGNAL -file "*rv32c_decompress.v" -lines 43
+lint_off -rule UNUSEDSIGNAL -file "*rv32c_decompress.v" -lines 46
+
+// module rv32m nam chung file voi rv32i_core (duoc dung boi ca hai loi); doi ten file se pha moi script bien dich
+lint_off -rule DECLFILENAME -file "*rv32i_core.v" -lines 388
+
+// cay CSA 32x32: Verilator thay vong tren mang t[] / cac bus lv[].csa[] nhung moi phan tu chi phu thuoc cac tang truoc (khong co vong that, da chung minh hinh thuc o mul/formal); chi anh huong toc do mo phong
+lint_off -rule UNOPTFLAT -file "*rv32i_core.v" -lines 706
+lint_off -rule UNOPTFLAT -file "*rv32i_core.v" -lines 742
+
+// retire (dung boi testbench qua phan cap), sub[32], f_p[65:64], p_neg, dummy: bit / tin hieu du de giu do rong cua phep tinh, khong anh huong ket qua
+lint_off -rule UNUSEDSIGNAL -file "*rv32i_core.v" -lines 231
+lint_off -rule UNUSEDSIGNAL -file "*rv32i_core.v" -lines 431
+lint_off -rule UNUSEDSIGNAL -file "*rv32i_core.v" -lines 460
+lint_off -rule UNUSEDSIGNAL -file "*rv32i_core.v" -lines 599
+lint_off -rule UNUSEDSIGNAL -file "*rv32i_core.v" -lines 731
+
+// dich byte (>> byte_off*8) lay 8 bit thap; hang so LAST = 32/STEPS-1 vua 5 bit voi STEPS >= 1; tong nhan 65 bit bo bit cao nhu chu y (shift phai 1)
+lint_off -rule WIDTHTRUNC -file "*rv32i_core.v" -lines 303
+lint_off -rule WIDTHTRUNC -file "*rv32i_core.v" -lines 418
+lint_off -rule WIDTHTRUNC -file "*rv32i_core.v" -lines 425
+
+
+// ifid_bhit, if_dec_ill, idex_rs2, idex_imm_op, z_rot[63:32], trap_cause[30:4], acc_strb8[3:0]: tin hieu trung gian hoac bit cao khong dung (trap_cause chi co 4 bit thap + bit ngat)
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 201
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 234
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 589
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 611
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 802
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1110
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1433
+
+// memwb_pc / instr / tst / taddr / tdata / tstrb / tirq: duoc testbench doc qua phan cap (vet RVFI-like), khong co tai trong thiet ke tong hop
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1492-1498
+
+// GHR_BITS = 0 thi ghr rong 1 bit (GB), so sanh chi so voi bien vong lap / bien dem hpm; hang so 12'h323 + hj: hj <= 3; mat na HPM_N bit
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 517
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1375
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1805
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1808
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1812
+
+// ghr <= {ghr, take_branch} la thanh ghi dich (cat bit cao la chu y); z_rot lay 32 bit thap cua phep quay 64 bit
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1351
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1466
+
+// daddr[4:0] / iaddr[13:0]: bus chi giai ma bit cao, bit thap di thang toi ngoai vi / bo nho
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_bus.v" -lines 13
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_bus.v" -lines 32
+
+// wdata / wmask [31:16]: GPIO chi 16 chan
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_gpio.v" -lines 17
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_gpio.v" -lines 25
+
+// best_id / cid so sanh voi bien vong lap i (integer); i < NSRC <= 31
+lint_off -rule WIDTHEXPAND -file "*soc/soc_plic.v" -lines 74
+lint_off -rule WIDTHEXPAND -file "*soc/soc_plic.v" -lines 77
+
+// best_id = j: j < NSRC
+lint_off -rule WIDTHTRUNC -file "*soc/soc_plic.v" -lines 39
+
+// addr / i_addr: bit cao (ngoai 16 KB) va bit byte khong dung, RAM truy cap theo tu
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_ram.v" -lines 8
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_ram.v" -lines 13
+
+// giong soc_ram
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_rom.v" -lines 7
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_rom.v" -lines 9
+
+// dmem_fence / icache_flush: SoC khong co cache nen de ho
+lint_off -rule PINCONNECTEMPTY -file "*soc/soc_top.v" -lines 36
+
+// irq_uart (tong, thay bang irq_uart_rx / irq_uart_tx noi vao PLIC) va sel_rom (ROM chon theo duong lenh)
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_top.v" -lines 29
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_top.v" -lines 40
+
+// wstrb[3:2], wdata[31:16]: thanh ghi UART 16 bit
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_uart.v" -lines 21-22
+
+// con tro FIFO rp / wp rong 4 bit nhung quay vong o RX_DEPTH-1 (< 8) nen luon trong khoang chi so
+lint_off -rule WIDTHTRUNC -file "*soc/soc_uart.v" -lines 52
+lint_off -rule WIDTHTRUNC -file "*soc/soc_uart.v" -lines 104
+
+// ---- cau hinh co tham so (lint.py chay them cac cau hinh -G) ----
+// ham plru_touch / plru_victim: bien cuc bo cua ham (node, lo, half) gan bang '=' la dung; Verilator chi canh bao vi ham duoc goi trong khoi tuan tu
+lint_off -rule BLKSEQ -file "*rv32_dcache.v" -lines 93-97
+lint_off -rule BLKSEQ -file "*rv32_icache.v" -lines 80-84
+// WAYS > 1: fs = q_head + j, tru WBUF khi vuot (tran so co chu y), q_head / fs rong QB bit
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 131
+lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 158
+lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 158
+// ENABLE_C la tham so 32 bit dung lam dieu kien generate (0 / 1)
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 238
+
+// ---- PMP (rv32im_pipeline.v): so sanh dia chi CSR 12 bit voi (hang so + chi so vong lap kieu integer) ----
+// chi so pk / pw < PMP_N <= 16 nen tong luon nam trong 12 bit; pmp_wcfg la bien tam cua vong lap, gan bang '=' roi doc ngay trong cung nhanh
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1913
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1914
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1925
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1930
+lint_off -rule BLKSEQ -file "*rv32im_pipeline.v" -lines 1926-1927
+// ls_end: khi MISALIGNED = 0 chi dung ea, phan cong them bi bo; bit thap khong tham gia truy cap PMP (so sanh tren ea[31:2])
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1843
+
+// ---- S/U mode (rv32im_pipeline.v): so sanh quyen CSR csr_addr[9:8] > priv; khi SU = 0 priv co dinh nen Verilator thay so sanh bang hang so ----
+lint_off -rule CMPCONST -file "*rv32im_pipeline.v" -lines 991
+
+// ---- Sv32 MMU (rv32im_pipeline.v): cac tin hieu chi dung khi MMU != 0 hoac chi dung mot phan bit ----
+// i_fl: cac bit co co (D/A/U/...) khong deu duoc doc; idex_ppa / idex_ppa2 chi dung khi MMU != 0; mmu_* la cong ra cua khoi MMU,
+// phan bit cao cua mmu_maddr (34 bit) va mem_busy chi dung o cau hinh co MMU; ppa2 / ls_end khi MMU = 0 hoac MISALIGNED = 0 chi dung mot nua
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 220
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 599
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1069-1071
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1846
+
+// ---- TAGE (rv32im_pipeline.v): thanh ghi pipeline cua bo du doan TAGE chi duoc doc khi bo du doan nay bat; o cau hinh tat chung la tin hieu khong dung ----
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1293-1294

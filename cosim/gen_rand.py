@@ -10,8 +10,7 @@ Rang buoc de chuong trinh luon ket thuc va Spike / RTL cung xac dinh:
     x27 khong nam trong nhom thanh ghi du lieu) va ham la (goi bang jal, quay lai bang ret), toi da 3 tang long nhau
   - con tro bo nho x29 (dau vung dem) va x2 (giua vung dem) khong bao gio bi ghi de; moi truy cap bo nho di qua chung
     (hoac qua x24 = x29 + offset tinh san), nen khong co dia chi hoang
-  - bo xu ly trap o mtvec bo qua lenh gay trap (tinh do dai 2 / 4 byte tu chinh lenh), chi doc mtval khi cause la 0 / 4 / 6
-    (cac truong hop dac ta bat buoc mtval = dia chi; cause 2 va 3 cho phep 0 hoac gia tri khac nen khong so)
+  - bo xu ly trap o mtvec bo qua lenh gay trap (tinh do dai 2 / 4 byte tu chinh lenh), doc mtval o moi cause: Spike va RTL cung de mtval = lenh (cause 2; 16 bit cho lenh nen), pc (cause 3), 0 (cause 11), dia chi (0 / 4 / 6)
   - khong bat ngat: mie chi ghi 0 (Spike co CLINT, mtimecmp khoi dau 0 nen MTIP luon bat), khong doc mip
 Thanh ghi: x0, x1 (ra, chi duoc ghi trong than chinh va boi lenh goi), x2 (sp = dem + 2048), x3..x23 nhom du lieu,
 x24 (dich nhay gian tiep), x25 / x28 (luu ra khi ham goi ham), x26 / x27 (dem vong lap), x29 (dem), x30 / x31 (bo xu ly trap).
@@ -720,10 +719,6 @@ class Gen:
         # can le 4 trong che do rvc: o che do norvc gas khong the them dem 2 byte khi lenh truoc nam o dia chi 2 mod 4
         h = ["    .option push", "    .option rvc", "    .balign 4", "    .option pop", "trap_handler:",
              "    csrr x31, mcause",
-             "    andi x30, x31, 1",
-             "    bnez x30, 1f",
-             "    addi x30, x31, -2",
-             "    beqz x30, 1f",
              "    csrr x30, mtval",
              "1:  csrr x30, mstatus",
              "    csrr x31, mepc",

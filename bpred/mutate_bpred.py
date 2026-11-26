@@ -53,7 +53,7 @@ MUTATIONS = [
 
 def run(rep, how):
     if how == "rand":
-        cmd = [sys.executable, os.path.join(rep, "verify", "run_verify.py"), "--pipem", "--bpstress", "--n", "40"]
+        cmd = [sys.executable, os.path.join(rep, "verify", "run_verify.py"), "--pipem", "--bpstress", "--stop-on-fail", "--n", "40"]
     else:
         cmd = [sys.executable, os.path.join(rep, "bpred", "perf_bpred.py"), "--check"]
     try:
