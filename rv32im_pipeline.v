@@ -200,6 +200,7 @@ module rv32im_pipeline #(
     reg         ifid_c;                    // lenh o ID la lenh nen 16 bit
     reg         ifid_bp, ifid_bhit, ifid_ctr;  // du doan cua IF cho lenh o ID (xem "Du doan nhanh")
     reg  [31:0] ifid_bpt;
+    reg  [31:0] ifid_tgt;
     reg  [5:0]  ifid_pidx;
     reg  [TMW-1:0] ifid_tmeta;             // TAGE: chi so / tag / provider luc du doan (mang toi luc cap nhat)
     reg         ifid_ipf, ifid_iaf, ifid_ipf2;     // MMU: loi dich dia chi fetch
@@ -282,6 +283,8 @@ module rv32im_pipeline #(
         spl_pa <= i_pa[31:0];
     end
 
+    wire [31:0] if_immb = {{20{if_dec[31]}}, if_dec[7], if_dec[30:25], if_dec[11:8], 1'b0};
+    wire [31:0] if_immj = {{12{if_dec[31]}}, if_dec[19:12], if_dec[20], if_dec[30:21], 1'b0};
     // Truong du lieu cua IF/ID (pc, lenh) khong bi redirect dieu khien enable: lenh bi huy da duoc danh dau bang
     // ifid_valid = 0. Nho vay tin hieu redirect (ket qua so sanh nhanh o EX) khong phai toi hang chuc flip-flop nay.
     always @(posedge clk) begin
@@ -292,6 +295,7 @@ module rv32im_pipeline #(
             ifid_c     <= if_c & ~if_tfault;
             ifid_bp    <= if_pred & ~if_tfault;   // IF da nhay theo BTB
             ifid_bpt   <= if_ptgt;
+            ifid_tgt   <= pc + ((if_dec[6:0] == 7'b1101111) ? if_immj : if_immb);   // dich JAL / nhanh (id_target)
             ifid_bhit  <= btb_hit;
             ifid_ctr   <= if_ctr;            // huong do bang dem doan (doc o IF)
             ifid_pidx  <= if_pidx;
@@ -527,13 +531,10 @@ module rv32im_pipeline #(
     wire id_ret   = legal_jalr & link_rs1 & ~(link_rd & (rd == rs1));     // bang goi y: lay ra RAS
     wire id_ctl   = is_jal | legal_branch | legal_jalr;
     wire [31:0] id_seq = ifid_pc + (ifid_c ? 32'd2 : 32'd4);
-    assign id_target   = ifid_pc + imm;                       // imm da chon imm_b / imm_j theo opcode
-    // BTB dich sai: ifid_bpt != ifid_pc + imm, kiem khong can bo cong (so sanh tong khong lan nho): a + b == c khi
-    // va chi khi moi bit a ^ b ^ c bang nho vao suy tu bit duoi, nho = (a & b) | ((a | b) & ~c). Do sau co dinh thay
-    // cho chuoi nho 32 bit roi so sanh, vi duong nay noi tiep vao enable cua pc (redirect o ID).
-    wire [31:0] tgt_k   = {(ifid_pc[30:0] & imm[30:0]) | ((ifid_pc[30:0] | imm[30:0]) & ~ifid_bpt[30:0]), 1'b0};
-    wire        tgt_ok  = ((ifid_pc ^ imm ^ ifid_bpt) == tgt_k);                      // ifid_bpt == id_target
-    wire id_fix_tgt = ifid_bp & (is_jal | legal_branch) & ~tgt_ok;                   // BTB dich sai
+    // dich JAL / nhanh = pc + imm_j / imm_b, cong san o IF (ifid_tgt): bo cong 32 bit sau giai ma o ID nam noi tiep
+    // truoc pc (ID nhay som) va la duong tham nhat cua tang ID; o IF no chi noi sau bo giai nen.
+    assign id_target   = ifid_tgt;
+    wire id_fix_tgt = ifid_bp & (is_jal | legal_branch) & (ifid_bpt != id_target);   // BTB dich sai
     wire id_fix_seq = ifid_bp & ~id_ctl;                                             // BTB trung nham
     wire id_late    = ~ifid_bp & (is_jal | (legal_branch & ifid_ctr) | (id_ret & ras_ok & (RAS_N > 0)));
     wire id_pred_taken = legal_branch & (ifid_bp | ifid_ctr);
