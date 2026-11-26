@@ -136,6 +136,14 @@ jobs:
         run: |
           pip install -q --break-system-packages z3-solver || pip install -q z3-solver
           bash formal/div/run.sh
+      - name: Liveness co WFI (mo hinh ngat cong bang)
+        run: CFG=formal/checks_wfi.cfg WORK=/tmp/formal-wfi bash formal/run.sh run '^liveness_ch0$'
+      - name: "MISALIGNED = 1 (load/store lech chay bang phan cung) - 8 check insn + monitor muc bus"
+        run: CFG=formal/checks_misal.cfg WORK=/tmp/formal-misal JOBS=$(nproc) bash formal/run.sh run '^insn_(lb|lbu|lh|lhu|lw|sb|sh|sw)_ch0$' '^mon_misal_ch0$'
+      - name: Cache lenh / du lieu (k-quy nap tren RTL, 5 + 5 cau hinh, 18 dot bien)
+        run: bash formal/cache/run.sh
+      - name: Ghep nhan/chia vao pipeline (done that == done ALTOPS, khong phu thuoc toan hang, 2 dot bien)
+        run: bash formal/stitch/run.sh
       - name: Luu log
         if: always()
         uses: actions/upload-artifact@v4
@@ -144,6 +152,7 @@ jobs:
           path: |
             /tmp/formal-work/results.txt
             /tmp/formal-work/riscv-formal/cores/rv32im_pipeline/checks/*.log
+            /tmp/formal-misal/results.txt
 
   cosim:
     # So tung lenh voi Spike. Spike duoc build tu ma nguon (ghim phien ban) va luu cache giua cac lan chay.

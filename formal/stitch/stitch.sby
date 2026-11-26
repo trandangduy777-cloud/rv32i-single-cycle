@@ -1,0 +1,17 @@
+[options]
+mode bmc
+depth 60
+
+[engines]
+smtbmc boolector
+
+[script]
+read_verilog -formal rv32i_core.v
+read_verilog -formal -D RISCV_FORMAL_ALTOPS rv32m_alt.v
+read_verilog -formal stitch_harness.v
+prep -top stitch_harness
+
+[files]
+rv32i_core.v
+rv32m_alt.v
+stitch_harness.v

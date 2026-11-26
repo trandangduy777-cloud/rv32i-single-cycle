@@ -1,0 +1,26 @@
+[tasks]
+w1
+w2
+w4
+u2
+big
+
+[options]
+mode prove
+depth 6
+
+[engines]
+smtbmc boolector
+
+[script]
+read_verilog -formal -D RISCV_FORMAL_CACHE -D RISCV_FORMAL_CACHE_INV rv32_dcache.v dcache_harness.v
+w1: chparam -set LINES 4 -set WORDS 2 -set WAYS 1 -set WBUF 1 dcache_harness
+w2: chparam -set LINES 4 -set WORDS 2 -set WAYS 2 -set WBUF 2 dcache_harness
+w4: chparam -set LINES 4 -set WORDS 4 -set WAYS 2 -set WBUF 3 dcache_harness
+u2: chparam -set LINES 4 -set WORDS 2 -set WAYS 2 -set WBUF 2 -set CMASK 32'h0000_0100 -set CBASE 32'h0 dcache_harness
+big: chparam -set LINES 8 -set WORDS 4 -set WAYS 4 -set WBUF 4 dcache_harness
+prep -top dcache_harness
+
+[files]
+../../rv32_dcache.v
+dcache_harness.v
