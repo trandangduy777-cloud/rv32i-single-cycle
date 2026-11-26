@@ -27,12 +27,16 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
        "so vet ngau nhien voi Spike (19 loi, 8 chuong trinh moi loi) + test co huong csr_mie" "mutation so vet ngau nhien (16 dot bien)" \
        "SoC AXI4 + DMA: interconnect ngau nhien, giao thuc, chuong trinh C, DMA, FreeRTOS" "mutation AXI4 + DMA (55 mutant)")
 
+# Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
+# 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77). Doi nhom bang
+# bien IRQ_CORES_A..D neu them loi. Buoc 16 (mutate_irq_cosim.py, 109 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
+# 21:28 ~ 22-32, 28:42 = 22, 42: = 10 (may 2 nhan cham hon khoang 1,5 lan).
 declare -A SUBNAMES=(
     [13a]="mutation lenh C (so vet Spike)" [13b]="mutation bo nhan song song" [13c]="mutation du doan nhanh"
-    [15a]="so vet ngat voi Spike: loi ${IRQ_CORES_A:-0 2 6}" [15b]="so vet ngat voi Spike: loi ${IRQ_CORES_B:-1 3}"
-    [15c]="so vet ngat voi Spike: loi ${IRQ_CORES_C:-4 5}" [15d]="so vet ngat voi Spike: loi ${IRQ_CORES_D:-7 8}"
-    [16a]="mutation ngat qua Spike, doan 0:14" [16b]="mutation ngat qua Spike, doan 14:28"
-    [16c]="mutation ngat qua Spike, doan 28:42" [16d]="mutation ngat qua Spike, doan 42:")
+    [15a]="so vet ngat voi Spike: loi ${IRQ_CORES_A:-8}" [15b]="so vet ngat voi Spike: loi ${IRQ_CORES_B:-1 3}"
+    [15c]="so vet ngat voi Spike: loi ${IRQ_CORES_C:-6 7 4}" [15d]="so vet ngat voi Spike: loi ${IRQ_CORES_D:-0 2 5}"
+    [16a]="mutation ngat qua Spike, doan 0:14" [16b]="mutation ngat qua Spike, doan 14:21"
+    [16c]="mutation ngat qua Spike, doan 21:42" [16d]="mutation ngat qua Spike, doan 42:")
 name_of() { if [ -n "${SUBNAMES[$1]+x}" ]; then echo "${SUBNAMES[$1]}"; else echo "${NAMES[$1]:-?}"; fi; }
 irq_cores() { for c in $1; do python3 cosim/irq/run_irq_cosim.py --spike "$SPIKE" --core "$c" || return 1; done; }
 
@@ -70,14 +74,14 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     13c) python3 bpred/mutate_bpred.py ;;
     14) python3 cache/mutate_cache.py "$RT" --spike "$SPIKE" ;;
     15) step 15a && step 15b && step 15c && step 15d ;;
-    15a) irq_cores "${IRQ_CORES_A:-0 2 6}" ;;
+    15a) irq_cores "${IRQ_CORES_A:-8}" ;;
     15b) irq_cores "${IRQ_CORES_B:-1 3}" ;;
-    15c) irq_cores "${IRQ_CORES_C:-4 5}" ;;
-    15d) irq_cores "${IRQ_CORES_D:-7 8}" ;;
+    15c) irq_cores "${IRQ_CORES_C:-6 7 4}" ;;
+    15d) irq_cores "${IRQ_CORES_D:-0 2 5}" ;;
     16) step 16a && step 16b && step 16c && step 16d ;;
     16a) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 0:14 ;;
-    16b) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 14:28 ;;
-    16c) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 28:42 ;;
+    16b) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 14:21 ;;
+    16c) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 21:42 ;;
     16d) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 42: ;;
     17) sh soc/sw/build.sh && sh soc/freertos/build.sh && python3 soc/run_soc.py ;;
     18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
