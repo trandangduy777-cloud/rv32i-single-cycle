@@ -29,9 +29,12 @@ EXTRA_CORES = [
     ("RV32IMC khong BTB / RAS (BTBN=0, RASN=0)",
      "-DPIPE_FULL -DRVC -DBTBN=0 -DRASN=0", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"], "rv32imc_zifencei"),
     ("RV32IMC gshare 6 bit + BTB 64 + cache 16x4, tre 1-2",
-     "-DPIPE_FULL -DRVC -DGHRB=6 -DBTBN=64 -DRASN=8 -DCACHE", rc.CACHE_FILES, "rv32imc_zifencei", ["+lat=2", "+seed=27"]),
+     "-DPIPE_FULL -DRVC -DGHRB=6 -DBTBN=64 -DRASN=8 -DCACHE", rc.CACHE_FILES, "rv32imc_zifencei", ["+lat=2", "+seed=27"]),    ("RV32IMC TAGE + BTB 64 + cache 4x2 2 duong, tre 1-5",
+     "-DPIPE_FULL -DRVC -DTAGEON -DBTBN=64 -DRASN=8 -DCACHE -DICL=4 -DICW=2 -DDCL=4 -DDCW=2 -DCWY=2",
+     rc.CACHE_FILES + ["rv32_tage.v"], "rv32imc_zifencei", ["+lat=5", "+seed=29"]),
 ]
-ALL_CORES = list(rc.CORES) + EXTRA_CORES
+# cac loi TAGE them sau vao run_cosim.CORES dat cuoi danh sach de chi so cu (--core, run_vlcov, run_directed) khong doi
+ALL_CORES = [c for c in rc.CORES if "TAGE" not in c[0]] + EXTRA_CORES + [c for c in rc.CORES if "TAGE" in c[0]]
 
 
 def sh(cmd, **kw):

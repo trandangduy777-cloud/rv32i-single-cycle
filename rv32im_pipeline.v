@@ -37,6 +37,12 @@ module rv32im_pipeline #(
     parameter        BTB_N      = 16,            // so muc BTB (luy thua 2, 0 = khong co): du doan dich ngay o IF
     parameter        RAS_N      = 4,             // so muc ngan xep dia chi tra ve (0 = khong co)
     parameter        GHR_BITS   = 0,             // > 0: gshare (lich su toan cuc GHR_BITS bit XOR voi pc); 0: theo pc
+    parameter        TAGE       = 0,             // 1: huong nhanh doan bang TAGE (rv32_tage.v) thay cho bang dem / gshare
+    parameter        TAGE_NT    = 4,             // TAGE: so bang co tag, chi so / tag moi bang, bit chi so bang co so
+    parameter        TAGE_IB    = 6,
+    parameter        TAGE_TB    = 8,
+    parameter        TAGE_BB    = 7,
+    parameter [8*TAGE_NT-1:0] TAGE_HL = {8'd32, 8'd16, 8'd8, 8'd4},   // so bit lich su cua tung bang (bang 0 o byte thap)
     parameter        BTB_TAG    = 10,            // so bit tag cua BTB (nho -> trung nham nhieu; dung de kiem chung)
     parameter        MUL_LAT    = 2,             // nhan: 0 = lap (~18 chu ky), 1 = song song 1 chu ky, 2 = song song 2 tang
     parameter        ZICNTR     = 1,             // 1: bo dem mcycle / minstret (Zicntr) va bo dem su kien (Zihpm)
@@ -183,6 +189,10 @@ module rv32im_pipeline #(
     // ============================================================
     // IF
     // ============================================================
+    // TAGE: rv32_tage.v doc o IF cung luc voi BTB; meta (chi so, tag, provider) di qua IF/ID, ID/EX, EX/MEM toi luc cap
+    // nhat (chu ky sau EX, nhu bang dem). Lich su dich o EX theo nhanh that su chay xong (khong suy doan).
+    localparam TPW = $clog2(TAGE_NT + 1);
+    localparam TMW = (TAGE != 0) ? 3 + 1 + 2 * TPW + TAGE_BB + TAGE_NT * (TAGE_IB + TAGE_TB) : 1;
     reg  [31:0] pc;
     reg         ifid_valid;
     reg  [31:0] ifid_pc, ifid_instr;
@@ -191,6 +201,7 @@ module rv32im_pipeline #(
     reg         ifid_bp, ifid_bhit, ifid_ctr;  // du doan cua IF cho lenh o ID (xem "Du doan nhanh")
     reg  [31:0] ifid_bpt;
     reg  [5:0]  ifid_pidx;
+    reg  [TMW-1:0] ifid_tmeta;             // TAGE: chi so / tag / provider luc du doan (mang toi luc cap nhat)
     reg         ifid_ipf, ifid_iaf, ifid_ipf2;     // MMU: loi dich dia chi fetch
     reg  [31:0] ifid_ppa, ifid_ppa2;               // dia chi vat ly cua lenh va cua nua sau (pc + 2)
 
@@ -284,6 +295,7 @@ module rv32im_pipeline #(
             ifid_bhit  <= btb_hit;
             ifid_ctr   <= if_ctr;            // huong do bang dem doan (doc o IF)
             ifid_pidx  <= if_pidx;
+            ifid_tmeta <= if_tmeta;
             ifid_ipf   <= if_tfault;         // loi dich dia chi fetch (MMU)
             ifid_iaf   <= if_taf;
             ifid_ipf2  <= spl_q;             // loi o nua sau (mtval = pc + 2)
@@ -503,7 +515,9 @@ module rv32im_pipeline #(
     wire             btb_hit = (BTB_N > 0) && btb_v[if_bi] && (btb_tag[if_bi] == if_bt);
     wire [1:0]       if_typ = btb_typ[if_bi];
     wire [BHT_BITS-1:0] if_pidx = pc[PCB +: BHT_BITS] ^ ((GHR_BITS > 0) ? ghr : {GB{1'b0}});
-    wire             if_ctr = bht[if_pidx][1];
+    wire             t_pred;                                 // TAGE (khi TAGE = 1)
+    wire [TMW-1:0]   if_tmeta;
+    wire             if_ctr = (TAGE != 0) ? t_pred : bht[if_pidx][1];
     wire             if_pred = btb_hit & ((if_typ != T_BR) | if_ctr) & ((if_typ != T_RET) | if_ras_ok);
     wire [31:0]      if_ptgt = (if_typ == T_RET) ? if_ras_val : {btb_tgt[if_bi], 1'b0};
 
@@ -570,6 +584,7 @@ module rv32im_pipeline #(
     reg         idex_jp_v;                                    // JALR o EX co du doan dich (BTB/RAS) hay khong
     reg  [31:0] idex_jp_t;
     reg  [5:0]  idex_pidx;                                    // chi so bang dem luc du doan (gshare: kem lich su)
+    reg  [TMW-1:0] idex_tmeta;
     reg  [31:0] idex_pc, idex_instr, idex_rs1_val, idex_rs2_val, idex_imm;
     reg  [4:0]  idex_rs1, idex_rs2, idex_rd;
     reg  [2:0]  idex_funct3;
@@ -680,6 +695,7 @@ module rv32im_pipeline #(
             idex_c       <= ifid_c;
             idex_jp_t    <= id_jp_t;
             idex_pidx    <= ifid_pidx;
+            idex_tmeta   <= ifid_tmeta;
             idex_rs1_val <= rf_rs1;
             idex_rs2_val <= rf_rs2;
             idex_imm     <= imm;
@@ -1274,6 +1290,25 @@ module rv32im_pipeline #(
     wire ex_pop   = idex_jalr & ex_lrs1 & ~(ex_lrd & (idex_rd == idex_rs1));
     wire ex_push  = (idex_jal | idex_jalr) & ex_lrd;
     reg                 exmem_bupd, exmem_btaken;
+    reg                 exmem_tupd;                         // TAGE: nhanh that su chay xong o EX (khong trap)
+    reg  [TMW-1:0]      exmem_tmeta;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) exmem_tupd <= 1'b0;
+        else begin
+            exmem_tupd  <= ex_upd & idex_branch;
+            exmem_tmeta <= idex_tmeta;
+        end
+    end
+    generate if (TAGE != 0) begin : g_tage
+        rv32_tage #(.NT(TAGE_NT), .IB(TAGE_IB), .TB(TAGE_TB), .BB(TAGE_BB), .PCB(PCB), .HL(TAGE_HL)) u_tage (
+            .clk(clk), .rst_n(rst_n),
+            .p_pc(pc), .p_taken(t_pred), .p_meta(if_tmeta),
+            .u_valid(exmem_tupd), .u_taken(exmem_btaken), .u_meta(exmem_tmeta),
+            .h_valid(ex_upd & idex_branch), .h_taken(take_branch));
+    end else begin : g_notage
+        assign t_pred   = 1'b0;
+        assign if_tmeta = 1'b0;
+    end endgenerate
     reg [BHT_BITS-1:0]  exmem_bidx;
     reg                 up_btb, up_inv, up_pop, up_push;
     // trang thai tiep theo cua RAS kien truc (cap nhat dang cho up_pop / up_push), dung chung khi chep sang ban suy doan
