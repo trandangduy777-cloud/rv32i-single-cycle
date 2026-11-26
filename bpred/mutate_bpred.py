@@ -25,7 +25,7 @@ MUTATIONS = [
      "wire id_fix_seq = 1'b0;", "rand"),
     ("ID sua BTB trung nham ve dich thay vi lenh ke tiep", "wire [31:0] id_redir_pc = id_fix_seq ? id_seq :",
      "wire [31:0] id_redir_pc = id_fix_seq ? id_target :", "rand"),
-    ("IF/ID quen co da nhay theo BTB", "ifid_bp    <= if_pred;", "ifid_bp    <= 1'b0;", "rand"),
+    ("IF/ID quen co da nhay theo BTB", "ifid_bp    <= if_pred & ~if_tfault;", "ifid_bp    <= 1'b0;", "rand"),
     ("EX coi nhanh IF da nhay la doan khong nhay", "wire id_pred_taken = legal_branch & (ifid_bp | ifid_ctr);",
      "wire id_pred_taken = legal_branch & ifid_ctr;", "rand"),
     ("JAL khong nhay khi BTB truot", "wire id_late    = ~ifid_bp & (is_jal |", "wire id_late    = ~ifid_bp & (1'b0 |", "rand"),

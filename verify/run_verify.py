@@ -289,8 +289,10 @@ M_CORE_MUTATIONS = [
 # Ban RV32IM khong con id_bubble: redirect chi xoa idex_valid, nen mutation "khong huy lenh o ID" duoc viet lai theo RTL do
 PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
                                                              "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
-                                                             "P: SH sai byte-enable",
+                                                             "P: SH sai byte-enable", "P: dia chi load/store dung rs1 chua forward",
                                                              "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID")] + [
+    # pipeline RV32IM: dia chi load / store tinh rieng (ea, dung chung cho PMP / MMU)
+    ("P: dia chi load/store dung rs1 chua forward", "wire [31:0] ea    = op_a + idex_imm;", "wire [31:0] ea    = idex_rs1_val + idex_imm;"),
     # bo du doan RV32IM (BTB / RAS, xem bpred/): ID sua hoac nhay som qua id_fix_tgt / id_fix_seq / id_late
     ("B: ID nhay som khi dang stall load-use", "assign id_redirect = ifid_valid & ~stall & (id_fix_tgt | id_fix_seq | id_late);",
      "assign id_redirect = ifid_valid & (id_fix_tgt | id_fix_seq | id_late);"),

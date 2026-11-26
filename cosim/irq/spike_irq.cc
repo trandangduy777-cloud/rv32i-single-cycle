@@ -80,7 +80,7 @@ static bool parse(const std::string& l, Rec& r) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "dung: %s <bin> <vet RTL> [isa] [che do: M | MSU]\n", argv[0]); return 2; }
+    if (argc < 3) { fprintf(stderr, "dung: %s <bin> <vet RTL> [isa] [che do: M | MSU] [sv32]\n", argv[0]); return 2; }
     const char* isa = argc > 3 ? argv[3] : "rv32imc_zicsr_zifencei";
     const char* privs = argc > 4 ? argv[4] : "M";
     Sim sim;
@@ -107,6 +107,7 @@ int main(int argc, char** argv) {
     FILE* devnull = fopen("/dev/null", "w");
     processor_t p(isa, privs, &sim.cfg, &sim, 0, false, devnull, std::cerr);
     sim.harts[0] = &p;
+    if (argc > 5 && !strcmp(argv[5], "sv32")) p.set_max_vaddr_bits(32);   // MMU Sv32 (truoc reset: tao lai CSR)
     p.reset();
     p.enable_log_commits();
     state_t* s = p.get_state();
@@ -132,10 +133,35 @@ int main(int argc, char** argv) {
         printf("   RTL: %s\n", tr[i].line.c_str());
         return 1;
     };
+    // doc ma lenh tai pc de so voi vet RTL: khi dang dich dia chi (Sv32, che do < M) thi tu duyet bang trang trong RAM
+    // (khong kiem quyen; loi -> 0), moi nua 16 bit dich rieng vi lenh 32 bit co the vat qua ranh gioi trang
+    auto rd16 = [&](reg_t pa) -> uint32_t {
+        if (pa < BASE || pa + 2 > BASE + MEMSZ) return 0;
+        uint16_t h; memcpy(&h, &sim.ram[pa - BASE], 2);
+        return h;
+    };
+    auto xlate = [&](reg_t va, reg_t& pa) -> bool {
+        reg_t satp = s->satp->read();
+        if (s->prv == PRV_M || !(satp & 0x80000000u)) { pa = va; return true; }
+        reg_t a = (satp & 0x3fffff) << 12;
+        for (int lv = 1; lv >= 0; lv--) {
+            reg_t pte_a = a + (((va >> (12 + 10 * lv)) & 0x3ff) << 2);
+            if (pte_a < BASE || pte_a + 4 > BASE + MEMSZ) return false;
+            uint32_t pte; memcpy(&pte, &sim.ram[pte_a - BASE], 4);
+            if (!(pte & 1)) return false;
+            reg_t ppn = pte >> 10;
+            if (pte & 0xe) { pa = lv ? (((ppn >> 10) << 22) | (va & 0x3fffff)) : ((ppn << 12) | (va & 0xfff)); return true; }
+            a = ppn << 12;
+        }
+        return false;
+    };
     auto fetch = [&](reg_t pc) -> uint32_t {
-        if (pc < BASE || pc + 4 > BASE + MEMSZ) return 0;
-        uint32_t w; memcpy(&w, &sim.ram[pc - BASE], 4);
-        return (w & 3) == 3 ? w : (w & 0xffff);
+        reg_t pa;
+        if (!xlate(pc, pa)) return 0;
+        uint32_t lo = rd16(pa);
+        if ((lo & 3) != 3) return lo;
+        if (!xlate(pc + 2, pa)) return lo;
+        return lo | (rd16(pa) << 16);
     };
     char buf[256];
     for (size_t i = 0; i < tr.size(); i++) {
@@ -186,7 +212,10 @@ int main(int argc, char** argv) {
                        (s->prv == PRV_S && (uint32_t)s->pc == (st & ~(reg_t)3) && (uint32_t)s->sepc->read() == pc0);
             (void)ins0;
             if (exc) {
-                if (pc0 != r.pc || w != r.ins || r.rd != 0 || r.st != 0) {
+                // loi fetch (ma 1 / 12): ma lenh khong doc duoc, RTL in gia tri bat ky -> khong so ma lenh
+                reg_t ec = (s->prv == PRV_S && (uint32_t)s->sepc->read() == pc0) ? s->scause->read() : s->mcause->read();
+                bool ifault = ec == 1 || ec == 12;
+                if (pc0 != r.pc || (!ifault && w != r.ins) || r.rd != 0 || r.st != 0) {
                     snprintf(buf, sizeof buf, "Spike gap exception (mcause %lx) tai pc=%08lx ins=%08x",
                              (long)s->mcause->read(), (long)pc0, w);
                     return fail(i, buf);
@@ -235,7 +264,9 @@ int main(int argc, char** argv) {
                     snprintf(buf, sizeof buf, "Spike store [%08lx](%uB)=%lx", (long)a, (unsigned)sz, (long)(v & m));
                     return fail(i, buf);
                 }
-                if ((uint32_t)a == TOHOST) {
+                reg_t a_pa = a;
+                if (!xlate(a, a_pa)) a_pa = a;          // Spike ghi dia chi ao: TOHOST so theo dia chi vat ly
+                if ((uint32_t)a_pa == TOHOST) {
                     printf("IRQSTAT instr=%ld irq_ext=%ld irq_soft=%ld irq_timer=%ld mip_reads=%ld dev_loads=%ld "
                            "dev_stores=%ld exceptions=%ld maxlag=%ld tohost=%lu\n", n_ins + 1, n_irq[0x8000000b], n_irq[0x80000003],
                            n_irq[0x80000007], n_patch, sim.n_devld, sim.n_devst, n_exc, maxlag_seen, (unsigned long)v);

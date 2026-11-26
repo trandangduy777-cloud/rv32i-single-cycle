@@ -8,7 +8,7 @@ Spike duoc dung nhu thu vien (can ban Spike cai kem header va libriscv, vd. /opt
 Dung (tu thu muc goc repo): python3 cosim/irq/run_irq_cosim.py [--spike /opt/spike/bin/spike] [--quick]
                             [--core <chuoi>] [--only <chuoi>] [--seeds N] [--stop-on-fail]
 """
-import argparse, os, re, shutil, subprocess, sys, tempfile, time
+import argparse, hashlib, os, re, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(ROOT, "coremark"))
 import run_cosim as rc            # noqa: E402
 
 BASE, TOHOST = rc.BASE, rc.TOHOST
-PIPE = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_mtimer.v"]
+PIPE = ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v", "rv32_mtimer.v", "rv32_mmu.v"]
 CACHE = PIPE + ["rv32_icache.v", "rv32_dcache.v", "rv32_bus_arbiter.v"]
 C22 = "-DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2"
 # (ten, co -D, file RTL, ISA cua loi, plusargs)
@@ -31,8 +31,10 @@ CORES = [
     ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DRVC -DBTBN=4 -DRASN=2 -DGHRB=2 -DBTAG=1 " + C22, CACHE, "rv32imc",
      ["+lat=6", "+irqdly=500"]),
     # che do Supervisor / User (SU = 1): "xsu" chi la nhan noi bo (chuong trinh can S / U), Spike chay voi che do MSU
-    ("RV32IMC + S/U", "-DRVC -DSU", PIPE, "rv32imc_xsu", []),
+    ("RV32IMC + S/U + MMU Sv32", "-DRVC -DSU -DMMUON -DBIGMEM", PIPE, "rv32imc_xsu_xmmu", []),
     ("RV32IM + S/U + cache 2x2, tre 1-8", "-DSU " + C22, CACHE, "rv32im_xsu", ["+lat=8", "+irqdly=600"]),
+    ("RV32IMC + S/U + MMU Sv32 + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM " + C22, CACHE, "rv32imc_xsu_xmmu",
+     ["+lat=8", "+irqdly=600"]),
 ]
 
 
@@ -117,6 +119,7 @@ SECTIONS {{
   . = ALIGN(0x1000);
   .data : {{ *(.data) }}
   .bss : {{ *(.bss) }}
+  _end = .;
   .tohost 0x{TOHOST:x} : {{ *(.tohost) }}
 }}
 """)
@@ -129,6 +132,56 @@ def build_rt_su(rt, suite, test, march, tmp):
     elf = os.path.join(tmp, name + ".elf")
     r = rc.sh(rc.GCC + [f"-march={march}_zicsr_zifencei", "-I", env, "-I", os.path.join(rt, "isa", "macros", "scalar"),
                         "-T", ld, os.path.join(rt, "isa", suite, test + ".S"), "-o", elf])
+    if r.returncode:
+        sys.exit(r.stderr)
+    return name, elf
+
+
+def build_mmu(march, tmp):
+    name = f"mmu-{march[4:]}"
+    elf = os.path.join(tmp, name + ".elf")
+    ld = os.path.join(tmp, "irq80.ld")
+    open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
+    r = rc.sh(rc.GCC + [f"-march={march}_zicsr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE, "-T", ld,
+                        os.path.join(HERE, "mmu.S"), "-o", elf])
+    if r.returncode:
+        sys.exit(r.stderr)
+    return name, elf
+
+
+# riscv-tests moi truong "v" (bo nho ao Sv32 that: bang trang, phan trang theo yeu cau qua loi trang, chay o U) va
+# rv32si-dirty: chi loi co MMU
+RT_V = ["add", "addi", "and", "andi", "auipc", "beq", "bge", "bgeu", "blt", "bltu", "bne", "jal", "jalr", "lb", "lbu",
+        "lh", "lhu", "lui", "lw", "or", "ori", "sb", "sh", "simple", "sll", "slli", "slt", "slti", "sltiu", "sltu",
+        "sra", "srai", "srl", "srli", "sub", "sw", "xor", "xori", "ld_st", "st_ld"]
+
+
+def build_rt_v(rt, test, march, tmp):
+    rt_env(rt, tmp)
+    env = os.path.join(rt, "env", "v")
+    if not os.path.isfile(os.path.join(env, "vm.c")):
+        env = os.path.join(tmp, "riscv-test-env", "v")
+    ld = os.path.join(tmp, "rt_su.ld")
+    name = f"rv32ui-v-{test}" + ("-c" if "c" in march[4:] else "")
+    elf = os.path.join(tmp, name + ".elf")
+    src = os.path.join(rt, "isa", "rv32ui", test + ".S")
+    if not os.path.isfile(src):
+        return None
+    ent = int(hashlib.md5(name.encode()).hexdigest()[:7], 16)
+    shim = os.path.join(tmp, "libc_shim")           # trinh bien dich khong co newlib: khai bao toi thieu cho vm.c
+    if not os.path.isdir(shim):
+        os.makedirs(shim)
+        open(os.path.join(shim, "string.h"), "w").write(
+            "#include <stddef.h>\nvoid* memcpy(void*, const void*, size_t);\nvoid* memset(void*, int, size_t);\n"
+            "size_t strlen(const char*);\nint strcmp(const char*, const char*);\nint memcmp(const void*, const void*, size_t);\n"
+            "char* strcpy(char*, const char*);\nlong atol(const char*);\n")
+        open(os.path.join(shim, "ctype.h"), "w").write("#define isspace(c) ((c) == ' ' || ((c) >= 9 && (c) <= 13))\n"
+                                                       "#define isdigit(c) ((c) >= '0' && (c) <= '9')\n")
+        open(os.path.join(shim, "stdio.h"), "w").write("")
+    # vm.c co ma lenh fssr lam du lieu (nhan dien test FP): bien dich them F, ma C cua vm.c khong dung so thuc
+    r = rc.sh(rc.GCC + [f"-march={march}f_zicsr_zifencei", f"-DENTROPY=0x{ent:x}", "-std=gnu99", "-O2", "-I", shim, "-I", env,
+                        "-I", os.path.join(rt, "isa", "macros", "scalar"), "-T", ld, os.path.join(env, "entry.S"),
+                        os.path.join(env, "vm.c"), os.path.join(env, "string.c"), src, "-o", elf])
     if r.returncode:
         sys.exit(r.stderr)
     return name, elf
@@ -188,6 +241,7 @@ def main():
              build_pmp("rv32im", tmp) + ("rv32im",), build_pmp("rv32imc", tmp) + ("rv32imc",),
              build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_su("rv32im", tmp) + ("rv32im_xsu",), build_su("rv32imc", tmp) + ("rv32imc_xsu",),
+             build_mmu("rv32im", tmp) + ("rv32im_xsu_xmmu",), build_mmu("rv32imc", tmp) + ("rv32imc_xsu_xmmu",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),
@@ -196,6 +250,12 @@ def main():
         for suite, t in RT_SU:
             for m in ("rv32im", "rv32imc"):
                 progs.append(build_rt_su(a.riscv_tests, suite, t, m, tmp) + (m + "_xsu",))
+        for m in ("rv32im", "rv32imc"):
+            progs.append(build_rt_su(a.riscv_tests, "rv32si", "dirty", m, tmp) + (m + "_xsu_xmmu",))
+        for t in RT_V:
+            v = build_rt_v(a.riscv_tests, t, "rv32im", tmp)
+            if v:
+                progs.append(v + ("rv32im_xsu_xmmu",))
     cores = CORES
     seeds = a.seeds
     if a.quick:
@@ -235,8 +295,9 @@ def main():
         cyc = re.search(r"DONE cycles=(\d+)", open(trf).read()[-4000:])
         base, *z = isa.split("_")
         privs = "MSU" if "xsu" in z else "M"
-        z = [e for e in z if e != "xsu"]
-        r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicntr", "zicsr", "zifencei", "zihpm"])), privs])
+        mmu = ["sv32"] if "xmmu" in z else []
+        z = [e for e in z if e not in ("xsu", "xmmu")]
+        r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicntr", "zicsr", "zifencei", "zihpm"])), privs] + mmu)
         st = re.search(r"IRQSTAT (.*)", r.stdout)
         tag = f"[{j + 1}/{len(jobs)}] {name} / {title} / seed {sd}"
         if r.returncode or not st:

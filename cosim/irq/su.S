@@ -107,6 +107,14 @@ _start:
     srli    t3, t3, 2
     li      t2, 0x803FF
     sub     t2, t2, t3
+    li      t0, -1                      // co MMU (satp ghi duoc): them loi trang 12, 13, 15
+    csrw    satp, t0
+    csrr    s7, satp                    // s7 != 0: co MMU
+    csrw    satp, zero
+    beqz    s7, 1f
+    li      t0, 0xB000
+    or      t2, t2, t0
+1:
     li      a0, 0x15
     bne     t1, t2, fail
     csrw    medeleg, zero
@@ -118,13 +126,22 @@ _start:
     bne     t1, t2, fail
     csrw    mideleg, zero
     li      t0, -1
-    csrw    satp, t0                    // khong co MMU: satp = 0
+    csrw    satp, t0                    // khong co MMU: satp = 0; co MMU: ghi duoc het
     csrr    t1, satp
+    csrw    satp, zero
     li      a0, 0x17
-    bnez    t1, fail
+    beqz    s7, 2f
+    bne     t1, t0, fail
+    j       3f
+2:  bnez    t1, fail
+3:
     csrw    sstatus, t0
     csrr    t1, sstatus
     li      t2, 0x80006122
+    beqz    s7, 4f
+    li      t3, 0xC0000                 // co MMU: SUM, MXR
+    or      t2, t2, t3
+4:
     li      a0, 0x18
     bne     t1, t2, fail
     csrw    sstatus, zero

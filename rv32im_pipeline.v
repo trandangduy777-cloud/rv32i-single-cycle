@@ -43,6 +43,8 @@ module rv32im_pipeline #(
     parameter        HPM_N      = 4,             // so bo dem su kien mhpmcounter3.. that su dem (0-29; con lai doc 0)
     parameter        PMP_N      = 8,             // so muc PMP (0-16), do mien 4 byte; muc khoa (L) ap dung ca che do M
     parameter        SU         = 0,             // 1: them che do Supervisor / User (uy quyen trap, SRET, CSR S, PMP cho S/U)
+    parameter        MMU        = 0,             // 1 (can SU = 1): MMU Sv32 (TLB TLB_N muc + duyet bang trang), SFENCE.VMA
+    parameter        TLB_N      = 8,
     // Mo rong thao tac bit va lenh dieu kien (giai ma o ID, thuc thi 1 chu ky o EX, xem "Zba/Zbb/Zbs/Zbc/Zicond"):
     // mac dinh tat het (RTL, so lieu flow va CI cu giu nguyen); lenh cua phan mo rong dang tat la lenh bat hop le (trap 2)
     parameter        ZBA        = 0,             // sh1add sh2add sh3add
@@ -189,17 +191,43 @@ module rv32im_pipeline #(
     reg         ifid_bp, ifid_bhit, ifid_ctr;  // du doan cua IF cho lenh o ID (xem "Du doan nhanh")
     reg  [31:0] ifid_bpt;
     reg  [5:0]  ifid_pidx;
+    reg         ifid_ipf, ifid_iaf, ifid_ipf2;     // MMU: loi dich dia chi fetch
+    reg  [31:0] ifid_ppa, ifid_ppa2;               // dia chi vat ly cua lenh va cua nua sau (pc + 2)
 
-    assign imem_addr = pc;
+    // ---- dich dia chi lenh (MMU = 1, satp.MODE = Sv32, che do < M): TLB tra cuu to hop tren pc ----
+    // TLB truot: IF dua bong bay va xin duyet bang trang. Loi trang / loi truy cap khi duyet, hoac PTE khong cho
+    // thuc thi (X, U, A): IF dua xuong mot NOP mang co loi (ifid_ipf), toi EX thi trap ma 12 / 1. Lenh 32 bit nam vat
+    // qua ranh gioi trang (chi khi co C): lay 2 lan, nua sau dich rieng tu pc + 2 (giong Spike lay tung nua 16 bit).
+    wire        xi;                                  // dich dia chi fetch (gan o phan CSR)
+    wire        mmu_flush;
+    reg         spl_q;                               // dang lay nua sau cua lenh vat trang
+    reg  [15:0] spl_lo;
+    reg  [31:0] spl_pa;
+    wire [31:0] i_va = spl_q ? pc + 32'd2 : pc;
+    wire        i_hit;
+    wire [33:0] i_pa;
+    wire [5:0]  i_fl;                                // {D, A, U, X, W, R}
+    reg         ifr_v, ifr_af;                       // lan duyet cho fetch da loi
+    reg  [31:0] ifr_va;
+    wire [1:0]  priv;
+    wire        i_rec  = ifr_v & (ifr_va == i_va);
+    wire        i_bad  = ~i_fl[2] | ~i_fl[4] | ((priv == 2'd1) ? i_fl[3] : ~i_fl[3]);   // X, A, U (S khong chay trang U)
+    wire        if_tfault = xi & ((i_hit & (i_bad | (i_pa[33:32] != 2'b00))) | i_rec);
+    wire        if_taf    = i_rec ? ifr_af : ~i_bad;                 // loi truy cap (ma 1) thay vi loi trang (ma 12)
+    wire        i_need    = xi & ~i_hit & ~i_rec;
+    assign imem_addr = xi ? i_pa[31:0] : pc;
+    wire [31:0] if_word = spl_q ? {imem_data[15:0], spl_lo} : imem_data;
 
     // giai nen o IF: lenh nen chi ton 1 tang mach to hop truoc thanh ghi IF/ID
     wire [31:0] if_dec;
     wire        if_dec_ill;
-    wire        if_c = (ENABLE_C != 0) && (imem_data[1:0] != 2'b11);
+    wire        if_c = (ENABLE_C != 0) && !spl_q && (imem_data[1:0] != 2'b11);
+    wire        spl_start = (ENABLE_C != 0) & (MMU != 0) & xi & ~spl_q & i_hit & ~if_tfault & (pc[11:1] == 11'h7FF) &
+                            (imem_data[1:0] == 2'b11);
     generate if (ENABLE_C) begin : g_rvc
-        rv32c_decompress u_rvc (.in(imem_data), .out(if_dec), .illegal(if_dec_ill));
+        rv32c_decompress u_rvc (.in(if_word), .out(if_dec), .illegal(if_dec_ill));
     end else begin : g_no_rvc
-        assign if_dec = imem_data;
+        assign if_dec = if_word;
         assign if_dec_ill = 1'b0;
     end endgenerate
 
@@ -217,12 +245,30 @@ module rv32im_pipeline #(
             ifid_valid <= 1'b0;
         end else if (stall | ex_stall) begin
             // ID hoac EX dang dung: giu lenh o IF/ID
-        end else if (!imem_ready) begin       // cache lenh chua tra: giu pc, dua bong bay vao ID
+        end else if (if_tfault) begin         // loi dich dia chi fetch: dua NOP mang co loi, giu pc (EX se trap)
+            ifid_valid <= 1'b1;
+        end else if (!imem_ready || i_need) begin   // cache lenh chua tra / TLB truot: giu pc, dua bong bay vao ID
+            ifid_valid <= 1'b0;
+        end else if (spl_start) begin         // lenh vat trang: giu nua dau, lan sau lay nua sau tu pc + 2
             ifid_valid <= 1'b0;
         end else begin
             pc         <= if_pred ? if_ptgt : pc + (if_c ? 32'd2 : 32'd4);   // BTB doan nhay: sang dich ngay
             ifid_valid <= 1'b1;
         end
+    end
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)                                     spl_q <= 1'b0;
+        else if (frz)                                   ;
+        else if (redirect_q || (id_redirect & ~ex_stall) || mmu_flush) spl_q <= 1'b0;
+        else if (stall | ex_stall)                      ;
+        else if (if_tfault)                             ;
+        else if (!imem_ready || i_need)                 ;
+        else if (spl_start)                             spl_q <= 1'b1;
+        else                                            spl_q <= 1'b0;
+    end
+    always @(posedge clk) if (!spl_q && !frz) begin    // chi dung khi spl_q = 1, tuc gia tri cua chu ky spl_start
+        spl_lo <= imem_data[15:0];
+        spl_pa <= i_pa[31:0];
     end
 
     // Truong du lieu cua IF/ID (pc, lenh) khong bi redirect dieu khien enable: lenh bi huy da duoc danh dau bang
@@ -230,14 +276,19 @@ module rv32im_pipeline #(
     always @(posedge clk) begin
         if (!(stall | ex_stall | frz)) begin
             ifid_pc    <= pc;
-            ifid_instr <= if_dec;             // lenh nen khong hop le -> 0 (cung bi bo giai ma 32 bit bao illegal)
-            ifid_raw   <= if_c ? {16'd0, imem_data[15:0]} : imem_data;
-            ifid_c     <= if_c;
-            ifid_bp    <= if_pred;           // IF da nhay theo BTB
+            ifid_instr <= if_tfault ? NOP : if_dec;   // lenh nen khong hop le -> 0 (bo giai ma 32 bit bao illegal)
+            ifid_raw   <= if_c ? {16'd0, if_word[15:0]} : if_word;
+            ifid_c     <= if_c & ~if_tfault;
+            ifid_bp    <= if_pred & ~if_tfault;   // IF da nhay theo BTB
             ifid_bpt   <= if_ptgt;
             ifid_bhit  <= btb_hit;
             ifid_ctr   <= if_ctr;            // huong do bang dem doan (doc o IF)
             ifid_pidx  <= if_pidx;
+            ifid_ipf   <= if_tfault;         // loi dich dia chi fetch (MMU)
+            ifid_iaf   <= if_taf;
+            ifid_ipf2  <= spl_q;             // loi o nua sau (mtval = pc + 2)
+            ifid_ppa   <= spl_q ? spl_pa : (xi ? i_pa[31:0] : pc);                  // dia chi vat ly cho PMP
+            ifid_ppa2  <= spl_q ? i_pa[31:0] : ((xi ? i_pa[31:0] : pc) + 32'd2);
         end
     end
 
@@ -345,6 +396,8 @@ module rv32im_pipeline #(
     wire is_mret   = (instr == 32'h3020_0073);
     wire is_wfi    = (instr == 32'h1050_0073);
     wire is_sret   = (instr == 32'h1020_0073) & (SU != 0);
+    wire is_sfence = (opcode == 7'b1110011) & (funct3 == 3'b000) & (instr[31:25] == 7'b0001001) & (rd == 5'd0) &
+                     (SU != 0) & (MMU != 0);                                  // SFENCE.VMA rs1, rs2
     wire is_fencei = is_fence & (funct3 == 3'b001);     // Zifencei
     wire is_csr    = is_system & (funct3 != 3'b000) & (funct3 != 3'b100);
 
@@ -378,7 +431,7 @@ module rv32im_pipeline #(
 
     wire illegal = ~(is_lui | is_auipc | is_jal | legal_jalr | legal_branch | legal_load |
                      legal_store | legal_imm | legal_reg | legal_fence |
-                     is_ecall | is_ebreak | is_mret | is_wfi | is_sret | legal_csr);
+                     is_ecall | is_ebreak | is_mret | is_wfi | is_sret | is_sfence | legal_csr);
 
     wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]};
     wire [31:0] imm_s = {{20{instr[31]}}, instr[31:25], instr[11:7]};
@@ -526,7 +579,9 @@ module rv32im_pipeline #(
     reg         idex_rd_we_r;
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
     reg         idex_illegal_r, idex_ecall_r, idex_ebreak_r, idex_mret_r, idex_csr_r, idex_mext_r, idex_wfi_r;
-    reg         idex_fencei_r, idex_fence_r, idex_sret_r;
+    reg         idex_fencei_r, idex_fence_r, idex_sret_r, idex_sfence_r;
+    reg         idex_ipf_r, idex_iaf, idex_ipf2;                 // MMU: loi dich dia chi fetch (lenh la NOP)
+    reg  [31:0] idex_ppa, idex_ppa2;                             // dia chi vat ly cua lenh (PMP)
     reg         idex_zb;                                      // lenh Zba/Zbb/Zbs/Zbc/Zicond (ket qua tu zb_out); khong can reset hay gate voi
     reg  [4:0]  idex_zop;                                     // idex_valid: bong bay khong ghi thanh ghi va ket qua cua no khong duoc dung
     // Cac co dieu khien chi co hieu luc khi idex_valid = 1. Nho vay lenh bi huy boi redirect chi can xoa idex_valid
@@ -549,6 +604,8 @@ module rv32im_pipeline #(
     wire idex_mext = idex_mext_r & idex_valid;
     wire idex_wfi = idex_wfi_r & idex_valid;
     wire idex_sret = idex_sret_r & idex_valid;
+    wire idex_sfence = idex_sfence_r & idex_valid;
+    wire idex_ipf = idex_ipf_r & idex_valid;
 
     // load-use
     assign stall = ifid_valid & idex_valid & idex_load & (idex_rd != 5'd0) &
@@ -562,10 +619,14 @@ module rv32im_pipeline #(
             idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
             idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
             idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
-            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0; idex_sret_r <= 1'b0;
+            idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0; idex_sret_r <= 1'b0; idex_sfence_r <= 1'b0; idex_ipf_r <= 1'b0;
             idex_pred_taken <= 1'b0; idex_jp_v <= 1'b0;
         end else if (ex_stall | frz) begin
-            // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX
+            // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX. Cho duyet bang trang:
+            // toan hang da chot vao idex_rs*_val (nguon forward o MEM / WB se troi di) nen bo chon forward
+            if (dwait && !frz) begin
+                idex_fa_mem <= 1'b0; idex_fa_wb <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb <= 1'b0;
+            end
         end else begin
             // redirect_q chi dieu khien idex_valid_r; stall (tin hieu som) xoa cac co con lai
             idex_valid_r <= ifid_valid & ~redirect_q & ~stall;
@@ -576,7 +637,7 @@ module rv32im_pipeline #(
                 idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
                 idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
                 idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
-                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0; idex_sret_r <= 1'b0;
+                idex_mret_r   <= 1'b0; idex_csr_r    <= 1'b0; idex_mext_r   <= 1'b0; idex_wfi_r <= 1'b0; idex_fencei_r <= 1'b0; idex_fence_r <= 1'b0; idex_sret_r <= 1'b0; idex_sfence_r <= 1'b0; idex_ipf_r <= 1'b0;
             end else begin
                 idex_pred_taken <= id_pred_taken;
                 idex_jp_v       <= id_jp_v;
@@ -600,6 +661,8 @@ module rv32im_pipeline #(
                 idex_mret_r    <= is_mret & ifid_valid;
                 idex_wfi_r     <= is_wfi & ifid_valid;
                 idex_sret_r    <= is_sret & ifid_valid;
+                idex_sfence_r  <= is_sfence & ifid_valid;
+                idex_ipf_r     <= ifid_ipf & ifid_valid;
                 idex_fencei_r  <= is_fencei & ifid_valid;
                 idex_fence_r   <= legal_fence & ifid_valid;
                 idex_csr_r     <= legal_csr & ifid_valid;
@@ -627,6 +690,13 @@ module rv32im_pipeline #(
             idex_f7_5    <= instr[30];
             idex_zop     <= zb_op;
             idex_zb      <= id_zb;
+            idex_iaf     <= ifid_iaf;
+            idex_ipf2    <= ifid_ipf2;
+            idex_ppa     <= ifid_ppa;
+            idex_ppa2    <= ifid_ppa2;
+        end else if (dwait && !frz) begin    // cho duyet bang trang cho load / store: chot toan hang da forward
+            idex_rs1_val <= op_a;
+            idex_rs2_val <= op_b;
         end
     end
 
@@ -634,7 +704,7 @@ module rv32im_pipeline #(
     // EX
     // ============================================================
     reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence;
-    reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val;
+    reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val, exmem_tva;
     reg         exmem_tirq, exmem_trap, exmem_icnt;
     reg  [4:0]  exmem_rd;
     reg  [2:0]  exmem_funct3;
@@ -762,7 +832,8 @@ module rv32im_pipeline #(
         .done(m_done), .result(m_result)
     );
     wire   wfi_wait;                                   // WFI o EX va chua co ngat nao dang cho (gan o phan ngat)
-    assign ex_stall = (idex_mext & ~m_done) | wfi_wait;
+    wire   dwait;                                      // load / store cho duyet bang trang (MMU)
+    assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait;
 
     // nhanh
     wire eq  = (op_a == op_b);
@@ -806,8 +877,15 @@ module rv32im_pipeline #(
     // bat hop le; SRET o U, hoac o S khi TSR = 1, bat hop le; doc cycle / instret / hpmcounter o S / U can
     // mcounteren (va scounteren o U). Ngat S (SSIP / STIP / SEIP) chi do phan mem ghi mip / sip.
     reg  [1:0]  priv_r;
-    wire [1:0]  priv = (SU != 0) ? priv_r : 2'd3;
+    assign      priv = (SU != 0) ? priv_r : 2'd3;
     reg         st_sie, st_spie, st_spp, st_mprv, st_tw, st_tsr;
+    reg         st_sum, st_mxr, st_tvm;                // chi co khi MMU = 1
+    reg         satp_mode;                             // satp (MMU = 1): MODE (1 = Sv32), ASID 9 bit, PPN 22 bit
+    reg  [8:0]  satp_asid;
+    reg  [21:0] satp_ppn;
+    wire [31:0] satp_v = {satp_mode, satp_asid, satp_ppn} & {32{(SU != 0) && (MMU != 0)}};
+    wire        mmu_on = (SU != 0) & (MMU != 0);
+    wire        sum_v = mmu_on & st_sum, mxr_v = mmu_on & st_mxr, tvm_v = mmu_on & st_tvm;
     reg  [1:0]  st_mpp, st_fs;
     reg  [31:2] stvec_r;
     reg         stvec_vec;
@@ -821,16 +899,18 @@ module rv32im_pipeline #(
     reg         mip_ssip, mip_stip, mip_seip;              // chi phan mem ghi
     wire        st_sd = (st_fs == 2'b11);
     wire [31:0] mstatus_v = (SU != 0) ?
-        {st_sd, 8'b0, st_tsr, st_tw, 3'b000, st_mprv, 2'b00, st_fs, st_mpp, 2'b00, st_spp, mstatus_mpie, 1'b0, st_spie,
-         1'b0, mstatus_mie, 1'b0, st_sie, 1'b0} :
+        {st_sd, 8'b0, st_tsr, st_tw, tvm_v, mxr_v, sum_v, st_mprv, 2'b00, st_fs, st_mpp, 2'b00, st_spp, mstatus_mpie,
+         1'b0, st_spie, 1'b0, mstatus_mie, 1'b0, st_sie, 1'b0} :
         {19'b0, 2'b11, 3'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
-    wire [31:0] sstatus_v = {st_sd, 16'b0, st_fs, 4'b0, st_spp, 2'b0, st_spie, 3'b0, st_sie, 1'b0};
+    wire [31:0] sstatus_v = {st_sd, 11'b0, mxr_v, sum_v, 3'b0, st_fs, 4'b0, st_spp, 2'b0, st_spie, 3'b0, st_sie, 1'b0};
     wire [31:0] mie_v  = {20'b0, mie_meie, 1'b0, mie_seie & (SU != 0), 1'b0, mie_mtie, 1'b0, mie_stie & (SU != 0), 1'b0,
                           mie_msie, 1'b0, mie_ssie & (SU != 0), 1'b0};
     wire [31:0] mip_v  = {20'b0, mip_meip, 1'b0, mip_seip & (SU != 0), 1'b0, mip_mtip, 1'b0, mip_stip & (SU != 0), 1'b0,
                           mip_msip, 1'b0, mip_ssip & (SU != 0), 1'b0};
     wire [31:0] mideleg_v = {22'b0, mideleg_sei, 3'b0, mideleg_sti, 3'b0, mideleg_ssi, 1'b0} & {32{SU != 0}};
-    wire [31:0] medeleg_v = {12'b0, medeleg19, 9'b0, medeleg_r} & {32{SU != 0}};
+    reg  [2:0]  medeleg_pf;                                // bit 12, 13, 15 (loi trang, chi khi MMU = 1)
+    wire [31:0] medeleg_v = {12'b0, medeleg19, 3'b0, medeleg_pf[2] & mmu_on, 1'b0, medeleg_pf[1:0] & {2{mmu_on}},
+                             2'b0, medeleg_r} & {32{SU != 0}};
 
     wire [11:0] csr_addr = idex_instr[31:20];
     reg  [31:0] csr_rdata;
@@ -865,6 +945,7 @@ module rv32im_pipeline #(
             12'h302: su_rdata = medeleg_v;
             12'h303: su_rdata = mideleg_v;
             12'h306: su_rdata = mcounteren;
+            12'h180: su_rdata = satp_v;
             default: su_rdata = 32'd0;
         endcase
         if (SU == 0) su_rdata = 32'd0;
@@ -891,7 +972,9 @@ module rv32im_pipeline #(
     wire        cnt_user  = (csr_addr[11:8] == 4'hC) & (csr_addr[6:5] == 2'b00);
     wire        cnt_en    = (priv == 2'd3) | (mcounteren[csr_addr[4:0]] & ((priv == 2'd1) | scounteren[csr_addr[4:0]]));
     wire        ex_priv_ill = (SU != 0) & (
-                    (idex_csr & ((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en))) |
+                    (idex_csr & ((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en) |
+                                 ((csr_addr == 12'h180) & (priv == 2'd1) & tvm_v))) |
+                    (idex_sfence & ((priv == 2'd0) | ((priv == 2'd1) & tvm_v))) |
                     (idex_mret & (priv != 2'd3)) |
                     (idex_sret & ((priv == 2'd0) | ((priv == 2'd1) & st_tsr))) |
                     (idex_wfi & ((priv == 2'd0) | ((priv != 2'd3) & st_tw))));
@@ -918,7 +1001,7 @@ module rv32im_pipeline #(
                                 : (cs_sei ? 4'd9 : cs_ssi ? 4'd1 : 4'd5);
     wire irq_pend  = pe_mei | pe_msi | pe_mti | pe_sei | pe_ssi | pe_sti;
     wire irq_any   = irq_m | irq_s;
-    wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;
+    wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz & ~dwait;
     assign wfi_wait = idex_wfi & ~irq_pend & ~ex_priv_ill;
 `ifdef RISCV_FORMAL
     assign fv_wfi_wait = wfi_wait;
@@ -942,20 +1025,85 @@ module rv32im_pipeline #(
     wire st_misal = (MISALIGNED == 0) & idex_store &
                     (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
 
-    wire trap_ex = irq_take | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal | st_misal |
-                   pmp_lfault | pmp_sfault;
+    // ---- MMU Sv32 (SU = 1, MMU = 1): dich dia chi load / store o EX, duyet bang trang, SFENCE.VMA ----
+    // Che do hieu dung cua load / store la MPP khi MPRV = 1. TLB truot: EX dung (dwait), toan hang da forward duoc chot,
+    // bo duyet dung cong bo nho du lieu khi tang MEM ranh; xong thi TLB trung (hoac co ket qua loi) va lenh chay tiep.
+    // Quyen kiem moi lan dung: load can R (hoac X khi MXR), store can W; trang U: S can SUM, U bat buoc trang U;
+    // A = 0, hoac store voi D = 0 -> loi trang (khong tu cap nhat A / D, giong Spike khong co Svadu).
+    wire [1:0]  pd = ((SU != 0) & st_mprv) ? st_mpp : priv;
+    assign      xi = mmu_on & satp_mode & (priv != 2'd3);
+    wire        xd = mmu_on & satp_mode & (pd != 2'd3);
+    wire        d_hit;
+    wire [33:0] d_pa;
+    wire [5:0]  d_fl;
+    reg         dfr_v, dfr_af;                         // lan duyet cho load / store da loi
+    reg  [31:0] dfr_va;
+    wire        d_acc   = (idex_load | idex_store) & ~ld_misal & ~st_misal;
+    wire        d_rec   = dfr_v & (dfr_va == ea);
+    wire        d_bad   = (idex_store ? ~d_fl[1] : ~(d_fl[0] | (mxr_v & d_fl[2]))) |
+                          ((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3]) | ~d_fl[4] | (idex_store & ~d_fl[5]);
+    wire        d_pf    = xd & d_acc & ((d_hit & d_bad) | (d_rec & ~dfr_af));
+    wire        d_af    = xd & d_acc & ((d_hit & ~d_bad & (d_pa[33:32] != 2'b00)) | (d_rec & dfr_af));
+    assign      dwait   = xd & d_acc & ~d_hit & ~d_rec;
+    wire [31:0] d_paddr = xd ? d_pa[31:0] : ea;
+    // bo duyet dung chung: load / store uu tien hon fetch; ket qua loi duoc ghi lai theo dia chi ao
+    reg         wk_busy, wk_d;
+    reg  [31:0] wk_va;
+    wire        wk_start = ~wk_busy & (dwait | i_need) & ~mmu_flush;
+    wire        mmu_done, mmu_pf, mmu_af, mmu_mreq, mmu_pte_ok;
+    wire [33:0] mmu_maddr;
+    wire        mem_busy = exmem_valid & (exmem_load | exmem_store | exmem_fence);
+    generate if (SU != 0 && MMU != 0) begin : g_mmu
+        rv32_mmu #(.TLB_N(TLB_N)) u_mmu (
+            .clk(clk), .rst_n(rst_n), .asid(satp_asid), .root_ppn(satp_ppn), .flush(mmu_flush),
+            .i_va(i_va), .i_hit(i_hit), .i_pa(i_pa), .i_fl(i_fl),
+            .d_va(ea), .d_hit(d_hit), .d_pa(d_pa), .d_fl(d_fl),
+            .req(wk_busy | wk_start), .req_va(dwait ? ea : i_va), .done(mmu_done), .pf(mmu_pf), .af(mmu_af),
+            .m_req(mmu_mreq), .m_addr(mmu_maddr), .m_grant(~mem_busy), .m_ready(dmem_ready), .m_rdata(dmem_rdata),
+            .pte_ok(mmu_pte_ok));
+    end else begin : g_no_mmu
+        assign i_hit = 1'b0; assign i_pa = 34'd0; assign i_fl = 6'd0;
+        assign d_hit = 1'b0; assign d_pa = 34'd0; assign d_fl = 6'd0;
+        assign mmu_done = 1'b0; assign mmu_pf = 1'b0; assign mmu_af = 1'b0; assign mmu_mreq = 1'b0;
+        assign mmu_maddr = 34'd0;
+    end endgenerate
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wk_busy <= 1'b0; wk_d <= 1'b0; ifr_v <= 1'b0; dfr_v <= 1'b0;
+        end else begin
+            if (mmu_flush)          wk_busy <= 1'b0;
+            else if (wk_start)      begin wk_busy <= 1'b1; wk_d <= dwait; wk_va <= dwait ? ea : i_va; end
+            else if (mmu_done)      wk_busy <= 1'b0;
+            if (mmu_done && !mmu_flush && (mmu_pf || mmu_af) && !wk_d) begin
+                ifr_v <= 1'b1; ifr_va <= wk_va; ifr_af <= mmu_af;
+            end else if (redirect_q || mmu_flush) ifr_v <= 1'b0;
+            if (mmu_done && !mmu_flush && (mmu_pf || mmu_af) && wk_d) begin
+                dfr_v <= 1'b1; dfr_va <= wk_va; dfr_af <= mmu_af;
+            end else if ((!ex_stall && !frz) || redirect_q) dfr_v <= 1'b0;  // lenh da roi EX
+        end
+    end
+
+    wire trap_ex = irq_take | idex_ipf | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal |
+                   st_misal | d_pf | d_af | pmp_lfault | pmp_sfault;
     wire mret_ex = idex_mret & ~irq_take & ~frz & ~ex_priv_ill;
     wire sret_ex = idex_sret & ~irq_take & ~frz & ~ex_priv_ill;
+    wire sfence_ex = idex_sfence & ~irq_take & ~frz & ~ex_priv_ill;
+    wire satp_wr   = csr_write & (csr_addr == 12'h180) & mmu_on;
+    assign mmu_flush = sfence_ex | satp_wr;                 // xoa TLB; lenh sau duoc nap lai voi anh xa moi
 
     reg [31:0] trap_cause, trap_tval;
     always @* begin
         if (irq_take)           begin trap_cause = {1'b1, 27'd0, irq_code};             trap_tval = 32'd0; end
+        else if (idex_ipf)      begin trap_cause = idex_iaf ? 32'd1 : 32'd12;            // loi dich dia chi fetch
+                                      trap_tval = idex_ipf2 ? idex_pc + 32'd2 : idex_pc; end
         else if (pmp_ifault)    begin trap_cause = 32'd1;  trap_tval = pmp_itval;   end   // fetch bi PMP cam
         else if (ex_illegal)    begin trap_cause = 32'd2;  trap_tval = idex_instr; end
         else if (idex_ecall)    begin trap_cause = {28'd0, 2'b10, priv}; trap_tval = 32'd0; end   // 8 U, 9 S, 11 M
         else if (idex_ebreak)   begin trap_cause = 32'd3;  trap_tval = idex_pc;    end
         else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;         end
         else if (st_misal)      begin trap_cause = 32'd6;  trap_tval = ea;         end
+        else if (d_pf)          begin trap_cause = idex_store ? 32'd15 : 32'd13; trap_tval = ea; end   // loi trang
+        else if (d_af)          begin trap_cause = idex_store ? 32'd7 : 32'd5;   trap_tval = ea; end   // loi truy cap
         else if (pmp_lfault)    begin trap_cause = 32'd5;  trap_tval = ea;         end   // load bi PMP cam
         else if (pmp_sfault)    begin trap_cause = 32'd7;  trap_tval = ea;         end   // store bi PMP cam
         else                    begin trap_cause = 32'd0;  trap_tval = bad_target; end
@@ -975,7 +1123,7 @@ module rv32im_pipeline #(
     wire fencei_ex     = idex_fencei_r & idex_valid & ~irq_take & ~frz;
     assign icache_flush = fencei_ex;
     // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
-    assign redirect    = (trap_ex | mret_ex | sret_ex | jalr_miss | mispredict | fencei_ex) & ~frz;
+    assign redirect    = (trap_ex | mret_ex | sret_ex | jalr_miss | mispredict | fencei_ex | sfence_ex | satp_wr) & ~frz;
     // xtvec vectored: chi ngat (exception van ve BASE); ma nguyen nhan cua ngat la 1 / 3 / 5 / 7 / 9 / 11
     wire [31:2] tvec_b     = trap_s ? stvec_r : mtvec_r;
     wire        tvec_v     = trap_s ? stvec_vec : mtvec_vec;
@@ -983,7 +1131,7 @@ module rv32im_pipeline #(
     assign redirect_pc = trap_ex ? {trap_base, 2'b00} :
                          mret_ex ? mepc_v           :
                          sret_ex ? sepc_v           :
-                         fencei_ex ? pc_next :
+                         (fencei_ex | sfence_ex | satp_wr) ? pc_next :
                          idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
 
     always @(posedge clk or negedge rst_n) begin
@@ -1033,6 +1181,8 @@ module rv32im_pipeline #(
             stvec_r <= 30'd0; stvec_vec <= 1'b0; sepc_r <= 31'd0;
             sscratch <= 32'd0; scause_r <= 32'd0; stval_r <= 32'd0; mcounteren <= 32'd0; scounteren <= 32'd0;
             medeleg_r <= 10'd0; medeleg19 <= 1'b0; mideleg_ssi <= 1'b0; mideleg_sti <= 1'b0; mideleg_sei <= 1'b0;
+            medeleg_pf <= 3'd0; st_sum <= 1'b0; st_mxr <= 1'b0; st_tvm <= 1'b0;
+            satp_mode <= 1'b0; satp_asid <= 9'd0; satp_ppn <= 22'd0;
             mie_ssie <= 1'b0; mie_stie <= 1'b0; mie_seie <= 1'b0; mip_ssip <= 1'b0; mip_stip <= 1'b0; mip_seip <= 1'b0;
         end else if (trap_q) begin
             if (ts_q) begin                                 // trap ve S
@@ -1071,6 +1221,7 @@ module rv32im_pipeline #(
                     st_sie <= csr_new[1]; st_spie <= csr_new[5]; st_spp <= csr_new[8]; st_fs <= csr_new[14:13];
                     st_mpp <= (csr_new[12:11] == 2'd2) ? 2'd0 : csr_new[12:11];        // H (2) khong co: ve U
                     st_mprv <= csr_new[17]; st_tw <= csr_new[21]; st_tsr <= csr_new[22];
+                    st_sum <= csr_new[18]; st_mxr <= csr_new[19]; st_tvm <= csr_new[20];
                 end
                 12'h304: begin
                     mie_mtie <= csr_new[7]; mie_meie <= csr_new[11]; mie_msie <= csr_new[3];
@@ -1082,7 +1233,8 @@ module rv32im_pipeline #(
                 12'h342: mcause_r <= csr_new;
                 12'h343: mtval_r  <= csr_new;
                 12'h344: begin mip_ssip <= csr_new[1]; mip_stip <= csr_new[5]; mip_seip <= csr_new[9]; end
-                12'h100: begin st_sie <= csr_new[1]; st_spie <= csr_new[5]; st_spp <= csr_new[8]; st_fs <= csr_new[14:13]; end
+                12'h100: begin st_sie <= csr_new[1]; st_spie <= csr_new[5]; st_spp <= csr_new[8]; st_fs <= csr_new[14:13];
+                               st_sum <= csr_new[18]; st_mxr <= csr_new[19]; end
                 12'h104: begin                              // sie: chi cac bit da uy quyen
                     if (mideleg_ssi) mie_ssie <= csr_new[1];
                     if (mideleg_sti) mie_stie <= csr_new[5];
@@ -1095,7 +1247,9 @@ module rv32im_pipeline #(
                 12'h142: scause_r <= csr_new;
                 12'h143: stval_r  <= csr_new;
                 12'h144: if (mideleg_ssi) mip_ssip <= csr_new[1];      // sip: chi SSIP ghi duoc
-                12'h302: begin medeleg_r <= {csr_new[9:1], csr_new[0] & (ENABLE_C == 0)}; medeleg19 <= csr_new[19]; end
+                12'h302: begin medeleg_r <= {csr_new[9:1], csr_new[0] & (ENABLE_C == 0)}; medeleg19 <= csr_new[19];
+                               medeleg_pf <= {csr_new[15], csr_new[13], csr_new[12]}; end
+                12'h180: begin satp_mode <= csr_new[31]; satp_asid <= csr_new[30:22]; satp_ppn <= csr_new[21:0]; end
                 12'h303: begin mideleg_ssi <= csr_new[1]; mideleg_sti <= csr_new[5]; mideleg_sei <= csr_new[9]; end
                 12'h306: mcounteren <= csr_new;
                 default: ;
@@ -1109,7 +1263,7 @@ module rv32im_pipeline #(
                             (idex_jal | idex_jalr)? pc_next         :
                             idex_csr              ? csr_rdata       :
                             idex_mext             ? m_result        :
-                            (idex_load | idex_store) ? (op_a + idex_imm) :
+                            (idex_load | idex_store) ? d_paddr :
                             idex_zb               ? zb_out          :
                                                       alu_out;
 
@@ -1216,6 +1370,7 @@ module rv32im_pipeline #(
             exmem_funct3    <= idex_funct3;
             exmem_result    <= ex_result;
             exmem_store_val <= op_b;
+            exmem_tva       <= ea;                          // chi de testbench: dia chi ao cua load / store (vet)
         end
     end
 
@@ -1250,11 +1405,12 @@ module rv32im_pipeline #(
     wire [3:0]  st_strb = ma_phase ? st_strb8[7:4]  : st_strb8[3:0];
 
     // pha 1: dia chi tu ke tiep (can chinh); pha 0 cua truy cap vat qua tu: dia chi tu thap can chinh
-    assign dmem_addr = ma_phase ? {exmem_result[31:2] + 30'd1, 2'b00} :
+    assign dmem_addr = mmu_mreq ? mmu_maddr[31:0] :
+                       ma_phase ? {exmem_result[31:2] + 30'd1, 2'b00} :
                        ma_cross ? {exmem_result[31:2], 2'b00} : exmem_result;
 
     assign dmem_we    = exmem_valid & exmem_store;
-    assign dmem_re    = exmem_valid & exmem_load;
+    assign dmem_re    = (exmem_valid & exmem_load) | mmu_mreq;   // bo duyet bang trang doc PTE khi tang MEM ranh
     assign dmem_fence = exmem_valid & exmem_fence;
     // lenh o MEM xong khi bo nho san sang va (khong vat qua tu, hoac dang o pha cuoi)
     wire   mem_last   = ~ma_cross | ma_phase;
@@ -1300,7 +1456,7 @@ module rv32im_pipeline #(
     // ============================================================
     reg  [31:0] memwb_pc, memwb_instr;
     reg         memwb_tst;
-    reg  [31:0] memwb_taddr;
+    reg  [31:0] memwb_taddr, memwb_tva;               // dia chi vat ly / dia chi ao (vet so voi Spike)
     reg  [63:0] memwb_tdata;                       // store vat qua tu: 64 bit va wstrb 8 bit (xem phan MEM)
     reg  [7:0]  memwb_tstrb;
     reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
@@ -1334,6 +1490,7 @@ module rv32im_pipeline #(
             memwb_skip  <= cnt_wr_ir;                // cnt_wr_ir da gom ~frz: dung canh lenh nay roi MEM
             memwb_tst   <= dmem_we;
             memwb_taddr <= dmem_we ? exmem_result : 32'd0;
+            memwb_tva   <= dmem_we ? exmem_tva : 32'd0;
             memwb_tdata <= dmem_we ? st_wide : 64'd0;      // st_wide chi co cac byte duoc ghi (con lai la 0)
             memwb_tstrb <= dmem_we ? st_strb8 : 8'd0;
         end
@@ -1648,19 +1805,24 @@ module rv32im_pipeline #(
     // cua muc k-1) va mot bo so sanh bang co mat na (NA4 / NAPOT). Viet bang mang bit (khong dung ham co vong lap) de
     // mo phong nhanh. Muc so nho nhat khop duoc dung: one-hot = m & -m.
     wire [31:0] if_p2  = idex_pc + 32'd2;
-    wire [31:0] ls_end = (MISALIGNED == 0) ? ea :
-                         ea + {30'd0, idex_funct3[1:0] == 2'b10 ? 2'd3 : (idex_funct3[1:0] == 2'b01 ? 2'd1 : 2'd0)};
-    wire [29:0] pmp_w0 = idex_pc[31:2], pmp_w1 = if_p2[31:2], pmp_w2 = ea[31:2];
+    wire [31:0] ls_end = (MISALIGNED == 0) ? d_paddr :
+                         d_paddr + {30'd0, idex_funct3[1:0] == 2'b10 ? 2'd3 : (idex_funct3[1:0] == 2'b01 ? 2'd1 : 2'd0)};
+    // dia chi vat ly: lenh (idex_ppa / idex_ppa2 = pc / pc + 2 khi khong dich), load / store (d_paddr), PTE (lan 4)
+    wire [31:0] ppa2   = (MMU != 0) ? idex_ppa2 : if_p2;
+    wire [29:0] pmp_w0 = ((MMU != 0) ? idex_ppa[31:2] : idex_pc[31:2]), pmp_w1 = ppa2[31:2], pmp_w2 = d_paddr[31:2];
+    wire [29:0] pmp_w4 = mmu_maddr[31:2];
     wire [29:0] pmp_w3 = ls_end[31:2];
-    wire [4*PN-1:0] pmp_lt_f, pmp_m_f, pmp_oh_f;            // [a*PN + k]: dia chi a nho hon pmpaddr k / khop muc k
+    localparam PA_N = (SU != 0 && MMU != 0) ? 5 : 4;      // lan 4: dia chi PTE cua bo duyet bang trang
+    wire [5*PN-1:0] pmp_lt_f, pmp_m_f, pmp_oh_f;            // [a*PN + k]: dia chi a nho hon pmpaddr k / khop muc k
     wire [3*PN-1:0] pmp_ok3;                               // [3k +: 3] = {X, W, R} cho phep o che do M
     genvar ga;
     generate
         for (gk = 0; gk < PN; gk = gk + 1) begin : g_pok
             assign pmp_ok3[3 * gk +: 3] = ~{3{pmp_cfg[gk][7]}} | pmp_cfg[gk][2:0];     // khong khoa: khong rang buoc
         end
-        for (ga = 0; ga < 4; ga = ga + 1) begin : g_pa
-            wire [31:0] W = {2'b00, (ga == 0) ? pmp_w0 : (ga == 1) ? pmp_w1 : (ga == 2) ? pmp_w2 : pmp_w3};
+        for (ga = 0; ga < PA_N; ga = ga + 1) begin : g_pa
+            wire [31:0] W = {2'b00, (ga == 0) ? pmp_w0 : (ga == 1) ? pmp_w1 : (ga == 2) ? pmp_w2 :
+                                    (ga == 3) ? pmp_w3 : pmp_w4};
             wire [PN-1:0] mm = pmp_m_f[ga * PN +: PN];
             for (gk = 0; gk < PN; gk = gk + 1) begin : g_pe
                 wire lo_ok = (gk == 0) ? 1'b1 : ~pmp_lt_f[ga * PN + ((gk == 0) ? 0 : gk - 1)];
@@ -1671,6 +1833,11 @@ module rv32im_pipeline #(
             end
             assign pmp_oh_f[ga * PN +: PN] = mm & (~mm + 1'b1);
         end
+        if (PA_N == 4) begin : g_pa4
+            assign pmp_lt_f[4 * PN +: PN] = {PN{1'b0}};
+            assign pmp_m_f[4 * PN +: PN]  = {PN{1'b0}};
+            assign pmp_oh_f[4 * PN +: PN] = {PN{1'b0}};
+        end
     endgenerate
     wire [PN-1:0] pmp_okr, pmp_okw, pmp_okx;
     generate for (gk = 0; gk < PN; gk = gk + 1) begin : g_pv
@@ -1680,6 +1847,9 @@ module rv32im_pipeline #(
     wire [PN-1:0] pmp_m3 = pmp_m_f[3 * PN +: PN];
     wire [PN-1:0] pmp_oh0 = pmp_oh_f[0 +: PN], pmp_oh1 = pmp_oh_f[PN +: PN], pmp_oh2 = pmp_oh_f[2 * PN +: PN];
     wire [PN-1:0] pmp_oh3 = pmp_oh_f[3 * PN +: PN];
+    // doc PTE: kiem nhu truy cap doc o che do S (moi muc rang buoc, khong khop la loi)
+    wire [PN-1:0] pmp_m4 = pmp_m_f[4 * PN +: PN], pmp_oh4 = pmp_oh_f[4 * PN +: PN];
+    assign mmu_pte_ok = (PMP_N == 0) | ((|pmp_m4) & |(pmp_oh4 & pmp_pr));
     // che do S / U (SU = 1): moi muc rang buoc (bo qua L), khong khop muc nao la loi. Load / store dung che do
     // hieu dung MPP khi mstatus.MPRV = 1; fetch dung che do hien tai.
     wire        pm_i    = (priv == 2'd3);
