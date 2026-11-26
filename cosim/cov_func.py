@@ -34,6 +34,13 @@ CS = ["csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"]
 C16 = ["c.addi4spn", "c.lw", "c.sw", "c.nop", "c.addi", "c.jal", "c.li", "c.addi16sp", "c.lui", "c.srli", "c.srai", "c.andi",
        "c.sub", "c.xor", "c.or", "c.and", "c.j", "c.beqz", "c.bnez", "c.slli", "c.lwsp", "c.jr", "c.mv", "c.ebreak",
        "c.jalr", "c.add", "c.swsp"]
+ZB_RTAB = {(0x10, 2): "sh1add", (0x10, 4): "sh2add", (0x10, 6): "sh3add", (0x20, 7): "andn", (0x20, 6): "orn", (0x20, 4): "xnor",
+           (5, 6): "max", (5, 7): "maxu", (5, 4): "min", (5, 5): "minu", (0x30, 1): "rol", (0x30, 5): "ror", (0x24, 1): "bclr",
+           (0x24, 5): "bext", (0x34, 1): "binv", (0x14, 1): "bset", (5, 1): "clmul", (5, 2): "clmulr", (5, 3): "clmulh",
+           (7, 5): "czero.eqz", (7, 7): "czero.nez"}
+ZB_UNARY = {0: "clz", 1: "ctz", 2: "cpop", 4: "sext.b", 5: "sext.h"}
+ZB_ITAB = {(0x30, 5): "rori", (0x24, 1): "bclri", (0x24, 5): "bexti", (0x34, 1): "binvi", (0x14, 1): "bseti"}
+ZB = sorted(set(ZB_RTAB.values()) | set(ZB_UNARY.values()) | set(ZB_ITAB.values()) | {"zext.h", "orc.b", "rev8"})
 OPS = ["lui", "auipc", "jal", "jalr"] + BR + LD + ST + ALU_I + ALU_R + MD + CS + ["fence", "fence.i", "ecall", "ebreak", "mret"] + C16
 PROD = ["alu", "upper", "load", "mul", "div", "csr", "link"]
 ROLES = ["alu_a", "alu_b", "load_base", "store_base", "store_data", "br_a", "br_b", "jalr_base", "csr_src", "md_a", "md_b"]
@@ -48,6 +55,18 @@ def sx(v, bits):
 def sgn(v):
     v &= 0xFFFFFFFF
     return "z" if v == 0 else ("n" if v & 0x80000000 else "p")
+
+
+def zb_imm(ins):
+    """OP-IMM cua Zbb/Zbs: ten lenh hoac None"""
+    f3, f7, rs2 = (ins >> 12) & 7, ins >> 25, (ins >> 20) & 31
+    if f3 == 1 and f7 == 0x30:
+        return ZB_UNARY.get(rs2)
+    if (ins >> 20) == 0x287 and f3 == 5:
+        return "orc.b"
+    if (ins >> 20) == 0x698 and f3 == 5:
+        return "rev8"
+    return ZB_ITAB.get((f7, f3)) if (f7, f3) in ZB_ITAB else None
 
 
 def decode(ins):
@@ -71,9 +90,13 @@ def decode(ins):
         d.update(name=["lb", "lh", "lw", None, "lbu", "lhu"][f3], rd=rd, uses=[(rs1, "load_base")], cls="load")
     elif op == 0x23 and f3 in (0, 1, 2):
         d.update(name=["sb", "sh", "sw"][f3], uses=[(rs1, "store_base"), (rs2, "store_data")], cls="store")
+    elif op == 0x13 and (zi := zb_imm(ins)):
+        d.update(name=zi, rd=rd, uses=[(rs1, "alu_a")], imm=(ins >> 20) & 31)
     elif op == 0x13:
         nm = ["addi", "slli", "slti", "sltiu", "xori", None, "ori", "andi"][f3] if f3 != 5 else ("srai" if f7 == 0x20 else "srli")
         d.update(name=nm, rd=rd, uses=[(rs1, "alu_a")], imm=sx(ins >> 20, 12))
+    elif op == 0x33 and f7 != 1 and (zr := ZB_RTAB.get((f7, f3)) or ("zext.h" if (f7, f3, rs2) == (4, 4, 0) else None)):
+        d.update(name=zr, rd=rd, uses=[(rs1, "alu_a"), (rs2, "alu_b")])
     elif op == 0x33:
         if f7 == 1:
             nm = MD[f3]
@@ -258,6 +281,17 @@ def collect(log, ref, base=0x80000000, fetch=None):
             hit(f"alu:{nm}_sh{'0' if b & 31 == 0 else '31' if b & 31 == 31 else 'x'}")
         elif nm in ("slli", "srli", "srai", "c.slli", "c.srli", "c.srai"):
             pass
+        elif nm in ZB:
+            if nm in ("clz", "ctz", "cpop"):
+                hit(f"zb:{nm}_{'zero' if a == 0 else 'ones' if a == 0xFFFFFFFF else 'other'}")
+            elif nm in ("czero.eqz", "czero.nez"):
+                hit(f"zb:{nm}_cond{'0' if b == 0 else 'nz'}")
+            elif nm in ("rol", "ror", "bclr", "bext", "binv", "bset"):
+                hit(f"zb:{nm}_sh{'0' if b & 31 == 0 else '31' if b & 31 == 31 else 'x'}")
+            elif nm in ("rori", "bclri", "bexti", "binvi", "bseti"):
+                hit(f"zb:{nm}_sh{'0' if d['imm'] == 0 else '31' if d['imm'] == 31 else 'x'}")
+            elif nm in ("max", "min"):
+                hit(f"zb:{nm}_{sgn(a).replace('z', 'p')}{sgn(b).replace('z', 'p')}")
         elif nm in ("slt", "sltu"):
             hit(f"alu:{nm}_{sgn(a)[0]}{sgn(b)[0]}".replace("z", "p"))
         elif nm in ("add", "sub", "addi"):
@@ -348,6 +382,10 @@ def catalog():
     """moi bin co the xay ra, theo nhom (de bao cao phan tram va liet ke bin chua phu)"""
     c = {}
     c["op"] = [f"op:{n}" for n in OPS]
+    c["zb"] = [f"op:{n}" for n in ZB] + [f"zb:{n}_{k}" for n in ("clz", "ctz", "cpop") for k in ("zero", "ones", "other")] + \
+        [f"zb:{n}_cond{k}" for n in ("czero.eqz", "czero.nez") for k in ("0", "nz")] + \
+        [f"zb:{n}_sh{k}" for n in ("rol", "ror", "bclr", "bext", "binv", "bset", "rori", "bclri", "bexti", "binvi", "bseti") for k in ("0", "31", "x")] + \
+        [f"zb:{n}_{x}{y}" for n in ("max", "min") for x in "np" for y in "np"]
     c["alu"] = [f"alu:{n}_sh{s}" for n in ("sll", "srl", "sra") for s in ("0", "31", "x")] + \
         [f"alu:{n}_{x}{y}" for n in ("slt", "sltu") for x in "np" for y in "np"] + \
         [f"alu:{n}_overflow" for n in ("add", "sub", "addi")] + ["alu:sub_equal"]

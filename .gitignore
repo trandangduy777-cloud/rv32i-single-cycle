@@ -23,4 +23,8 @@ soc/sw/build/
 soc/synth/build/
 formal/div/div/
 formal/div/div_*/
+
+
+# Verilator coverage: tep .dat trung gian (bao cao text results/vlcov/*.txt thi giu)
+results/vlcov/dat*/
 soc/sw/build_axi/

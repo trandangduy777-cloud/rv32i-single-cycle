@@ -36,6 +36,19 @@ M = [
     ("Zbs: bexti giai ma thanh binvi", "rv32im_pipeline.v", "zb_op = Z_BEXT; end                // bexti",
      "zb_op = Z_BINV; end                // bexti", [13]),
     ("giai nen: c.addi16sp nzimm = 0 hop le", "rv32c_decompress.v", "if (nzimm_16sp == 10'd0) illegal = 1'b1;", "if (1'b0) illegal = 1'b1;", [3]),
+    ("SRAI: nhan nham SRL khi la immediate", "rv32im_pipeline.v", "wire do_sra = idex_f7_5;", "wire do_sra = idex_f7_5 & idex_reg_op;", [3]),
+    ("SLT: so sanh khong dau", "rv32im_pipeline.v", "3'b010: alu_out = ($signed(op_a) < $signed(alu_b)) ? 32'd1 : 32'd0;",
+     "3'b010: alu_out = (op_a < alu_b) ? 32'd1 : 32'd0;", [3]),
+    ("dich: shamt chi 4 bit", "rv32im_pipeline.v", "wire [4:0] shamt = alu_b[4:0];", "wire [4:0] shamt = {1'b0, alu_b[3:0]};", [3]),
+    ("load-use: bo kiem tra rs2", "rv32im_pipeline.v", "| (uses_rs2 & (idex_rd == rs2)));", "| 1'b0);", [3]),
+    ("DIV: chia 0 ra dau am", "rv32i_core.v", "neg_res <= (sa_r ^ sb_r) & (m != 32'd0);", "neg_res <= (sa_r ^ sb_r);", [3]),
+    ("REM: dau du theo dau so chia", "rv32i_core.v", "neg_rem <= sa_r;", "neg_rem <= sb_r;", [3]),
+    ("chia: so sanh '>' thay cho '>='", "rv32i_core.v", "ge  = (rem >= {1'b0, mm});", "ge  = (rem > {1'b0, mm});", [3]),
+    ("mtval cua lenh illegal = 0", "rv32im_pipeline.v", "trap_cause = 32'd2;  trap_tval = idex_instr;", "trap_cause = 32'd2;  trap_tval = 32'd0;", [3]),
+    ("mtval cua EBREAK = 0", "rv32im_pipeline.v", "trap_cause = 32'd3;  trap_tval = idex_pc;", "trap_cause = 32'd3;  trap_tval = 32'd0;", [3]),
+    ("Zbb: rol quay sai so bit", "rv32im_pipeline.v", "(5'd0 - zb_sh)", "(5'd31 - zb_sh)", [13]),
+    ("Zbb: max/min so sanh khong dau", "rv32im_pipeline.v", "wire        z_lt    = ($signed(zb_a) < $signed(zb_b));",
+     "wire        z_lt    = (zb_a < zb_b);", [13]),
 ]
 
 

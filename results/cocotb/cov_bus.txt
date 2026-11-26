@@ -1,0 +1,6 @@
+bus.d_kind                          6/6    bin (100.0 %)
+bus.fencei                          2/2    bin (100.0 %)
+bus.i_wait                          4/4    bin (100.0 %)
+bus.who                             3/3    bin (100.0 %)
+bus.who_dkind                      11/11   bin (100.0 %)
+TONG functional coverage bus: 26/26 bin = 100.0 %

@@ -80,6 +80,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
 | `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca`, `may-2-nhan` hoặc số bước / bước con như `16b`), in một dòng kết quả mỗi bước; `check_mutants.py`, `check_commits.py`: chốt chặn của CI (mục Quy trình commit) |
 | `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus ánh xạ bộ nhớ và bản bus AXI4 đầy đủ (interconnect, DMA 2 kênh, bộ kiểm giao thức, `soc/axi/`), ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
+| `verilator/` | Verilator, SVA, cocotb: lint `-Wall` có waiver giải thích, so vết Spike và code coverage bằng Verilator, 43 assertion `bind` + đột biến, testbench cocotb cho cache / bus, `run_*.py` và `mutate_*.py` (xem mục Verilator, SVA và cocotb) |
 | `docs/` | Ảnh layout (KLayout) và đường tới hạn (OpenROAD) |
 
 ## Tập lệnh hỗ trợ
@@ -733,7 +734,7 @@ Cần `spike`, `gcc-riscv64-unknown-elf`, `iverilog`.
 
 riscv-tests và benchmark chỉ là vài chục chương trình cố định. Để tìm lỗi ở những tổ hợp không ai nghĩ tới, `cosim/gen_rand.py` tự sinh chương trình assembly ngẫu nhiên (riscv-dv cần bộ mô phỏng SystemVerilog thương mại; bản Python pygen chạy rất chậm và không hợp với 19 cấu hình lõi, nên mình viết bộ sinh riêng cho đúng các tính năng của lõi này). `cosim/run_random.py` chạy mỗi chương trình trên Spike (`--priv=m`, `--log-commits`) và trên RTL (iverilog), rồi so từng lệnh hoàn tất như `run_cosim.py` (pc, mã lệnh, thanh ghi đích, store).
 
-- Bộ sinh gồm các "đơn vị" ngẫu nhiên: ALU, shift, MUL/DIV (kể cả chia 0 và INT_MIN / -1), load/store mọi độ rộng và độ lệch (lệch địa chỉ thì trap hoặc chạy bằng phần cứng tùy cấu hình), nhánh và vòng lặp (nhánh lùi đủ 6 loại, `c.beqz` / `c.bnez`), JAL/JALR/gọi hàm lồng nhau/RAS, JALR luân phiên hai đích cách nhau 2 byte, cặp hazard sản xuất → tiêu thụ ở khoảng cách 0-3 lệnh (kể cả con trỏ vừa tính xong làm thanh ghi cơ sở của load/store/jalr), CSR đủ 6 dạng lệnh trên mscratch/mtval/mcause/mepc/mstatus, lệnh bất hợp lệ (opcode, funct, CSR không tồn tại, ghi CSR chỉ đọc, lệnh nén cấm), ECALL/EBREAK/C.EBREAK, MRET, FENCE với trường dự trữ khác 0, FENCE.I với mã tự sửa, lệnh nén. Trình xử lý trap tự viết bước qua lệnh gây trap (độ dài 2 hoặc 4 byte) và chỉ đọc `mtval` ở những nguyên nhân mà đặc tả bắt buộc (địa chỉ lệch).
+- Bộ sinh gồm các "đơn vị" ngẫu nhiên: ALU, shift, MUL/DIV (kể cả chia 0 và INT_MIN / -1), load/store mọi độ rộng và độ lệch (lệch địa chỉ thì trap hoặc chạy bằng phần cứng tùy cấu hình), nhánh và vòng lặp (nhánh lùi đủ 6 loại, `c.beqz` / `c.bnez`), JAL/JALR/gọi hàm lồng nhau/RAS, JALR luân phiên hai đích cách nhau 2 byte, cặp hazard sản xuất → tiêu thụ ở khoảng cách 0-3 lệnh (kể cả con trỏ vừa tính xong làm thanh ghi cơ sở của load/store/jalr), CSR đủ 6 dạng lệnh trên mscratch/mtval/mcause/mepc/mstatus, lệnh bất hợp lệ (opcode, funct, CSR không tồn tại, ghi CSR chỉ đọc, lệnh nén cấm), ECALL/EBREAK/C.EBREAK, MRET, FENCE với trường dự trữ khác 0, FENCE.I với mã tự sửa, lệnh nén. Trình xử lý trap tự viết bước qua lệnh gây trap (độ dài 2 hoặc 4 byte) và đọc `mtval` ở mọi nguyên nhân (nên giá trị `mtval` của lệnh bất hợp lệ, EBREAK, địa chỉ lệch đều được so với Spike).
 - Chương trình không bao giờ bật ngắt (Spike có CLINT với `mtimecmp` khởi tạo 0 nên MTIP luôn bật); phần ngắt được kiểm riêng ở mục So vết với Spike khi có ngắt.
 - 19 cấu hình lõi: single-cycle, pipeline RV32I, RV32IM, RV32IMC, 4 cấu hình cache (kích thước, số đường, độ trễ bộ nhớ), lệch địa chỉ bằng phần cứng, nhân lặp / nhân 1 chu kỳ, dự đoán ép lỗi, không BTB/RAS, gshare, đệm ghi, 2 cấu hình Zba/Zbb/Zbs/Zbc/Zicond (bộ sinh thêm các lệnh Zb* cho 2 cấu hình này).
 
@@ -742,17 +743,19 @@ riscv-tests và benchmark chỉ là vài chục chương trình cố định. Đ
 | Chỉ số | Giá trị |
 |---|---|
 | Chương trình ngẫu nhiên khớp Spike | **7.600** (0 lệch, 0 lỗi của bộ sinh) |
-| Lệnh hoàn tất khớp Spike | **11.576.845** |
-| Coverage chức năng (catalog **tự định nghĩa** 568 bin, không gồm Zb* / Zicond, ngắt và `mhpm*`; tính từ vết Spike của chương trình đã khớp RTL) | **568 / 568**: lệnh 83/83, toán hạng ALU 21/21, MUL/DIV 58/58, nhánh 32/32, hazard 215/215, load/store 25/25 + 17/17 (lệch), CSR 54/54, trap 55/55, luồng điều khiển 8/8 |
-| Code coverage Verilator, gộp 19 cấu hình × 15 chương trình = 285 lần chạy (chỉ tính file RTL, không tính testbench) | dòng **387/407 = 95,1 %**, nhánh **220/238 = 92,4 %**, toggle **10.828/12.941 = 83,7 %** |
-| Mutation: số đột biến RTL bị so vết ngẫu nhiên bắt (`cosim/mutate_random.py`, tối đa 80 chương trình mỗi đột biến) | **16 / 16** (có thêm một dòng đối chứng không đột biến, 160 chương trình, phải thoát sạch) |
+| Lệnh hoàn tất khớp Spike | **10.973.766** |
+| Coverage chức năng (catalog 656 bin, tính từ vết Spike của chương trình đã khớp RTL) | **656 / 656**: lệnh 83/83, Zb* / Zicond 88/88, toán hạng ALU 21/21, MUL/DIV 58/58, nhánh 32/32, hazard 215/215, load/store 25/25 + 17/17 (lệch), CSR 54/54, trap 55/55, luồng điều khiển 8/8 |
+| Code coverage Verilator, gộp 19 cấu hình × 15 chương trình = 285 lần chạy (chỉ tính file RTL, không tính testbench) | dòng **387/407 = 95,1 %**, nhánh **220/238 = 92,4 %**, toggle **10.824/12.941 = 83,6 %** |
+| Mutation: số đột biến RTL bị so vết ngẫu nhiên bắt (`cosim/mutate_random.py`, tối đa 80 chương trình mỗi đột biến) | **27 / 27** (có thêm một dòng đối chứng không đột biến, 160 chương trình, phải thoát sạch) |
 
-Catalog là danh sách tay các bin có thể xảy ra (không liệt kê bin không thể xảy ra, ví dụ MULH với toán hạng không hợp lệ); bin của lệnh C chỉ tính trên cấu hình có C; lệnh Zb* / Zicond không nằm trong catalog (chúng được đếm vào code coverage và kiểm bằng so vết Spike, nhưng chưa có bin chức năng riêng). Coverage chức năng đo ở mức kiến trúc nên không thay cho code coverage. Phần **chưa phủ** của code coverage:
+Lưu ý: đợt 7.600 chương trình ở bảng trên chạy trên RTL trước khi merge PMP; sau khi merge, regression đầy đủ (so vết Spike 13 lõi + 132 lần chạy ngắt + 27/27 đột biến ngẫu nhiên) chạy lại đạt, nhưng đợt 7.600 không chạy lại.
+
+Catalog là danh sách tay các bin có thể xảy ra (không liệt kê bin không thể xảy ra, ví dụ MULH với toán hạng không hợp lệ); bin của lệnh C chỉ tính trên cấu hình có C; lệnh Zb* / Zicond có catalog riêng 88 bin (từng lệnh, giá trị biên của toán hạng, hazard). Coverage chức năng đo ở mức kiến trúc nên không thay cho code coverage. Phần **chưa phủ** của code coverage:
 
 - `rv32i_core.v` (10 điểm dòng, 2 nhánh): bộ nhân / chia ở các giá trị tham số mà 9 cấu hình đo không dùng (`MUL_LAT`, hàm tính số tầng cây nhân); các bộ nhân đó đã được kiểm riêng ở mục Bộ nhân song song.
 - `rv32im_pipeline.v` (8 điểm dòng, 10 nhánh): nhận ngắt (chương trình ngẫu nhiên không bật ngắt, đã kiểm ở mục ngắt), phần cấu hình và ghi bộ đếm hiệu năng `mhpmevent` (giá trị `mcycle` của RTL và Spike không so được từng lệnh trong chương trình ngẫu nhiên, nên bộ sinh không đụng tới nhóm CSR này; chúng được kiểm ở mục bộ đếm), ghi CSR không tồn tại, và 2 trường hợp RAS "trả về rồi gọi ngay trong cùng chu kỳ" (coroutine).
 - `rv32_dcache.v` (2 điểm dòng, 4 nhánh) và `rv32_icache.v` (2 nhánh): thay thế pseudo-LRU ở một số tổ hợp số đường và bộ đệm ghi quay vòng; đã được `cache/tb_cache_random.v` kiểm riêng.
-- Toggle 83,7 % thấp hơn vì nhiều bit địa chỉ cao và bit của các cấu hình không dùng không bao giờ đổi trong bộ nhớ 2 MB của Spike; mình không cố đẩy con số này.
+- Toggle 83,6 % thấp hơn vì nhiều bit địa chỉ cao và bit của các cấu hình không dùng không bao giờ đổi trong bộ nhớ 2 MB của Spike; mình không cố đẩy con số này.
 
 **Lỗi RTL tìm được bằng chương trình ngẫu nhiên** (đều có test tái hiện):
 - Lõi single-cycle không có CSR `mie` (0x304) và `mip` (0x344), nên `csrr mie` bị trap lệnh bất hợp lệ trong khi đây là CSR bắt buộc của chế độ M (Spike đọc ra 0). Sửa: hai CSR đọc bằng 0 (không có ngắt); cùng đợt thêm `mvendorid` / `marchid` / `mimpid` (0xF11-0xF13, bắt buộc theo đặc tả, đọc ra 0) vì trước đó cũng bị trap, và bộ kiểm chứng `verify/` cũ từng coi `mie`, `mip`, `mvendorid` là "CSR không tồn tại", nay đã sửa theo Spike. `marchid` của Spike bằng 5, tùy triển khai nên không so. Test tái hiện `cosim/tests/csr_mie.S`, chạy bằng `python3 cosim/run_directed.py` trên 16 cấu hình có Zicsr; trước khi sửa lõi single-cycle lệch ở lệnh thứ 4.
@@ -760,13 +763,13 @@ Catalog là danh sách tay các bin có thể xảy ra (không liệt kê bin kh
 
 Công cụ coverage cũng từng sai: bộ giải mã đặt nhầm tên `slli`/`slti`/`andi`; đã sửa, các con số trên là sau khi sửa.
 
-Điểm yếu còn lại: `mtval` sau lệnh bất hợp lệ, `ebreak` và ngắt là tùy triển khai nên chương trình ngẫu nhiên không kiểm; chương trình dài tối đa vài nghìn lệnh nên không đánh vào lỗi chỉ lộ ra sau hàng triệu chu kỳ; mutation chỉ 16 đột biến (nhỏ hơn hẳn các bộ mutation riêng của cache, ngắt, SoC).
+Điểm yếu còn lại: ngắt và bộ đếm hiệu năng (`mcycle`, `mhpmevent`) là tùy triển khai / phụ thuộc thời điểm nên chương trình ngẫu nhiên không kiểm (ngắt được so riêng ở `cosim/irq/`); chương trình dài tối đa vài nghìn lệnh nên không đánh vào lỗi chỉ lộ ra sau hàng triệu chu kỳ; mutation 27 đột biến (nhỏ hơn các bộ mutation riêng của cache, ngắt, SoC). Đã khắc phục so với bản trước: `mtval` của lệnh bất hợp lệ và `ebreak` nay được trình xử lý trap đọc và so với Spike (hai đột biến `mtval = 0` bị bắt), lệnh Zb* có bin chức năng riêng (88 bin), và mutation tăng từ 16 lên 27 đột biến.
 
 ```
 python3 cosim/run_random.py --n 400 --seed0 20000 --jobs 2 --cov    # lô lớn, ~40 phút trên 2 lõi
 python3 cosim/run_directed.py                                       # test có hướng csr_mie.S
 python3 cosim/run_vlcov.py --cores 0 1 2 3 4 9 13 14 16 --n 20      # code coverage (cần verilator)
-python3 cosim/mutate_random.py                                      # 16 đột biến RTL
+python3 cosim/mutate_random.py                                      # 27 đột biến RTL
 ```
 
 ## Chứng minh hình thức bằng riscv-formal (pipeline RV32IMC)
@@ -942,6 +945,82 @@ Con số ngắt đo ở pha riêng sau dòng `LAT`: mọi task đang ngủ (ch�
 - Flip-flop đầu đường có fanout 438 và ABC không dựng cây buffer, nên riêng clk→Q là 6,75 ns của 15,5 ns; số này bi quan, resizer của OpenROAD sẽ sửa. Không có ký sinh dây (lạc quan). Không dùng làm kết quả cuối; flow LibreLane cho SoC vẫn chưa chạy.
 - Từ số liệu trên, bộ nhớ tổ hợp phải đọc xong trong khoảng 8,5 ns (ROM) / 5,9 ns (RAM, tính theo đường `wstrb` xấu nhất) thì không thành đường tới hạn; macro SRAM đồng bộ thật sẽ cần thêm một chu kỳ chờ (`dmem_ready`), SoC hiện coi bộ nhớ phản hồi ngay.
 
+## Verilator, SVA và cocotb (`verilator/`)
+
+Mọi kiểm chứng ở các mục trên chạy bằng iverilog. Mục này thêm một bộ công cụ thứ hai trên cùng RTL (không sửa RTL): Verilator làm bộ mô phỏng nhanh và bộ lint, assertion SVA gắn bằng `bind`, và testbench Python cocotb có scoreboard + functional coverage. Cả ba đều chạy trong CI (job `verilator` và các bước thêm vào job `cosim`) và trong `tools/regress.sh` (bước 24-30). Toàn bộ dùng Verilator 5.020 và cocotb 1.9.2 (bản `apt`/`pip` của Ubuntu 24.04).
+
+### Lint `-Wall`
+`python3 verilator/lint.py` chạy `verilator --lint-only -Wall` cho **13 mục tiêu**: pipeline, lõi single-cycle, hai cache, bộ phân xử, timer, `soc_top` và các biến thể tham số (C + lệch địa chỉ + gshare + Zb*, `MUL_LAT = 1`, cache 2 / 4 đường, bộ đệm ghi 1 / 4 mức). Kết quả: **0 cảnh báo chưa giải thích**, còn **79 dòng waiver** trong `verilator/waivers.vlt`; mỗi nhóm waiver có một dòng nói lý do (ví dụ bit 0 của địa chỉ lệnh luôn chẵn, bit thừa để giữ độ rộng, tín hiệu chỉ testbench đọc qua phân cấp). Script còn báo waiver thừa (không còn cảnh báo nào khớp) và có `--no-waiver` để xem toàn bộ cảnh báo thô. Lint không tìm ra lỗi RTL nào; mình ghi rõ vì đây là kết quả thật, không phải thiếu cố gắng: các cảnh báo đều là cắt bit hoặc so độ rộng có chủ ý.
+
+### So vết với Spike bằng Verilator
+`python3 verilator/run_vlcosim.py cosim|random` chạy lại đúng `cosim/run_cosim.py` và `cosim/run_random.py` (không sửa hai script đó): lớp `vl_shim.py` thay lệnh `iverilog` / `vvp` bằng `verilator --binary --timing` rồi chạy tệp thực thi, nên phần so vết với Spike không đổi. Kết quả: **151 chương trình** (riscv-tests, bench, test tự viết, CoreMark; mỗi chương trình chạy trên mọi cấu hình đủ phần mở rộng, 1.545 lần chạy trên **15 cấu hình lõi**) khớp Spike từng lệnh, và 76 chương trình ngẫu nhiên (4 × 19 cấu hình) khớp; tổng 261 giây cho bản `cosim` (biên dịch 90 s, mô phỏng 145 s).
+
+Tốc độ khi chạy CoreMark 2 vòng (651.101 lệnh; máy 2 lõi, không chạy việc khác; số chu kỳ mô phỏng bằng nhau ở các lõi không cache):
+
+| Lõi | iverilog (chu kỳ/s) | Verilator (chu kỳ/s) | Verilator nhanh hơn | Biên dịch Verilator |
+|---|---|---|---|---|
+| single-cycle | 40.783 | 504.943 | 12,4 lần | 3,7 s |
+| pipeline RV32IM | 7.211 | 421.510 | 58,5 lần | 6,3 s |
+| pipeline RV32IMC | 6.981 | 299.610 | 42,9 lần | 6,2 s |
+| RV32IMC + cache 16x4 | 9.621 | 290.673 | 31,5 lần | 6,7 s |
+
+Verilator chậm hơn ở bước biên dịch (iverilog gần như không biên dịch) nhưng 12-59 lần nhanh hơn lúc chạy, nên đáng dùng cho chương trình dài (CoreMark, lô ngẫu nhiên lớn) và không đáng cho testbench vài trăm chu kỳ. Số chu kỳ của lõi có cache khác nhau giữa hai bộ mô phỏng (1.434.622 so với 1.375.485): độ trễ bộ nhớ ngẫu nhiên của testbench lấy từ `$urandom` / `$random` mà hai bộ mô phỏng cho dãy khác nhau; kết quả chức năng và vết lệnh vẫn khớp Spike.
+
+### SVA bằng `bind` (không sửa RTL)
+`verilator/sva/` có **43 assertion và 21 cover point** nối vào RTL bằng `bind` (4 file: bộ phân xử 14, cache dữ liệu 12, cache lệnh 7, pipeline 10), chạy bằng `verilator --assert --coverage-user` trên chính các testbench của repo (`tb_cache_random`, `tb_cosim` với chương trình ngẫu nhiên, `tb_irq`): `python3 verilator/run_sva.py`.
+
+| Nhóm | Điều được chứng minh trong mô phỏng |
+|---|---|
+| Cache dữ liệu | valid / tag nhất quán (không có hai đường hợp lệ cùng tag trong một tập); không trả dữ liệu khi trượt; bộ đệm ghi là FIFO đúng thứ tự (so với mô hình bóng trong assertion) và không nhận store khi đầy; FENCE chỉ xong khi bộ đệm rỗng; dữ liệu nạp dòng đã trộn đúng các store đang chờ (forward); load trúng trả đúng từ; bất biến "còn dữ liệu trong bộ đệm thì không ở IDLE" |
+| Cache lệnh | dữ liệu trả đúng (kể cả lệnh vắt qua ranh giới từ); flush xoá mọi valid; dòng đang nạp lúc flush không được thành hợp lệ |
+| Bộ phân xử | không cấp cho hai bên cùng lúc; địa chỉ / dữ liệu / `we` / `wstrb` tới bộ nhớ là của bên đang được cấp; giữ chủ bus đến khi `ack`; cache dữ liệu được ưu tiên khi bus rảnh; không bên nào chờ quá 1024 chu kỳ |
+| Pipeline | không ghi x0 ở WB; không forward cho toán hạng x0; redirect huỷ đúng lệnh ở IF/ID và EX; lệnh gây trap không có tác dụng phụ lên bộ nhớ; ngắt không bị mất (mỗi ngắt chờ nhận thì nhận trong giới hạn, đo được tối đa 19 chu kỳ không đóng băng) và nhận ngắt thì ghi trap |
+
+Chạy sạch: 31 lần chạy (5 cấu hình cache × 3 hạt giống, 5 cấu hình lõi × 3 chương trình, bộ ngắt), **0 assertion thất bại, 21/21 cover point được chạm tới** (cover point để chứng minh assertion không đúng một cách rỗng: có xảy ra tranh chấp bus, có forward, có flush giữa lúc nạp, có ngắt...).
+
+**Đột biến**: `python3 verilator/mutate_sva.py` sửa RTL (trong bản sao) 25 chỗ, mỗi chỗ phải làm một assertion **cụ thể** thất bại; kết quả **25/25 bị chính assertion bắt** (bộ phân xử 6/6, cache dữ liệu 9/9, cache lệnh 3/3, pipeline 7/7), cộng một dòng đối chứng không đột biến phải sạch. Đo ở chế độ `SVA_ONLY` (scoreboard của testbench không được kết thúc mô phỏng sớm), nên "bắt được" nghĩa là assertion tự bắn, không phải testbench cũ phát hiện giùm. Một đột biến ban đầu hoá ra **tương đương** (bỏ `~wb_empty` khỏi nhánh IDLE của cache dữ liệu: IDLE luôn có bộ đệm rỗng nên thay đổi không đổi hành vi) nên mình thay bằng đột biến khác (DRN rời đi khi bộ đệm còn dữ liệu). Đợt đo đầu có thêm 3 đột biến "lọt": một do assertion ưu tiên kiểm `i_ack` (chỉ lên khi bộ nhớ ack, lúc đó bên giữ bus đã chốt) thay vì tín hiệu cấp bus nên mình sửa sang kiểm `sel_i` / `sel_d`; hai do testbench cũ tự kết thúc ngay khi scoreboard của nó thất bại, chưa kịp để assertion bắn (phép đo `SVA_ONLY` ở trên sinh ra từ đó).
+
+Bộ phân xử **không có đảm bảo công bằng**: ưu tiên cố định cho cache dữ liệu. Khi cache dữ liệu bị kích thích không hạn chế (`tb_cache_random`), cache lệnh phải chờ tới 112 giao dịch liên tiếp của cache dữ liệu (đo được); trong chương trình thật pipeline tự giới hạn nên khoảng đó nhỏ hơn 32 và assertion `ARB_no_starve_i` (bật khi build lõi) giữ được; ở testbench cache chỉ còn `ARB_i_timeout` (1024 chu kỳ) chặn. Đây là điểm yếu thiết kế được ghi nhận chứ không được che bằng cách nới assertion.
+
+### cocotb: cache và hệ thống bộ nhớ
+`python3 verilator/run_cocotb.py` build bằng `cocotb.runner` + Verilator (`--public-flat-rw --assert`, SVA bind vẫn bật), chạy **21 lượt** (4 cấu hình cache dữ liệu × 3 hạt giống, 3 cấu hình hệ thống icache + dcache + bộ phân xử × 3 hạt giống), tất cả đạt:
+- `test_dcache.py`: giao dịch ngẫu nhiên có ràng buộc (55 % vào tập địa chỉ nóng để có xung đột và forward, thiết bị không cache, store mọi wstrb, FENCE), bộ nhớ Python có độ trễ ngẫu nhiên; scoreboard so từng load với bộ nhớ kiến trúc và sau mỗi FENCE so cả bộ nhớ.
+- `test_bus.py` (+ `mem_sys.sv`, chỉ là dây nối): hai luồng cùng lúc, fetch lệnh và load/store dữ liệu tranh bus; phần FENCE.I: sau FENCE phía dữ liệu, xung flush đến bất đồng bộ (có thể giữa lúc đang nạp dòng) rồi fetch lại từ vừa ghi phải thấy giá trị mới.
+- Functional coverage bằng `cocotb-coverage` (CoverPoint + CoverCross, bin không thể xảy ra được loại bằng `ign_bins`): cache dữ liệu **51/51 bin** (op, vùng, trúng/trượt, wstrb, độ đầy bộ đệm ghi, sự kiện forward / store bị chặn vì đầy / load ngay sau store cùng từ / FENCE khi còn dữ liệu, hai bảng chéo) và hệ thống bộ nhớ **26/26 bin** (ai giữ bus, độ chờ của phía lệnh, loại thao tác dữ liệu, FENCE.I, bảng chéo). Báo cáo text và HTML (bin chưa tới tô đỏ) ở `results/cocotb/`.
+- **Đột biến cocotb** (`python3 verilator/mutate_cocotb.py`): 12 đột biến RTL (forward bỏ wstrb / không forward, store trúng bỏ wstrb, FENCE không đợi bộ đệm, wstrb ra bus sai, đọc ngoài vùng sai, thứ tự bộ đệm ghi, địa chỉ nạp dòng sai, đổi chủ bus giữa chừng, flush không xoá, dòng nạp lúc flush vẫn hợp lệ...), chạy **không có SVA** nên chỉ scoreboard của testbench Python bắt: **12/12**. Hai đột biến của cache lệnh lúc đầu lọt: `ic_flush` (flush không xoá valid) chỉ lộ sau khi fetch thêm các từ vùng ghi được mà không flush để cache giữ dòng cũ; `ic_fillkill` cần flush bất đồng bộ giữa lúc nạp dòng và từ kiểm tra nằm cùng khối với từ đang nạp, và chỉ bị bắt từ hạt giống 3 (mutation chạy 5 hạt giống).
+
+### Code coverage của pipeline (`--coverage`)
+`python3 verilator/run_plcov.py run|merge` build 14 cấu hình pipeline bằng Verilator `--coverage` (main riêng vì `--binary` của 5.020 không ghi `coverage.dat`), chạy **chính bộ riscv-tests + bench + test tự viết + CoreMark của `run_cosim.py`** (151 chương trình, vẫn so Spike), gộp rồi báo cáo theo file và liệt kê vùng chưa phủ (`results/vlcov/pipeline.txt`):
+
+| Nguồn | Dòng | Nhánh | Toggle |
+|---|---|---|---|
+| riscv-tests + bench + CoreMark (14 cấu hình pipeline, RTL đã có PMP) | 311/348 = **89,4 %** | 213/246 = **86,6 %** | 9.076/12.254 = **74,1 %** |
+
+Số liệu đo lại sau khi merge PMP: 14 cấu hình này đều để `PMP_N = 0` nên toàn bộ logic PMP (khoảng 20 dòng, hơn 2.000 bit toggle) không được tính là phủ ở đây; PMP được kiểm riêng bằng so vết Spike trên 6 lõi PMP và 20 đột biến ở mục PMP. Vùng chưa phủ (danh sách đầy đủ ở `results/vlcov/pipeline.txt`): một phần là **nhánh chết do tham số** (ví dụ `if (WAYS > 1)` trong hàm pseudo-LRU ở các cấu hình `WAYS = 1`; Verilator tính điểm theo từng cấu hình nên các điểm này mãi bằng 0 dù cấu hình 2 / 4 đường có chạy tới), phần khác là bộ nhân / chia ở các giá trị tham số mà 14 cấu hình không dùng (đã kiểm riêng ở mục Bộ nhân song song), nhận ngắt và ghi `mhpmevent` (kiểm riêng ở mục Ngắt), và các nhánh `illegal` của bộ giải nén C với mã lệnh mà trình biên dịch không bao giờ sinh (kiểm bằng `rvc/check_decompress.py` trên toàn bộ 49.152 mã). Toggle dưới 90 % vì nhiều bit địa chỉ cao và bit của tham số không dùng không đổi; mình không cố đẩy con số này.
+
+```
+python3 verilator/lint.py                                     # lint -Wall, 13 mục tiêu
+python3 verilator/run_vlcosim.py cosim /tmp/riscv-tests       # so vết Spike bằng Verilator (thêm: random, --engine iverilog)
+python3 verilator/bench_speed.py --iters 2 --cores 0 2 3 4    # so tốc độ iverilog / Verilator
+python3 verilator/run_sva.py --n 3                            # SVA trên RTL sạch
+python3 verilator/mutate_sva.py                               # 25 đột biến SVA
+python3 verilator/run_cocotb.py --seeds 3 --nops 2000         # cocotb + functional coverage
+python3 verilator/mutate_cocotb.py                            # 12 đột biến cocotb (không SVA)
+python3 verilator/run_plcov.py run --cores 1 2 3 ...          # code coverage pipeline (rồi: merge)
+```
+
+### Giới hạn của bộ công cụ này
+| Hạn chế | Ảnh hưởng | Ghi chú |
+|---|---|---|
+| Verilator 5.020 chỉ hỗ trợ một tập con SVA (không có `##`, khoảng trễ, `default clocking`, `default disable iff`) | assertion viết theo dạng `|->` / `|=>` / `$past` / `$stable`, mỗi property tự khai `@(posedge clk) disable iff` | không thay thế được chứng minh hình thức; SymbiYosys (như riscv-formal ở mục trên) cho phép property mạnh hơn nhưng không dùng ở đây |
+| SVA kiểm trong mô phỏng, không chứng minh | chỉ đúng với các kích thích đã chạy; chống rỗng bằng 21 cover point và 25 đột biến | assertion không phải bằng chứng cho mọi trạng thái |
+| Bộ phân xử không có công bằng | cache lệnh có thể chờ hàng chục giao dịch dữ liệu (đo được 112 khi bị kích thích tối đa) | `ARB_i_timeout` 1024 chu kỳ là chặn duy nhất ở testbench cache; thiết kế chưa sửa |
+| `$urandom(seed)` của Verilator không cập nhật seed | testbench `tb_cache_random` chỉ sinh một giá trị lặp lại nếu dùng nguyên bản | `run_sva.py` chạy bản sao dùng `$urandom` và `+verilator+seed`; số chu kỳ lõi có cache khác iverilog |
+| Verilator `--coverage` tính điểm theo từng cấu hình | nhánh phụ thuộc tham số luôn có điểm 0 ở cấu hình không dùng nó | đã nêu ở danh sách vùng chưa phủ, không tính là lỗ hổng thật |
+| Toggle coverage < 90 % | không thể đẩy lên cao nếu không đổi địa chỉ / tham số không dùng | giữ nguyên số thật |
+| cocotb chỉ kiểm cache và hệ thống bộ nhớ, không kiểm cả pipeline | pipeline kiểm bằng so vết Spike, SVA và riscv-formal | cocotb 1.9.2 + Verilator chậm hơn testbench thuần (khoảng 50-80 nghìn ns mô phỏng mỗi giây) |
+| Mô hình tham chiếu cache trong test Python do cùng người viết | lỗi hiểu giao thức có thể lọt cả hai phía | bù bằng SVA độc lập, `tb_cache_random.v` và các đột biến |
+
 ## Bus AXI4 và DMA cho SoC (`soc/axi/`)
 
 Bên cạnh bus ánh xạ bộ nhớ đơn giản ở trên, `soc/axi/axi_soc_top.v` là một SoC thứ hai (cùng lõi, cùng ngoại vi, cùng phần mềm C) dùng **AXI4 đầy đủ 5 kênh** (AW, W, B, AR, R) có burst, ID và nhiều master. Bản bus cũ vẫn còn và vẫn chạy trong `regress.sh`; hai bản dùng chung các test.
@@ -1018,11 +1097,12 @@ Thời gian mutation trên CI (đo 26/11/2026, mỗi nhóm một job, giới h�
 - Ngắt và `WFI` chỉ có ở pipeline RV32IM; chế độ S / U (`SU = 1`) và MMU Sv32 (`MMU = 1`) chưa có `menvcfg` / `senvcfg` và chưa có trong SoC hay riscv-formal; PLIC của SoC chỉ có một context M-mode; PMP chỉ có ở pipeline RV32IM, độ mịn cố định 4 byte, chưa có Smepmp (`mseccfg`); riscv-formal chạy với `PMP_N = 0` (bộ check không mô hình PMP), PMP chỉ được kiểm bằng so vết với Spike và đột biến
 - Pipeline RV32I chưa dự đoán JALR; ở RV32IM, BTB chỉ nhớ 1 đích cho mỗi JALR gián tiếp, RAS cập nhật ở EX nên lệnh trả về ngay sau lời gọi có thể đoán sai; gshare dùng chung bảng 64 mục nên dễ dẫm chỉ số
 - Bộ chia vẫn lặp (34 chu kỳ ở single-cycle, 19 ở RV32IM pipeline với `STEPS = 2`); bộ nhân song song chỉ có ở pipeline RV32IM và mới có tổng hợp + STA trước P&R, chưa qua flow; giá trị phép nhân (`mul/formal`) và phép chia (`formal/div`, k-quy nạp + đại số) được chứng minh riêng cho mọi toán hạng, phần ghép thời gian vào pipeline (`formal/stitch`) chỉ là BMC 60 chu kỳ từ reset (k-quy nạp không đóng), và chưa có một chứng minh nối giá trị kết quả với giá trị ghi vào rd của pipeline (phần đó dựa vào `insn_*` với ALTOPS và so vết Spike)
-- Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chỉ so với Spike ở mức hoàn tất lệnh (không kiểm `mtval` của lệnh bất hợp lệ); phần ngắt được so riêng ở `cosim/irq/`
+- Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chỉ so với Spike ở mức hoàn tất lệnh (giá trị `mtval` của mọi nguyên nhân trap được so; không so bộ đếm hiệu năng `mcycle` / `mhpmevent` vì RTL và Spike đếm khác nhau); phần ngắt được so riêng ở `cosim/irq/`
 - riscv-formal là BMC có độ sâu giới hạn, cho cấu hình `MISALIGNED = 0` không cache (cache và `MISALIGNED = 1` chỉ ở mức đã nêu ở trên); `mstatus`/`mepc`/`mcause`/`mtval` bị trap/MRET ghi nên chỉ qua `csrw` ở mức RVFI (thanh ghi thật được kiểm bằng so vết với Spike), còn `mie`/`mtvec` (gồm `mtvec` vectored) đã qua `csrw` và `csrc_any` có mặt nạ bit; phép nhân/chia trong check `insn_*` là ALTOPS, phép chia được chứng minh riêng ở `formal/div` và phép nhân ở `mul/formal`
 - Cache set-associative mặc định tắt (`WAYS = 1`) vì không lợi trên 2 benchmark hiện có; bản có cache không đạt timing 15 ns và dùng flip-flop thay SRAM; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
 - Lệnh nén C chỉ có ở pipeline RV32IM; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)
 - Chu kỳ tối thiểu của single-cycle là ngoại suy từ hai lần chạy, và công suất ở các chu kỳ khác nhau không so sánh trực tiếp được
+- Bộ phân xử bus ưu tiên cố định cho cache dữ liệu và không có đảm bảo công bằng (đo được cache lệnh chờ 112 giao dịch dữ liệu liên tiếp khi cache dữ liệu bị kích thích tối đa; trong chương trình thật dưới 32); SVA chỉ kiểm trong mô phỏng với tập con SVA của Verilator 5.020, không phải chứng minh hình thức (bảng giới hạn riêng ở mục Verilator, SVA và cocotb)
 - Mô phỏng gate-level chỉ ở mức chức năng (không SDF), làm cho hai lõi pipeline, chưa làm cho single-cycle; flow dùng SDC mặc định
