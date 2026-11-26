@@ -263,7 +263,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # do ngay 26/11/2026 (buoc Mutation, may CI): rvc 22 phut, random 1, cache 41, bpred 17, mul < 1, zb 1,5, soc 4,
+        # do ngay 26/11/2026 (buoc Mutation, may CI): rvc 22 phut, random 1, cache 31-41, bpred 17, tage 4, mul < 1, zb 1,5, soc 4,
         # axi 20, irq-0-14 17-23, irq-28-42 22, irq-42- (PMP, S/U, MMU: 67 dot bien) 10; irq-14-28 mat 39 roi 56 phut
         # (sat gioi han 60) nen tach doi: 14-21 khoang 17-25, 21-28 khoang 22-32. Truoc khi them
         # --stop-on-fail cho dot bien "rand", nhom bpred + mul + zb vuot 60 phut (moi dot bien bpred 8-17 phut).
