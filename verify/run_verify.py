@@ -299,10 +299,10 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("B: JAL khong nhay o ID (khi BTB chua co)", "wire id_late    = ~ifid_bp & (is_jal |", "wire id_late    = ~ifid_bp & (1'b0 |"),
     # pipeline RV32IM: dich "chay tiep" la pc_next (pc + 2 voi lenh nen, pc + 4 voi lenh 32 bit)
     ("B: doan sai nhay ve dich nham", "(idex_pred_taken ? pc_next : pc_imm)", "(idex_pred_taken ? pc_imm : pc_next)"),
-    ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= redirect_pc_q;"),
+    ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= rt_trap ? trap_pc : redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= rt_trap ? trap_pc : redirect_pc_q;"),
     ("P: khong huy lenh o ID sau khi nhay", "idex_valid_r <= ifid_valid & ~redirect_q & ~stall;", "idex_valid_r <= ifid_valid & ~stall;"),
     ("R: lenh o EX sau redirect khong bi vo hieu", "wire        idex_valid = idex_valid_r & ~redirect_q;", "wire        idex_valid = idex_valid_r;"),
-    ("R: redirect_pc_q khong dang ky (dung pc cu)", "pc         <= redirect_pc_q;", "pc         <= pc;"),
+    ("R: redirect_pc_q khong dang ky (dung pc cu)", "pc         <= rt_trap ? trap_pc : redirect_pc_q;", "pc         <= rt_trap ? trap_pc : pc;"),
     ("X: ID nhay som khi EX dang dong bang (lenh M)", "end else if (id_redirect & ~ex_stall) begin", "end else if (id_redirect) begin"),
     ("X: lenh trap van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall;"),
     ("X: mepc luu pc cua tang MEM", "tepc_q       <= idex_pc[31:1];", "tepc_q       <= exmem_pc[31:1];"),

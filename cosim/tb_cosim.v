@@ -401,6 +401,8 @@ module tb_cosim;
     // khi cac lenh cu hon (o MEM / WB luc nhan ngat) da hoan tat
     reg        irq_pend = 1'b0;
     reg [31:0] irq_cause, irq_epc, irq_tgt;
+    reg        irq_tgt_n = 1'b0;
+    always @(posedge clk) if (irq_tgt_n) begin irq_tgt <= dut.trap_pc; irq_tgt_n <= 1'b0; end
     reg [11:0] irq_mip;
     integer    n_irq = 0;
     wire [11:0] mip_now = dut.mip_v[11:0];          // ca bit ngat S (SU = 1; bang 0 khi SU = 0)
@@ -409,7 +411,7 @@ module tb_cosim;
             irq_pend  <= 1'b1;
             irq_cause <= dut.trap_cause;
             irq_epc   <= dut.idex_pc;
-            irq_tgt   <= dut.redirect_pc;
+            irq_tgt_n <= 1'b1;                    // dich trap (dut.trap_pc) co o chu ky sau
             irq_mip   <= mip_now;
             n_irq      = n_irq + 1;
         end
