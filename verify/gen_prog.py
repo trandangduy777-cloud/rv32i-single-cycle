@@ -42,13 +42,15 @@ def lui_addi(rd, val):
 
 
 class Gen:
-    def __init__(self, seed, n_body=300, profile="full", ma=False, zb=(), zb_probe=False):
+    def __init__(self, seed, n_body=300, profile="full", ma=False, zb=(), zb_probe=False, a=False, a_probe=False):
         """profile: "full" = RV32IM + CSR + trap; "irq" = "full" + CSR ngat mie/mip; "base" = chi RV32I thuan"""
         self.r = random.Random(seed)
         self.n_body = n_body
         self.ma = ma            # True: load/store lech chay bang phan cung (MISALIGNED = 1), sinh nhieu hon
         self.zb = tuple(zb)     # phan mo rong Zba/Zbb/Zbs/Zbc/Zicond dang bat: sinh lenh cua chung (xem u_zb)
         self.zb_probe = zb_probe   # True: sinh ca ma hop le cua phan mo rong DANG TAT va ma gan-hop-le (phai trap lenh bat hop le)
+        self.a = a              # mo rong A bat: sinh LR/SC/AMO (u_atomic), gom ca lech dia chi va xen ecall giua LR va SC
+        self.a_probe = a_probe  # sinh them ma AMO khong hop le (funct3 / funct5 la, LR co rs2 != 0); khi A tat moi ma AMO deu bat hop le
         self.base = (profile == "base")
         self.csrs = CSR_LIST + ([("mie", 0x304), ("mip", 0x344)] if profile == "irq" else [])
         self.bad_csrs = [0x000, 0x7C0, 0xB01, 0xC01, 0x100, 0x3F0]          # 0x3A0-0x3EF la CSR PMP
@@ -155,6 +157,71 @@ class Gen:
         elif name == "sw":
             off &= ~3
         return [enc_s(off, self.reg(), base, f3, 0b0100011)]
+
+    # ---- mo rong A ----
+    A_AMO = {"amoswap": 0b00001, "amoadd": 0b00000, "amoxor": 0b00100, "amoand": 0b01100, "amoor": 0b01000,
+             "amomin": 0b10000, "amomax": 0b10100, "amominu": 0b11000, "amomaxu": 0b11100}
+
+    @staticmethod
+    def enc_amo(f5, aq, rl, rs2, rs1, rd, f3=2):
+        return (f5 << 27) | (aq << 26) | (rl << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | 0b0101111
+
+    def u_atomic(self):
+        # dia chi vao thanh ghi t (addi t, x1, off); phan lon chia het 4, 10 % lech (luon trap, ke ca khi MISALIGNED = 1)
+        r = self.r
+        t = self.dst()
+        off = r.randint(0, 0x3FF) & ~3
+        if r.random() < 0.10:
+            off |= r.choice([1, 2, 3])
+        w = [enc_i(off, BASE_REG, 0, t, 0b0010011)]
+        aq, rl = r.getrandbits(1), r.getrandbits(1)
+        if r.random() < 0.45:                                    # AMO don le
+            f5 = r.choice(list(self.A_AMO.values()))
+            w.append(self.enc_amo(f5, aq, rl, self.reg(), t, self.dst()))
+            return w
+        if r.random() < 0.12:                                    # SC khong co LR (hoac LR cu da bi xoa)
+            w.append(self.enc_amo(0b00011, aq, rl, self.reg(), t, self.dst()))
+            return w
+        w.append(self.enc_amo(0b00010, aq, rl, 0, t, self.dst()))   # LR
+        for _ in range(r.choice([0, 0, 1, 1, 2])):               # xen giua LR va SC
+            k = r.random()
+            if k < 0.30:
+                w += self.u_alu_i()
+            elif k < 0.50:
+                w.append(enc_s(0, self.reg(), t, 2, 0b0100011))     # sw ... (t): store vao dung tu dang dat cho
+            elif k < 0.62:
+                w.append(enc_s(r.choice([4, -4, 8]) & 0xFFF, self.reg(), t, 2, 0b0100011))   # store sang tu ke ben
+            elif k < 0.74:
+                w.append(self.enc_amo(r.choice(list(self.A_AMO.values())), 0, 0, self.reg(), t, self.dst()))   # AMO cung dia chi
+            elif k < 0.84:
+                w.append(0x00000073)                              # ecall: trap xoa dat cho
+            elif k < 0.92:
+                w.append(self.enc_amo(0b00010, 0, 0, 0, self.reg(), self.dst()))   # LR khac: doi dia chi dat cho
+            else:
+                w += self.u_load()
+        k = r.random()
+        if k < 0.20:                                             # SC sang tu ke ben (that bai, van xoa dat cho cua LR), roi SC dung tu
+            u = self.dst()
+            w.append(enc_i(r.choice([4, -4]) & 0xFFF, t, 0, u, 0b0010011))
+            w.append(self.enc_amo(0b00011, aq, rl, self.reg(), u, self.dst()))
+        w.append(self.enc_amo(0b00011, aq, rl, self.reg(), t, self.dst()))   # SC
+        if k >= 0.80:                                            # SC thu hai ngay sau (luon that bai: SC xoa dat cho)
+            w.append(self.enc_amo(0b00011, 0, 0, self.reg(), t, self.dst()))
+        return w
+
+    def u_atomic_probe(self):
+        r = self.r
+        k = r.randint(0, 3)
+        rs1, rd, rs2 = self.reg(), self.dst(), self.reg()
+        if k == 0:                                               # funct3 khac 010 (amo.d, ...)
+            return [self.enc_amo(r.choice(list(self.A_AMO.values()) + [2, 3]), r.getrandbits(1), r.getrandbits(1), rs2, rs1, rd,
+                                 r.choice([0, 1, 3, 4, 5, 6, 7]))]
+        if k == 1:                                               # funct5 khong dung (00101 ...)
+            f5 = r.choice([x for x in range(32) if x not in list(self.A_AMO.values()) + [2, 3]])
+            return [self.enc_amo(f5, 0, 0, rs2, rs1, rd)]
+        if k == 2:                                               # LR voi rs2 != 0
+            return [self.enc_amo(0b00010, 0, 0, r.randint(1, 31), rs1, rd)]
+        return [self.enc_amo(r.choice(list(self.A_AMO.values()) + [2, 3]), 0, 0, rs2, rs1, rd)]   # hop le (phai trap khi A tat)
 
     def u_branch(self):
         name = self.r.choice(list(BR))
@@ -397,6 +464,10 @@ class Gen:
             makers += [(self.u_zb, 30), (self.u_zb_li, 6)]
         if self.zb_probe:
             makers += [(self.u_zb_probe, 8)]
+        if self.a:
+            makers += [(self.u_atomic, 14)]
+        if self.a or self.a_probe:
+            makers += [(self.u_atomic_probe, 6 if self.a_probe else 2)]
         fns = [m for m, w in makers]
         wts = [w for m, w in makers]
         units = []

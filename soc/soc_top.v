@@ -1,6 +1,10 @@
 // SoC nho quanh pipeline RV32IMC (rv32im_pipeline, ENABLE_C = 1): ROM + RAM + CLINT (rv32_mtimer) + PLIC + UART + GPIO + SYSCON qua soc_bus.
 // Bo nho to hop nen dmem_ready = imem_ready = 1; khong co cache. irq_ext = dau ra PLIC (UART RX, UART TX, GPIO, 4 ngat ngoai); irq_timer / irq_soft tu CLINT.
+`ifndef SOC_A_EXT
+`define SOC_A_EXT 0                // -DSOC_A_EXT=1: lõi có mở rộng A (LR / SC / AMO)
+`endif
 module soc_top #(
+    parameter        A_EXT       = `SOC_A_EXT,        // mở rộng A của lõi (0 / 1)
     parameter        ROM_WORDS   = 4096,                  // 16 KB
     parameter        RAM_WORDS   = 4096,                  // 16 KB
     parameter        ROM_INIT    = "",                    // file hex (moi dong 1 tu 32 bit), de trong = nap tu testbench
@@ -29,7 +33,7 @@ module soc_top #(
     wire        irq_timer, irq_soft, irq_ext, irq_uart, irq_uart_rx, irq_uart_tx, irq_gpio, sel_plic;
     wire [31:0] plic_rd;
 
-    rv32im_pipeline #(.ENABLE_C(1)) u_core (
+    rv32im_pipeline #(.ENABLE_C(1), .A_EXT(A_EXT)) u_core (
         .clk(clk), .rst_n(rst_n),
         .imem_addr(imem_addr), .imem_data(imem_data), .imem_ready(1'b1),
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata), .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),

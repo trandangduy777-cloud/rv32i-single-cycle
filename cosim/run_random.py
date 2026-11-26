@@ -33,8 +33,10 @@ EXTRA_CORES = [
      "-DPIPE_FULL -DRVC -DTAGEON -DBTBN=64 -DRASN=8 -DCACHE -DICL=4 -DICW=2 -DDCL=4 -DDCW=2 -DCWY=2",
      rc.CACHE_FILES + ["rv32_tage.v"], "rv32imc_zifencei", ["+lat=5", "+seed=29"]),
 ]
+# cac loi co A (-DSKIP_TRAPPED) khong in lenh bi trap; run_random can RTL bao lenh do, nen bo ra (loi A duoc kiem trong run_cosim.py)
 # cac loi TAGE them sau vao run_cosim.CORES dat cuoi danh sach de chi so cu (--core, run_vlcov, run_directed) khong doi
-ALL_CORES = [c for c in rc.CORES if "TAGE" not in c[0]] + EXTRA_CORES + [c for c in rc.CORES if "TAGE" in c[0]]
+ALL_CORES = ([c for c in rc.CORES if "TAGE" not in c[0] and "SKIP_TRAPPED" not in c[1]] + EXTRA_CORES +
+             [c for c in rc.CORES if "TAGE" in c[0]])
 
 
 def sh(cmd, **kw):

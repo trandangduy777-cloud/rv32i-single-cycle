@@ -90,6 +90,7 @@ Phần mở rộng M: `MUL MULH MULHSU MULHU DIV DIVU REM REMU`.
 Phần mở rộng C (chỉ pipeline RV32IM, `ENABLE_C = 1`): mọi lệnh nén RV32C không dùng số thực.
 Bộ đếm (chỉ pipeline RV32IM, `ZICNTR = 1`, mặc định bật): Zicntr `mcycle`/`minstret` (và `cycle`/`instret`), Zihpm với `HPM_N` (mặc định 4) bộ đếm sự kiện `mhpmcounter3..`, `mcountinhibit`.
 Zba / Zbb / Zbs / Zbc / Zicond (chỉ pipeline RV32IM, tham số `ZBA`, `ZBB`, `ZBS`, `ZBC`, `ZICOND`, mặc định tắt): kiểm bằng so vết ISS, so vết Spike, riscv-tests `rv32uzb*` và `zb/mutate_zb.py`; chưa qua riscv-formal, chưa có số timing (chỉ diện tích trước P&R).
+Phần mở rộng A (chỉ pipeline RV32IM, `A_EXT = 1`): `LR.W SC.W AMOSWAP.W AMOADD.W AMOXOR.W AMOAND.W AMOOR.W AMOMIN.W AMOMAX.W AMOMINU.W AMOMAXU.W`, bit `aq`/`rl` được nhận (lõi một hart, thứ tự bộ nhớ vốn đã tuần tự).
 
 ## Phần mở rộng M
 - Bộ nhân/chia lặp, mỗi chu kỳ xử lý 1 bit, một lệnh M mất 34 chu kỳ (1 nhận toán hạng, 32 lặp, 1 hoàn tất). Trong lúc đó lõi giữ nguyên PC (stall).
@@ -324,6 +325,43 @@ Kiểm chứng (`rvc/`, `cosim/`):
 ```
 python3 rvc/check_decompress.py
 python3 rvc/mutate_rvc.py <thư mục riscv-tests> [--spike <đường dẫn spike>]
+```
+
+## Mở rộng A: LR/SC và AMO (pipeline RV32IM, `A_EXT = 1`)
+Bật bằng tham số `A_EXT = 1` của `rv32im_pipeline`; mặc định 0 nên phần cứng, mọi số liệu cũ, riscv-formal và CI cũ không đổi (khi tắt, cả chín AMO lẫn LR/SC đều là lệnh không hợp lệ, `misa` không có bit A).
+
+- **AMO đọc–sửa–ghi 2 pha ở MEM**, giữ pipeline: pha 0 đọc ô nhớ (`dmem_re`) và chốt giá trị cũ vào `amo_old` (chính là kết quả ghi vào `rd`), pha 1 ghi giá trị mới do ALU của AMO tính từ `amo_old` và `rs2` (`dmem_we`). Mỗi pha chờ `dmem_ready` riêng, nên chạy đúng qua cache `rv32_dcache.v` (đi qua bộ đệm ghi như một load rồi một store) và qua bộ nhớ có độ trễ. AMO và SC coi như lệnh "load" khi xét hazard: lệnh dùng `rd` ngay sau nó chờ thêm 1 chu kỳ.
+- **LR/SC**: một vùng đặt chỗ 1 từ (`res_v`, `res_a`). LR đặt chỗ khi hoàn tất; SC thành công (ghi 0 vào `rd`, ghi bộ nhớ) khi còn đặt chỗ đúng địa chỉ, ngược lại ghi 1 vào `rd` và **không ghi bộ nhớ**; SC nào (thành công hay không) cũng xoá đặt chỗ; trap và ngắt xoá đặt chỗ; LR sau đổi địa chỉ đặt chỗ. `A_ST_CLR = 0` (mặc định) khớp Spike: store thường hay AMO vào chính từ đang đặt chỗ **không** xoá nó. `A_ST_CLR = 1` là chế độ chặt hơn (cả hai đều xoá), kiểm bằng ISS vì Spike không làm vậy.
+- **Truy cập lệch luôn trap**, kể cả `MISALIGNED = 1`: LR lệch là cause 4 (load address misaligned), SC và AMO lệch là cause 6 (store/AMO address misaligned), `mtval` là địa chỉ.
+- **Giải mã chặt**: `funct3 = 010`, `funct5` thuộc 11 mã hợp lệ, LR phải có `rs2 = 0`; mã còn lại (AMO.D, `funct5 = 00101`...) là lệnh không hợp lệ.
+
+Chi phí tổng hợp trước P&R (SG13G2, `synth/run_synth_a.sh`, Yosys + ABC, góc chậm 1,08 V 125 C, 15 ns, cùng quy trình `run_synth_sta.sh`):
+
+| Cấu hình | Diện tích | Số cell |
+|---|---|---|
+| `A_EXT = 0` | 431.865 µm² | 32.697 |
+| `A_EXT = 1` | 446.491 µm² (**+3,4 %**) | 33.882 |
+| `A_EXT = 1, A_ST_CLR = 1` | 446.337 µm² | 33.739 |
+
+**Slack chưa đo**: máy chạy không có OpenSTA nên chỉ có diện tích. ALU của AMO (cộng, so sánh có dấu, mux 9 đường) nằm trước dữ liệu ghi của cổng bộ nhớ ở tầng MEM, nên đây là nơi cần xem đầu tiên; chưa có số liệu thì không kết luận được lõi có còn đạt 15 ns hay không. Lệnh chạy lại trên máy có OpenSTA: `STA=sta sh synth/run_synth_a.sh <thư mục lib sg13g2_stdcell>`.
+
+Kiểm chứng:
+- **riscv-tests `rv32ua-p-*`** (10 chương trình: 9 AMO và `lrsc`) trên lõi RV32IM + A: 10/10 đạt (`riscv-tests/run_riscv_tests.py`).
+- **So từng lệnh với ISS Python** (`verify/rv32i_iss.py` có A; `--a`, `--a-st-clr`, `--a-probe`): bộ sinh chương trình có profile A (AMO đơn lẻ, cặp LR/SC với store cùng từ / từ kề / AMO cùng địa chỉ / ecall / LR khác xen giữa, SC không có LR, SC kép, SC sang từ kề rồi SC đúng từ, 10 % truy cập lệch, mã lệnh A bất hợp lệ). Đã thêm 5 cấu hình vào `tools/regress.sh` bước 2 và CI (A, A + chế độ chặt + cache, A + lệch + cache, A + bpstress, A tắt + mã A giả); bộ giám sát bus ở `verify/tb_trace_pipe.v` bắt AMO ghi bộ nhớ ngoài pha ghi.
+- **So vết với Spike** (`cosim/run_cosim.py`, `--isa=rv32imac_zifencei`): 3 lõi mới (RV32IMC + A; + cache 2x2, trễ 1–8; + lệch phần cứng + cache 2x2) chạy `rv32ua-p-*` (bản thường và bản nén) và `cosim/tests/atomic.S` (124.007 lệnh: mỗi AMO × 144 cặp giá trị biên, 14 tình huống đặt chỗ, LR/SC/AMO lệch, hazard, 800 thao tác ngẫu nhiên): khớp từng lệnh, từng lần ghi.
+- **A + PMP** (`cosim/tests/atomic_pmp.S`, 148 lệnh, 3 lõi A khớp Spike): AMO cần cả quyền R và W của mục PMP khớp (vi phạm là cause 7), LR chỉ cần R, SC cần W và bị kiểm như store kể cả khi sẽ thất bại (Spike chỉ kiểm khi còn đặt chỗ; spec cho phép cả hai, nên test chỉ thử SC khi có đặt chỗ), lệch địa chỉ vẫn là cause 4 / 6 trước cause 5 / 7. Bỏ `idex_amo` khỏi điều kiện lỗi PMP thì test này lệch ngay trên cả 3 lõi.
+- **A + S/U + MMU Sv32** (`cosim/irq/mmu.S` pha 9, 2 lõi `RV32IMAC + S/U + MMU` thường và cache 2x2 trễ 1–8, khớp Spike MSU Sv32): LR dịch như load, SC và AMO dịch như store (AMO cần cả R và W; page fault cause 15, access fault cause 7 khi địa chỉ vật lý ≥ 2^32; LR cause 13 / 5); lệch địa chỉ vẫn trap trước (cause 4 / 6, `mtval` = địa chỉ ảo); AMO nhường cổng bộ nhớ cho bộ duyệt bảng trang.
+- **A trên SoC** (`soc/sw/t_atomic.c`, `python3 soc/run_soc.py --a` và `--axi --a`, biên dịch `-march=rv32imac`, SoC với `SOC_A_EXT = 1`): 9 AMO × 64 cặp giá trị biên so với tham chiếu C, LR/SC, ngắt giữa LR và SC (SC phải thất bại), đếm nguyên tử giữa chương trình chính và ISR (ngắt không xen vào giữa đọc và ghi của AMO), khóa `amoswap` với ISR tranh khóa, LR/SC/AMO lệch địa chỉ. Chạy trên cả SoC bus thường và SoC AXI4 (cache + cầu ngoại vi), cùng 9 chương trình C cũ trên lõi có A; bỏ đặt chỗ khi trap bị tắt thì `t_atomic` thất bại.
+- **Một điểm khác Spike đã biết**: Spike xen kẽ mỗi 5000 lệnh và bỏ đặt chỗ ở ranh giới đó, nên SC ngay sau mốc có thể thất bại dù đúng địa chỉ (spec cho phép; chỉ đảm bảo tiến trình với vòng LR/SC ràng buộc). `run_cosim.py` chỉ chấp nhận đúng mẫu này (cùng pc, Spike `rd = 1`, RTL thành công, thứ tự lệnh Spike là 1–4 sau bội số của 5000) và bỏ đoạn vòng lặp thừa bên Spike; mẫu khác vẫn là lỗi. Cùng lúc, testbench không in lệnh bị trap nữa (Spike không ghi lệnh trap vào vết).
+- **Đột biến** (`a/mutate_a.py`, bước 35 của `tools/regress.sh`): 43 đột biến, đều bị bắt, gồm sai thao tác từng AMO, AMO không ghi / ghi hai lần / không đọc / trả giá trị mới, SC thành công sai địa chỉ hoặc khi không đặt chỗ, `rd` của SC sai, SC thất bại vẫn ghi, SC / trap không xoá đặt chỗ, LR không đặt chỗ hoặc đặt sai địa chỉ, truy cập lệch không trap (từng offset, từng loại lệnh), giải mã (funct3, funct5, rs2 của LR, A tắt), hazard, `misa`, hai chế độ đặt chỗ. Ba đột biến tương đương (không quan sát được từ bên ngoài, vd. chép lại `amo_old` ở pha ghi) đã bỏ khỏi danh sách.
+
+```
+python3 riscv-tests/run_riscv_tests.py <thư mục riscv-tests>
+cd verify && python3 run_verify.py --pipem --a --a-probe --cache
+python3 cosim/run_cosim.py <thư mục riscv-tests> --spike <spike> --only atomic
+python3 a/mutate_a.py [--jobs 2]
+sh soc/sw/build.sh && python3 soc/run_soc.py --a
+sh synth/run_synth_a.sh <thư mục lib sg13g2_stdcell>
 ```
 
 ## Ngắt và WFI (pipeline RV32IM)
@@ -1100,6 +1138,7 @@ Thời gian mutation trên CI (đo 26/11/2026, mỗi nhóm một job, giới h�
 - Mô hình tham chiếu Python và RTL do cùng một người viết; bù lại bằng riscv-tests và so từng lệnh với Spike, nhưng chương trình ngẫu nhiên chỉ so với Spike ở mức hoàn tất lệnh (giá trị `mtval` của mọi nguyên nhân trap được so; không so bộ đếm hiệu năng `mcycle` / `mhpmevent` vì RTL và Spike đếm khác nhau); phần ngắt được so riêng ở `cosim/irq/`
 - riscv-formal là BMC có độ sâu giới hạn, cho cấu hình `MISALIGNED = 0` không cache (cache và `MISALIGNED = 1` chỉ ở mức đã nêu ở trên); `mstatus`/`mepc`/`mcause`/`mtval` bị trap/MRET ghi nên chỉ qua `csrw` ở mức RVFI (thanh ghi thật được kiểm bằng so vết với Spike), còn `mie`/`mtvec` (gồm `mtvec` vectored) đã qua `csrw` và `csrc_any` có mặt nạ bit; phép nhân/chia trong check `insn_*` là ALTOPS, phép chia được chứng minh riêng ở `formal/div` và phép nhân ở `mul/formal`
 - Cache set-associative mặc định tắt (`WAYS = 1`) vì không lợi trên 2 benchmark hiện có; bản có cache không đạt timing 15 ns và dùng flip-flop thay SRAM; khi đóng băng, lệnh M đang chạy ở EX có thể phải tính lại (đúng nhưng chậm)
+- Mở rộng A (`A_EXT = 1`) chỉ có ở pipeline RV32IM, một hart: đặt chỗ chỉ thấy store của chính lõi (không thấy DMA hay master khác), AMO/LR/SC vào thanh ghi thiết bị của SoC vẫn là đọc rồi ghi (có tác dụng phụ, không báo access fault), timing chưa đo (không có OpenSTA), và cổng RVFI / riscv-formal chỉ đúng với `A_EXT = 0`
 - Lệnh nén C chỉ có ở pipeline RV32IM; bộ nhớ lệnh phải đọc được 32 bit ở địa chỉ chia hết cho 2
 - Công suất dùng hoạt động chuyển mạch mặc định của công cụ, chỉ mang tính ước tính
 - Hai lõi pipeline khác nhau ở cách xử lý redirect: RV32IM đăng ký redirect (phạt 3 chu kỳ) mới đạt timing, RV32I vẫn áp redirect ngay (phạt 2 chu kỳ)

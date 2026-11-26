@@ -27,7 +27,7 @@ def sh(cmd, cwd, timeout=600):
     return p.returncode, p.stdout
 
 
-def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False, axi=False, axi_units=True):
+def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False, axi=False, axi_units=True, a_ext=False):
     """rtl_root: thu muc co soc/ va cac file loi; sw_dir: noi co <ten>.hex va .exp. Tra ve danh sach (ten, dat, thong_tin, giay)."""
     res = []
 
@@ -76,6 +76,8 @@ def run_suite(rtl_root, sw_dir, work, stop_first=False, verbose=True, rtos=False
     else:
         socfiles = [soc(f) for f in sorted(os.listdir(os.path.join(rtl_root, "soc"))) if f.startswith("soc_") and f.endswith(".v")]
         core, defs, progs, tag = CORE, [], PROGS, ""
+    if a_ext:                                    # loi co mo rong A: them chuong trinh t_atomic (AMO, LR / SC, ngat, lech dia chi)
+        defs, progs, tag = defs + ["-DSOC_A_EXT=1"], progs + [("t_atomic", 0)], tag + "A: "
     rc, out = sh(["iverilog", "-g2012"] + defs + ["-o", exe, soc("tb/tb_soc.v")] + socfiles + [os.path.join(rtl_root, f) for f in core], rtl_root)
     if rc != 0:
         add("tb_soc (bien dich)", False, out.strip().splitlines()[-1][:100], t0)
@@ -120,6 +122,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", action="store_true", help="bien dich lai phan mem truoc")
     ap.add_argument("--stop-first", action="store_true")
+    ap.add_argument("--a", action="store_true", help="SoC voi loi co mo rong A (SOC_A_EXT = 1): chay them t_atomic")
     ap.add_argument("--axi", action="store_true", help="chay bo kiem tren SoC AXI4 (soc/axi/axi_soc_top.v, phan mem trong soc/sw/build_axi)")
     a = ap.parse_args()
     if a.build:
@@ -132,7 +135,7 @@ def main():
         print("chua co soc/sw/build/*.hex: chay voi --build (can riscv64-unknown-elf-gcc)")
         sys.exit(1)
     with tempfile.TemporaryDirectory() as work:
-        res = run_suite(ROOT, sw, work, a.stop_first, rtos=os.path.exists(os.path.join(HERE, "freertos", "build_axi" if a.axi else "build", "rtos_demo.hex")), axi=a.axi)
+        res = run_suite(ROOT, sw, work, a.stop_first, rtos=os.path.exists(os.path.join(HERE, "freertos", "build_axi" if a.axi else "build", "rtos_demo.hex")), axi=a.axi, a_ext=a.a)
     bad = [r for r in res if not r[1]]
     print("[soc] %s: %d/%d buoc dat" % ("DAT" if not bad else "THAT BAI", len(res) - len(bad), len(res)))
     sys.exit(1 if bad else 0)

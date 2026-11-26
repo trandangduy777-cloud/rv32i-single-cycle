@@ -34,8 +34,11 @@ def s32(v):
 
 
 class ISS:
-    def __init__(self, prog, dmem=None, irq_csrs=False, misaligned_hw=False, zb=()):
+    def __init__(self, prog, dmem=None, irq_csrs=False, misaligned_hw=False, zb=(), a_ext=False, a_st_clr=False):
         self.zb = frozenset(zb)          # phan mo rong bit-manip/Zicond dang bat (rv32_zb.ALL_EXTS); rong = RV32IM nhu cu
+        self.a = a_ext                   # mo rong A (LR/SC, AMO); misa co bit A
+        self.a_st_clr = a_st_clr         # True: store thuong cua chinh lo va AMO vao tu dang dat cho xoa dat cho (A_ST_CLR = 1)
+        self.res = None                  # tu (dia chi chia 4) dang dat cho cua LR, hoac None
         self.ma = misaligned_hw          # True: load/store lech dia chi chay binh thuong (khong trap), giong MISALIGNED = 1
         self.imem = list(prog) + [NOP] * (MEM_WORDS - len(prog))
         self.dmem = list(dmem) + [0] * (MEM_WORDS - len(dmem)) if dmem else [0] * MEM_WORDS
@@ -59,7 +62,7 @@ class ISS:
         if addr == 0x300:
             return 0x1800 | (self.mpie << 7) | (self.mie << 3)
         if addr == 0x301:
-            return 0x40001100              # misa: RV32, I, M
+            return 0x40001100 | (1 if self.a else 0)     # misa: RV32, I, M (va A)
         if addr == 0x305:
             return self.mtvec & ~3 & M32
         if addr == 0x340:
@@ -185,6 +188,41 @@ class ISS:
                 store = (addr, data & mask, strb)
             if not self.ma and ((f3 == 1 and addr & 1) or (f3 == 2 and addr & 3)):
                 trap = (6, addr)
+        elif self.a and op == 0b0101111 and f3 == 2 and (ins >> 27) in (0b00010, 0b00011, 0b00001, 0b00000, 0b00100, 0b01100,
+                                                                           0b01000, 0b10000, 0b10100, 0b11000, 0b11100) \
+                and ((ins >> 27) != 0b00010 or rs2 == 0):
+            # mo rong A: aq / rl (bit 26, 25) chap nhan moi gia tri. LR cause 4 khi lech, SC / AMO cause 6, ca khi MISALIGNED = 1
+            f5 = ins >> 27
+            addr = a
+            word = self.dmem[(addr >> 2) & (MEM_WORDS - 1)]
+            if f5 == 0b00010:
+                name = "lr.w"; wr = (rd, word)
+                if addr & 3:
+                    trap = (4, addr)
+                else:
+                    self.res = addr >> 2
+            elif f5 == 0b00011:
+                name = "sc.w"
+                if addr & 3:
+                    trap = (6, addr)
+                else:
+                    if self.res == addr >> 2:
+                        wr = (rd, 0); store = (addr, b, 0xF)
+                        self.coverage["sc_ok"] = self.coverage.get("sc_ok", 0) + 1
+                    else:
+                        wr = (rd, 1)
+                        self.coverage["sc_fail"] = self.coverage.get("sc_fail", 0) + 1
+                    self.res = None
+            else:
+                name = {0b00001: "amoswap.w", 0b00000: "amoadd.w", 0b00100: "amoxor.w", 0b01100: "amoand.w", 0b01000: "amoor.w",
+                        0b10000: "amomin.w", 0b10100: "amomax.w", 0b11000: "amominu.w", 0b11100: "amomaxu.w"}[f5]
+                if addr & 3:
+                    trap = (6, addr)
+                else:
+                    new = {0b00001: b, 0b00000: (word + b) & M32, 0b00100: word ^ b, 0b01100: word & b, 0b01000: word | b,
+                           0b10000: word if s32(word) < s32(b) else b, 0b10100: b if s32(word) < s32(b) else word,
+                           0b11000: word if word < b else b, 0b11100: b if word < b else word}[f5]
+                    wr = (rd, word); store = (addr, new, 0xF)
         elif self.zb and op in (0b0110011, 0b0010011) and rv32_zb.decode(self.zb, op, f3, f7, rs2):
             name = rv32_zb.decode(self.zb, op, f3, f7, rs2)
             wr = (rd, rv32_zb.execute(name, a, rs2 if op == 0b0010011 else b))      # dang immediate: toan hang 2 = shamt
@@ -279,6 +317,7 @@ class ISS:
             self.coverage["trap:%d" % cause] = self.coverage.get("trap:%d" % cause, 0) + 1
             wr = None
             store = None
+            self.res = None                  # trap / ngat xoa dat cho
             self.mepc = pc
             self.mcause = cause
             self.mtval = tval & M32
@@ -300,6 +339,8 @@ class ISS:
             line_rd, line_val = 0, 0
         if store:
             addr, data, strb = store
+            if self.a_st_clr and self.res is not None and name != "sc.w" and (addr >> 2) == self.res:
+                self.res = None
             if strb >> 4:                # vat qua tu: in 64 bit / wstrb 8 bit nhu testbench RTL
                 line = (f"pc={pc:08x} ins={ins:08x} rd={line_rd} val={line_val:08x} "
                         f"st=1 addr={addr:08x} data={data:016x} strb={strb:02x}")

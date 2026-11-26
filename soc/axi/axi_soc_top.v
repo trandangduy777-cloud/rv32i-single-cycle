@@ -4,7 +4,11 @@
 //   DMA 0x2001_0000 (thanh ghi) va 0x4000_0000 = bi danh RAM, KHONG qua cache du lieu (CMASK / CBASE chi cache 0x1000_0000..0x1FFF_FFFF) - bo dem cua DMA dat o day de khong bi dong cache cu.
 // Ngat PLIC: nguon 1..7 nhu soc_top, 8 = DMA kenh 0, 9 = DMA kenh 1.
 // Cache du lieu / lenh la write-through, khong tu dong nhat quan voi DMA: phan mem dung cua so 0x4000_0000 cho bo dem DMA, hoac FENCE / FENCE.I truoc khi doc lai vung cacheable.
+`ifndef SOC_A_EXT
+`define SOC_A_EXT 0                // -DSOC_A_EXT=1: lõi có mở rộng A (LR / SC / AMO)
+`endif
 module soc_axi_top #(
+    parameter        A_EXT       = `SOC_A_EXT,        // mở rộng A của lõi (0 / 1)
     parameter        ROM_WORDS   = 4096,
     parameter        RAM_WORDS   = 4096,
     parameter        ROM_INIT    = "",
@@ -35,7 +39,7 @@ module soc_axi_top #(
     wire        dmem_we, dmem_re, dmem_fence, icache_flush, imem_ready, dmem_ready;
     wire        irq_timer, irq_soft, irq_ext;
 
-    rv32im_pipeline #(.ENABLE_C(1)) u_core (
+    rv32im_pipeline #(.ENABLE_C(1), .A_EXT(A_EXT)) u_core (
         .clk(clk), .rst_n(rst_n),
         .imem_addr(imem_addr), .imem_data(imem_data), .imem_ready(imem_ready),
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata), .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),

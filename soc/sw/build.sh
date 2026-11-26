@@ -7,12 +7,13 @@ OUT=build; EXTRA=""
 if [ -n "$AXI" ]; then OUT=build_axi; EXTRA="-DAXI_SOC"; fi
 mkdir -p $OUT
 CC=riscv64-unknown-elf-gcc
-CFLAGS="$EXTRA -march=rv32imc_zicsr -mabi=ilp32 -Os -g0 -ffreestanding -fno-builtin -fno-pic -mno-relax -nostdlib -nostartfiles -Wall -Wextra -Werror"
-DEF="hello t_mem t_timer t_uart t_gpio t_irq_uart t_mepc t_ramexec t_plic"
+CFLAGS="$EXTRA -mabi=ilp32 -Os -g0 -ffreestanding -fno-builtin -fno-pic -mno-relax -nostdlib -nostartfiles -Wall -Wextra -Werror"
+DEF="hello t_mem t_timer t_uart t_gpio t_irq_uart t_mepc t_ramexec t_plic t_atomic"   # t_atomic chi chay tren SoC co A (run_soc.py --a)
 [ -n "$AXI" ] && DEF="$DEF t_dma"     # t_dma chi chay tren SoC AXI4
 LIST=${*:-$DEF}
 for t in $LIST; do
-    $CC $CFLAGS -T link.ld -Wl,--no-warn-rwx-segments,-Map=$OUT/$t.map -o $OUT/$t.elf crt0.S trap_default.c $t.c
+    M=rv32imc_zicsr; [ "$t" = t_atomic ] && M=rv32imac_zicsr     # chi t_atomic dung lenh A
+    $CC $CFLAGS -march=$M -T link.ld -Wl,--no-warn-rwx-segments,-Map=$OUT/$t.map -o $OUT/$t.elf crt0.S trap_default.c $t.c
     riscv64-unknown-elf-objcopy -O binary $OUT/$t.elf $OUT/$t.bin
     riscv64-unknown-elf-objdump -d -M no-aliases $OUT/$t.elf > $OUT/$t.lst
     python3 - "$t" "$OUT" <<'PY'

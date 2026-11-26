@@ -144,7 +144,7 @@ MUTATIONS = [
      "wire [31:0] st_data = ma_phase ? st_wide[63:32] : st_wide[31:0];",
      "wire [31:0] st_data = ma_phase ? st_wide[31:0] : st_wide[31:0];", "ma"),
     ("lech: khong dong bang o pha 0", "rv32im_pipeline.v",
-     "wire   mem_last   = ~ma_cross | ma_phase;", "wire   mem_last   = 1'b1;", "ma"),
+     "wire   mem_last   = (~ma_cross | ma_phase) & (~exmem_amo | amo_phase);", "wire   mem_last   = (~exmem_amo | amo_phase);", "ma"),
     ("lech: chi tach word, half o byte 3 khong tach", "rv32im_pipeline.v",
      "(acc_strb8[7:4] != 4'b0000);", "(acc_strb8[7:4] != 4'b0000) & (exmem_funct3[1:0] == 2'b10);", "ma"),
     ("lech: pha khong ve 0 sau pha 1", "rv32im_pipeline.v",

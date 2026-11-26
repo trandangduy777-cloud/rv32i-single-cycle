@@ -66,6 +66,12 @@ module tb_cosim;
 `ifndef ZICOND
 `define ZICOND 0
 `endif
+`ifndef A_EXT
+`define A_EXT 0
+`endif
+`ifndef A_ST_CLR
+`define A_ST_CLR 0
+`endif
 // che do Supervisor / User: -DSU
 `ifdef SU
 `define SUP 1
@@ -84,7 +90,7 @@ module tb_cosim;
 `else
 `define TAGEP 0
 `endif
-`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP), .TAGE(`TAGEP)
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP), .TAGE(`TAGEP), .A_EXT(`A_EXT), .A_ST_CLR(`A_ST_CLR)
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
@@ -353,8 +359,16 @@ module tb_cosim;
     // pipeline: tang WB (pipeline RV32IM: wb_commit, moi lenh dung 1 lan ke ca khi pipeline dong bang)
 `ifdef PIPE_FULL
     wire commit = dut.wb_commit;
+    // lenh vao trap (ecall, lech dia chi, bat hop le...) khong ghi gi; Spike khong ghi no vao vet cam ket => khong in
+    // (ecall / ebreak van in: run_cosim.py va so vet ngat tu loc theo ma lenh)
+`ifdef SKIP_TRAPPED
+    wire trap_skip = dut.memwb_trap && dut.memwb_instr != 32'h00000073 && dut.memwb_instr != 32'h00100073 && dut.memwb_instr[15:0] != 16'h9002;
+`else
+    wire trap_skip = 1'b0;
+`endif
 `else
     wire commit = dut.memwb_valid;
+    wire trap_skip = 1'b0;
 `endif
 
 `ifdef CACHE
@@ -431,7 +445,7 @@ module tb_cosim;
                 if (!quiet) $display("irq cause=%08x epc=%08x mip=%03x", irq_cause, irq_epc, irq_mip);
                 irq_pend <= 1'b0;
             end
-            if (quiet) ;
+            if (quiet || trap_skip) ;
             else if (t_s[7:4] != 4'b0000)
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x mip=%03x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
@@ -442,7 +456,7 @@ module tb_cosim;
                          dut.memwb_tst, `TVA, t_d[31:0], t_s[3:0], mip_now);
             end
 `else
-            if (quiet) ;
+            if (quiet || trap_skip) ;
             else if (t_s[7:4] != 4'b0000)
                 $display("pc=%08x ins=%08x rd=%0d val=%08x st=%0d addr=%08x data=%016x strb=%02x",
                          dut.memwb_pc, dut.memwb_instr, rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,

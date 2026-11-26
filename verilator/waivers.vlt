@@ -66,27 +66,27 @@ lint_off -rule WIDTHTRUNC -file "*rv32i_core.v" -lines 425
 
 
 // ifid_bhit, if_dec_ill, idex_rs2, idex_imm_op, z_rot[63:32], trap_cause[30:4], acc_strb8[3:0]: tin hieu trung gian hoac bit cao khong dung (trap_cause chi co 4 bit thap + bit ngat)
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 201
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 234
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 589
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 611
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 802
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1110
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1433
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 204
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 237
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 604
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 630
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 823
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1136
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1490
 
 // memwb_pc / instr / tst / taddr / tdata / tstrb / tirq: duoc testbench doc qua phan cap (vet RVFI-like), khong co tai trong thiet ke tong hop
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1492-1498
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1567-1573
 
 // GHR_BITS = 0 thi ghr rong 1 bit (GB), so sanh chi so voi bien vong lap / bien dem hpm; hang so 12'h323 + hj: hj <= 3; mat na HPM_N bit
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 517
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1375
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1805
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1808
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1812
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 532
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1401
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1880
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1883
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1887
 
 // ghr <= {ghr, take_branch} la thanh ghi dich (cat bit cao la chu y); z_rot lay 32 bit thap cua phep quay 64 bit
-lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1351
-lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1466
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1377
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1541
 
 // daddr[4:0] / iaddr[13:0]: bus chi giai ma bit cao, bit thap di thang toi ngoai vi / bo nho
 lint_off -rule UNUSEDSIGNAL -file "*soc/soc_bus.v" -lines 13
@@ -112,11 +112,11 @@ lint_off -rule UNUSEDSIGNAL -file "*soc/soc_rom.v" -lines 7
 lint_off -rule UNUSEDSIGNAL -file "*soc/soc_rom.v" -lines 9
 
 // dmem_fence / icache_flush: SoC khong co cache nen de ho
-lint_off -rule PINCONNECTEMPTY -file "*soc/soc_top.v" -lines 36
+lint_off -rule PINCONNECTEMPTY -file "*soc/soc_top.v" -lines 40
 
 // irq_uart (tong, thay bang irq_uart_rx / irq_uart_tx noi vao PLIC) va sel_rom (ROM chon theo duong lenh)
-lint_off -rule UNUSEDSIGNAL -file "*soc/soc_top.v" -lines 29
-lint_off -rule UNUSEDSIGNAL -file "*soc/soc_top.v" -lines 40
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_top.v" -lines 33
+lint_off -rule UNUSEDSIGNAL -file "*soc/soc_top.v" -lines 44
 
 // wstrb[3:2], wdata[31:16]: thanh ghi UART 16 bit
 lint_off -rule UNUSEDSIGNAL -file "*soc/soc_uart.v" -lines 21-22
@@ -134,28 +134,28 @@ lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 131
 lint_off -rule WIDTHEXPAND -file "*rv32_dcache.v" -lines 158
 lint_off -rule WIDTHTRUNC -file "*rv32_dcache.v" -lines 158
 // ENABLE_C la tham so 32 bit dung lam dieu kien generate (0 / 1)
-lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 238
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 241
 
 // ---- PMP (rv32im_pipeline.v): so sanh dia chi CSR 12 bit voi (hang so + chi so vong lap kieu integer) ----
 // chi so pk / pw < PMP_N <= 16 nen tong luon nam trong 12 bit; pmp_wcfg la bien tam cua vong lap, gan bang '=' roi doc ngay trong cung nhanh
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1913
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1914
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1925
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1930
-lint_off -rule BLKSEQ -file "*rv32im_pipeline.v" -lines 1926-1927
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1990
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1991
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2002
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2007
+lint_off -rule BLKSEQ -file "*rv32im_pipeline.v" -lines 2003-2004
 // ls_end: khi MISALIGNED = 0 chi dung ea, phan cong them bi bo; bit thap khong tham gia truy cap PMP (so sanh tren ea[31:2])
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1843
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1918
 
 // ---- S/U mode (rv32im_pipeline.v): so sanh quyen CSR csr_addr[9:8] > priv; khi SU = 0 priv co dinh nen Verilator thay so sanh bang hang so ----
-lint_off -rule CMPCONST -file "*rv32im_pipeline.v" -lines 991
+lint_off -rule CMPCONST -file "*rv32im_pipeline.v" -lines 1012
 
 // ---- Sv32 MMU (rv32im_pipeline.v): cac tin hieu chi dung khi MMU != 0 hoac chi dung mot phan bit ----
 // i_fl: cac bit co co (D/A/U/...) khong deu duoc doc; idex_ppa / idex_ppa2 chi dung khi MMU != 0; mmu_* la cong ra cua khoi MMU,
 // phan bit cao cua mmu_maddr (34 bit) va mem_busy chi dung o cau hinh co MMU; ppa2 / ls_end khi MMU = 0 hoac MISALIGNED = 0 chi dung mot nua
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 220
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 599
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1069-1071
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1846
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 223
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 615
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1095-1097
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1921
 
 // ---- TAGE (rv32im_pipeline.v): thanh ghi pipeline cua bo du doan TAGE chi duoc doc khi bo du doan nay bat; o cau hinh tat chung la tin hieu khong dung ----
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1293-1294
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1319-1320
