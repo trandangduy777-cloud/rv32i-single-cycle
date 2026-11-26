@@ -217,7 +217,7 @@ jobs:
       - name: CoreMark 1 vong tren pipeline RV32IM / RV32IMC (kiem CRC chuan, in CoreMark/MHz)
         run: python3 coremark/run_coremark.py --iter 1 --quick
 
-      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 13 cau hinh loi)
+      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 15 cau hinh loi)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
@@ -260,8 +260,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [rvc, random, cache, bpred-mul-zb, soc, axi,
-                irq-0-14, irq-14-28, irq-28-42, irq-42-56, irq-56-70, irq-70-84, irq-84-98, irq-98-]
+        # do ngay 26/11/2026 (job / buoc Mutation): rvc 23 phut, random 1, cache 41, soc 4, axi 20, irq-0-14 17,
+        # irq-14-28 39, irq-28-42 22, irq-42- (PMP, S/U, MMU, 67 dot bien) ~10; bpred / mul / zb: xem README
+        group: [rvc, random, cache, bpred, mul, zb, soc, axi, irq-0-14, irq-14-28, irq-28-42, irq-42-]
     env:
       SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
     steps:
@@ -299,10 +300,9 @@ jobs:
             rvc)    python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $S ;;
             random) python3 cosim/mutate_random.py --n 80 --spike $S ;;
             cache)  python3 cache/mutate_cache.py /tmp/riscv-tests --spike $S ;;
-            bpred-mul-zb)
-              python3 bpred/mutate_bpred.py
-              python3 mul/mutate_mul.py
-              python3 zb/mutate_zb.py ;;
+            bpred)  python3 bpred/mutate_bpred.py ;;
+            mul)    python3 mul/mutate_mul.py ;;
+            zb)     python3 zb/mutate_zb.py ;;
             soc)
               sh soc/sw/build.sh
               python3 soc/mutate_soc.py --jobs 4 ;;

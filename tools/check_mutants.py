@@ -84,7 +84,7 @@ def collect():
     for lst in ("IC", "DC"):
         for name, f, old, *_ in ast_list("formal/cache/mutate.py", lst):
             add("formal/cache/mutate.py", name, [f], old)
-    for name, old, _new, _lem in load("mul/formal/run_formal.py").NEG:
+    for name, old, _new, _lem in ast_list("mul/formal/run_formal.py", "NEG"):   # import se tim yosys ngay
         add("mul/formal/run_formal.py", name, ["rv32i_core.v"], old)
 
     for e in bash_array("formal/mutate.sh"):

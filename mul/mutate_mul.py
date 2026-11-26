@@ -68,7 +68,7 @@ def run_unit(rep):
 
 def run_rand(rep, extra):
     try:
-        r = subprocess.run([sys.executable, os.path.join(rep, "verify", "run_verify.py"), "--pipem", "--n", "40"] + extra,
+        r = subprocess.run([sys.executable, os.path.join(rep, "verify", "run_verify.py"), "--pipem", "--stop-on-fail", "--n", "40"] + extra,
                            capture_output=True, text=True, timeout=2400)
     except subprocess.TimeoutExpired:
         return True, "treo"
