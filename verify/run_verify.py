@@ -316,7 +316,8 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: ghi CSR chi doc khong trap", "wire id_csr_ro     = (id_csr_addr[11:10] == 2'b11);", "wire id_csr_ro     = 1'b0;"),
     ("X: MRET khong dat MPIE=1", "mstatus_mpie <= 1'b1;", "mstatus_mpie <= 1'b0;"),
     ("X: trap khong xoa MIE", "mstatus_mpie <= mstatus_mie;\n                mstatus_mie  <= 1'b0;", "mstatus_mpie <= mstatus_mie;"),
-    ("X: MRET nhay toi mtvec", "mret_ex ? mepc_v           :", "mret_ex ? {mtvec_r, 2'b00} :"),
+    ("X: MRET nhay toi mtvec", "mret_ex ? mepc_v           :\n                         sret_ex ? sepc_v",
+     "mret_ex ? {mtvec_r, 2'b00} :\n                         sret_ex ? sepc_v"),
     ("X: ghi mscratch bi bo qua", "12'h340: mscratch <= csr_new;", "12'h340: mscratch <= mscratch;"),
     ("X: CSR dung rs1 chua forward", "wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : op_a;",
      "wire [31:0] csr_src    = idex_funct3[2] ? {27'b0, idex_rs1} : idex_rs1_val;"),
@@ -338,8 +339,8 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
      "st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0110;"),
     ("X: store lech van ghi bo nho", "exmem_store     <= idex_store & ~ex_stall & ~trap_ex;", "exmem_store     <= idex_store & ~ex_stall;"),
     ("X: load lech van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~(trap_ex & ~ld_misal);"),
-    ("X: store lech sai cause (4)", "else if (st_misal)      begin trap_cause = 32'd6;", "else if (st_misal)      begin trap_cause = 32'd4;"),
-    ("X: load lech mtval = 0", "else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;", "else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = 32'd0;"),
+    ("X: store lech sai cause (4)", "else if (st_misal)   trap_cause = 32'd6;", "else if (st_misal)   trap_cause = 32'd4;"),
+    ("X: load lech mtval = 0", "trap_tval = (idex_load | idex_store) ? ea : bad_target;", "trap_tval = idex_load ? 32'd0 : (idex_store ? ea : bad_target);"),
     ("X: dia chi lech tinh sai (bo cong imm)", "wire [1:0]  ea_lo = op_a[1:0] + idex_imm[1:0];", "wire [1:0]  ea_lo = op_a[1:0];"),
 ]
 

@@ -1119,13 +1119,18 @@ module rv32im_pipeline #(
         else if (ex_illegal)    begin trap_cause = 32'd2;  trap_tval = idex_instr; end
         else if (idex_ecall)    begin trap_cause = {28'd0, 2'b10, priv}; trap_tval = 32'd0; end   // 8 U, 9 S, 11 M
         else if (idex_ebreak)   begin trap_cause = 32'd3;  trap_tval = idex_pc;    end
-        else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;         end
-        else if (st_misal)      begin trap_cause = 32'd6;  trap_tval = ea;         end
-        else if (d_pf)          begin trap_cause = idex_store ? 32'd15 : 32'd13; trap_tval = ea; end   // loi trang
-        else if (d_af)          begin trap_cause = idex_store ? 32'd7 : 32'd5;   trap_tval = ea; end   // loi truy cap
-        else if (pmp_lfault)    begin trap_cause = 32'd5;  trap_tval = ea;         end   // load bi PMP cam
-        else if (pmp_sfault)    begin trap_cause = 32'd7;  trap_tval = ea;         end   // store bi PMP cam
-        else                    begin trap_cause = 32'd0;  trap_tval = bad_target; end
+        // loi load / store deu co tval = ea, va chi load / store moi co cac loi nay; dich nhanh lech (bad_target) chi o
+        // lenh nhay / nhanh. Vi vay tval chon theo loai lenh, khong cho ket qua kiem TLB / PMP (cuoi duong dai nhat o EX).
+        else begin
+            trap_tval = (idex_load | idex_store) ? ea : bad_target;
+            if (ld_misal)        trap_cause = 32'd4;
+            else if (st_misal)   trap_cause = 32'd6;
+            else if (d_pf)       trap_cause = idex_store ? 32'd15 : 32'd13;   // loi trang
+            else if (d_af)       trap_cause = idex_store ? 32'd7 : 32'd5;     // loi truy cap
+            else if (pmp_lfault) trap_cause = 32'd5;                          // load bi PMP cam
+            else if (pmp_sfault) trap_cause = 32'd7;                          // store bi PMP cam
+            else                 trap_cause = 32'd0;
+        end
     end
     // trap ve S: ngat tu nhom S da uy quyen, hoac exception uy quyen qua medeleg khi dang o U / S. Tinh o chu ky sau
     // trap tu thanh ghi rt_* (xem trap_pc): ma nguyen nhan la diem cuoi cua duong dai nhat o EX.
