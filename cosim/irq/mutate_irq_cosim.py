@@ -21,7 +21,7 @@ EXTRA = [
      "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz & ~dwait;",
      "wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~dwait;"),
     ("lenh CSR bi ngat van ghi CSR",
-     "wire csr_write = idex_csr & csr_we_req & ~irq_take & ~frz & ~ex_priv_ill;",
+     "wire csr_write = idex_csr & csr_we_req & ~irq_nm & ~frz & ~ex_priv_ill;",
      "wire csr_write = idex_csr & csr_we_req & ~frz & ~ex_priv_ill;"),
     ("MPIE khong luu MIE khi vao trap",
      "            mstatus_mpie <= mstatus_mie;", "            mstatus_mpie <= 1'b1;"),
