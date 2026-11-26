@@ -50,10 +50,10 @@ def _compile(cmd):
     rest = [c for i, c in enumerate(cmd) if i > 0 and c not in ("-g2012", "-o", out)]
     mdir = out + ".vl"
     if COVDIR:      # --binary khong tu ghi coverage.dat (Verilator 5.020): dung main rieng cua cosim/vl_main.cpp
-        args = ["verilator", "--cc", "--exe", "--build", "--timing", "--coverage", "-Wno-fatal", "-Wno-lint", "-Wno-style", "-DNO_VCD",
+        args = ["verilator", "--cc", "--exe", "--build", "--timing", "--coverage", "-Wno-fatal", "-Wno-lint", "-Wno-style", "-Wno-BLKLOOPINIT", "-DNO_VCD",
                 "--top-module", "tb_cosim", "-O1", "-j", "2", "-Mdir", mdir, os.path.join(os.path.dirname(HERE_), "cosim", "vl_main.cpp")] + rest
     else:
-        args = ["verilator", "--binary", "--timing", "-Wno-fatal", "-Wno-lint", "-Wno-style", "-DNO_VCD", "--top-module", "tb_cosim",
+        args = ["verilator", "--binary", "--timing", "-Wno-fatal", "-Wno-lint", "-Wno-style", "-Wno-BLKLOOPINIT", "-DNO_VCD", "--top-module", "tb_cosim",
                 "-O2", "-j", "2", "-Mdir", mdir, "-o", "Vsim"] + rest
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode == 0:
