@@ -69,7 +69,8 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `results/` | Số liệu flow của các lõi pipeline (`metrics_*.json`), mỗi file ứng với một dòng trong bảng so sánh |
 | `bench/` | Benchmark C: `bench.c` (RV32I thuần), `bench_m.c` (nặng nhân/chia) và `bench_call.c` (gọi hàm, nhảy gián tiếp), `run_bench.sh` in số chu kỳ và CPI |
 | `mul/` | Bộ nhân song song: chứng minh hình thức `formal/`, testbench thử hết / biên / ngẫu nhiên `tb_mul.v`, mutation test `mutate_mul.py` (xem mục Bộ nhân song song) |
-| `bpred/` | Bộ dự đoán nhánh: đo theo cấu hình BTB / RAS / gshare, kiểm hiệu năng đúng từng chu kỳ, mutation test (xem mục BTB, RAS và gshare) |
+| `bpred/` | Bộ dự đoán nhánh: đo theo cấu hình BTB / RAS / gshare / TAGE, kiểm hiệu năng đúng từng chu kỳ, mutation test (xem mục BTB, RAS và gshare) |
+| `tage/` | TAGE (`rv32_tage.v`): mô hình tham chiếu, tạo vết nhánh từ Spike, so từng dự đoán RTL với mô hình, mutation test (xem mục TAGE) |
 | `coremark/` | Port CoreMark (`port/`) và script build + chạy + kiểm CRC trên các lõi (xem mục CoreMark) |
 | `riscv-tests/` | Môi trường tối giản và script chạy bộ test ISA chính thức riscv-tests trên cả 3 lõi |
 | `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike); chương trình ngẫu nhiên `gen_rand.py` / `run_random.py` / `run_directed.py` / `mutate_random.py`, coverage `cov_func.py` / `run_vlcov.py` (xem mục Chương trình ngẫu nhiên và coverage) |
@@ -528,6 +529,30 @@ Kiểm chứng:
 - **Kiểm hiệu năng đúng từng chu kỳ** (`bpred/perf_bpred.py --check`, chạy trong CI): 3 cấu hình (cũ, mặc định, gshare 4 bit) trên 3 chương trình phải ra đúng số chu kỳ và số lần đoán sai đã ghi. Đột biến chỉ làm chậm không bị so kết quả bắt (thiết kế bảo đảm đoán sai không đổi kết quả); kiểm này bắt được. Số liệu phụ thuộc mã máy của trình biên dịch nên được gắn với phiên bản GCC của CI; GCC khác thì chỉ kiểm tương đối (bản mới phải nhanh hơn bản cũ).
 - **`bpred/mutate_bpred.py`: 19 đột biến, đều bị bắt.** 8 đột biến làm sai kết quả (EX không so đích JALR, ID không sửa đích sai hoặc trúng nhầm, sửa trúng nhầm về đích thay vì lệnh kế tiếp, IF/ID quên cờ đã nhảy, EX coi nhánh IF đã nhảy là đoán không nhảy, JAL không nhảy khi BTB trượt, đích dự đoán ghi xuống EX khác đích đã nhảy theo) bị chương trình ngẫu nhiên ép lỗi bắt; 11 đột biến chỉ làm chậm (BTB không ghi, RAS không đẩy / không lấy ra / đẩy sai địa chỉ, ghi lệnh trả về thành JALR thường, bỏ qua bảng đếm, BTB không so tag, RAS suy đoán không chép lại khi redirect / không lấy ra ở ID, gshare cập nhật sai chỉ số, lịch sử không cập nhật) bị kiểm từng chu kỳ bắt. Đột biến "đích dự đoán khác đích đã nhảy theo" ban đầu được xếp vào loại chỉ làm chậm, nhưng nó làm `bench_call` chạy sai và treo: EX so với một đích không phải đích IF/ID đã thực sự nhảy theo, nên khi trùng hợp bằng đích thật thì lệnh nhầm đường được giữ lại. Thiết kế đúng luôn lấy hai giá trị này từ cùng một tín hiệu; script đo nay báo treo là FAIL thay vì lỗi Python.
 - Sửa kèm: 2 đột biến chung của pipeline và 1 đột biến mở rộng C, 1 đột biến `FENCE.I` trỏ vào mã đã viết lại được cập nhật.
+
+### TAGE (pipeline RV32IM, `TAGE = 1`)
+
+`rv32_tage.v` thay bảng đếm / gshare trong việc đoán **hướng** nhánh (BTB, RAS và các đường sửa ở ID / EX giữ nguyên). Mặc định `TAGE = 0`: RTL và mọi số liệu cũ không đổi.
+- Cấu trúc: bảng cơ sở 128 bộ đếm 2 bit theo pc, và 4 bảng có tag (64 mục mỗi bảng: bộ đếm 3 bit có dấu, tag 8 bit, bit "có ích" u 2 bit) dùng 4 / 8 / 16 / 32 bit lịch sử toàn cục. Chỉ số và tag băm pc với lịch sử gấp lại (XOR theo khối). Bảng trúng dài nhất là provider, bảng trúng kế tiếp (hoặc bảng cơ sở) là alt; provider vừa cấp phát (bộ đếm yếu) thì theo alt khi bộ đếm `use_alt` cho thấy alt đáng tin hơn. Đoán sai thì cấp phát ở bảng dài hơn ngắn nhất có u = 0, không có thì giảm u; mỗi 2.048 lần cập nhật xoá luân phiên bit cao / bit thấp của u. Tất cả tham số hoá (`TAGE_NT`, `TAGE_IB`, `TAGE_TB`, `TAGE_BB`, `TAGE_HL`). Bảng và lịch sử tổng cộng 3.616 bit.
+- Gắn vào pipeline: đọc ở IF cùng lúc với BTB; chỉ số / tag / provider lúc đoán đi theo lệnh qua IF/ID, ID/EX, EX/MEM tới lúc cập nhật (chu kỳ sau EX, như bảng đếm). Lịch sử dịch ở EX theo nhánh thật sự chạy xong (không suy đoán) nên không cần phục hồi khi đoán sai; vì mang theo chỉ số lúc đoán, đoán và cập nhật luôn dùng cùng lịch sử.
+
+Hiệu năng (bộ nhớ tổ hợp, `bpred/perf_bpred.py`; `bench_corr` là bài mới gồm nhánh tuần hoàn chu kỳ 7, nhánh lặp lại điều kiện của 2 nhánh trước, vòng 12 lần, máy trạng thái):
+
+| BTB / RAS / hướng | `bench` | `bench_m` | `bench_call` | `bench_corr` |
+|---|---|---|---|---|
+| 16 / 4 / bảng đếm (mặc định): chu kỳ, nhánh đoán sai | 38.272, 13,4 % | 51.994, 13,4 % | 70.811, 34,1 % | 38.121, 23,9 % |
+| 16 / 4 / gshare 6 bit | 38.765, 15,6 % | 52.394, 18,7 % | 68.393, 18,6 % | 36.247, 15,0 % |
+| 16 / 4 / **TAGE** | **37.099, 8,1 %** | **51.418, 5,7 %** | **66.042, 3,9 %** | **33.622, 2,3 %** |
+
+- So với mặc định, TAGE giảm số chu kỳ 3,1 % / 1,1 % / 6,7 % / 11,8 % và nhánh đoán sai 1,7 / 2,3 / 8,8 / 10 lần; không có bài nào chậm hơn (gshare làm `bench` và `bench_m` chậm đi). CoreMark 10 vòng (RV32IMC, GCC -O2): 2,749 → **2,822 CoreMark/MHz** (+2,6 %), chu kỳ mất vì redirect ở EX (nhánh đoán sai) 50.666 → 17.120, đổi lại nhảy muộn ở ID tăng nhẹ 61.320 → 65.653 (TAGE đoán "nhảy" cho nhánh BTB chưa có đích).
+- Chi phí (tổng hợp SG13G2 trước P&R như mục MMU, cấu hình mặc định `SU = 0`): diện tích 498.830 → 901.062 µm² (+81 %), phần tuần tự 191.301 → 370.698 µm². Lý do: 3.584 bit bảng là flip-flop với hai cổng đọc (đoán ở IF, đọc lại u / bộ đếm khi cập nhật); làm thật sẽ dùng SRAM. Đường đoán không phải đường tới hạn: đường xấu nhất xuất phát từ flip-flop của TAGE còn dư +7,57 ns, pc → băm → bảng → `ifid` meta dư +8,70 ns ở chu kỳ 15 ns. WNS toàn mạch xấu đi (−0,139 → −2,541 ns) trên đường giải mã ID → redirect → `pc` / bộ đếm hiệu năng, đường không đi qua TAGE: mạch lớn gần gấp đôi làm fanout của các tín hiệu stall / redirect (giờ điều khiển thêm thanh ghi meta) và kết quả ABC xấu đi; cần chạy flow thật mới biết con số sau P&R.
+
+Kiểm chứng:
+- **Mô hình tham chiếu** `tage/tage_model.py` viết độc lập từ mô tả ở đầu `rv32_tage.v`. `tage/check_tage.py` cho RTL (qua `tage/tb_tage.v`) và mô hình chạy cùng vết nhánh, so **từng dự đoán**: vết thật lấy từ log commit của Spike (`bench`, `bench_m`, `bench_call`, `bench_corr`, CoreMark 1 vòng: 62.383 nhánh) và 6 vết tổng hợp (ít pc, nhánh lệch / tuần hoàn / ngẫu nhiên / tương quan, để ép cấp phát thất bại và lão hoá u), trên 4 cấu hình (2-5 bảng, chỉ số 4-7 bit, tag 5-9 bit, lão hoá mỗi 16-2.048 lần): 35 vết, khớp tuyệt đối.
+- **So vết với Spike**: 2 cấu hình lõi mới (TAGE, TAGE + cache 2 × 2 trễ 1-8) khớp 151 chương trình; chương trình ngẫu nhiên trên 3 cấu hình lõi có TAGE (thêm BTB 64 + cache 4 × 2 hai đường): 180 chương trình, 270.159 lệnh khớp.
+- **Kiểm hiệu năng đúng từng chu kỳ**: cấu hình TAGE được thêm vào `bpred/perf_bpred.py --check` (CI).
+- **`tage/mutate_tage.py`: 28/28 đột biến bị bắt.** 22 đột biến trong `rv32_tage.v` (provider là bảng ngắn nhất, bỏ `use_alt`, định nghĩa "yếu" sai, alt luôn là bảng cơ sở, bộ đếm không bão hoà, u không tăng / cập nhật cả khi provider = alt, `use_alt` ngược, bảng cơ sở không học, cấp phát ở bảng dài nhất / bỏ qua u / cả khi đoán đúng, mục mới bộ đếm mạnh, không giảm u, không lão hoá / lão hoá sai bit, lịch sử không ghi kết quả, chỉ số bỏ lịch sử / bỏ pc cao, tag thiếu lần gấp thứ hai, gấp ghi đè thay vì XOR, cập nhật lệch bảng) bị so với mô hình bắt; 6 đột biến ở chỗ nối vào pipeline (meta không đi qua IF/ID hoặc ID/EX, lịch sử dịch dự đoán thay vì kết quả, cập nhật theo kết quả của lệnh sau, IF bỏ qua TAGE, không cập nhật bảng) bị kiểm từng chu kỳ bắt.
+- Hạn chế: lịch sử cập nhật ở EX nên 1-2 nhánh đang bay giữa IF và EX chưa có trong lịch sử (đổi lại không cần phục hồi); chưa có lịch sử đường đi (path history) hay bộ đoán vòng lặp; bảng là flip-flop.
 
 ### Đăng ký redirect ở RV32IM
 
