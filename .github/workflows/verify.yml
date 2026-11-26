@@ -74,6 +74,11 @@ jobs:
           python3 run_verify.py --pipem --zb all --zb-probe --n 60
           python3 run_verify.py --pipem --zb zba,zbs --zb-probe --cache --n 60
           python3 run_verify.py --pipem --zb zbb,zbc,zicond --zb-probe --bpstress --mul-lat 0 --n 60
+          python3 run_verify.py --pipem --a --a-probe --n 60
+          python3 run_verify.py --pipem --a --a-st-clr --a-probe --cache --n 60
+          python3 run_verify.py --pipem --a --ma --cache --n 60
+          python3 run_verify.py --pipem --a --bpstress --mul-lat 0 --n 60
+          python3 run_verify.py --pipem --a-probe --n 60
 
       - name: Bo nhan song song (Booth + cay CSA), thu het moi cap o 3-10 bit, gia tri bien + ngau nhien o 33 bit
         run: |
@@ -112,12 +117,14 @@ jobs:
           sh soc/sw/build.sh
           sh soc/freertos/build.sh
           python3 soc/run_soc.py
+          python3 soc/run_soc.py --a
 
       - name: SoC AXI4 + DMA (interconnect ngau nhien 3 master, bo kiem giao thuc AXI4, chuong trinh C, DMA, FreeRTOS)
         run: |
           AXI=1 sh soc/sw/build.sh
           AXI=1 sh soc/freertos/build.sh
           python3 soc/run_soc.py --axi
+          python3 soc/run_soc.py --axi --a
 
       - name: Benchmark (CPI, so checksum giua cac loi)
         run: sh bench/run_bench.sh
@@ -251,7 +258,7 @@ jobs:
       - name: CoreMark 1 vong tren pipeline RV32IM / RV32IMC (kiem CRC chuan, in CoreMark/MHz)
         run: python3 coremark/run_coremark.py --iter 1 --quick
 
-      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 17 cau hinh loi)
+      - name: So vet voi Spike (riscv-tests, bench, bench_m, bench_call, CoreMark, test tu viet; 20 cau hinh loi)
         run: |
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           python3 cosim/run_cosim.py /tmp/riscv-tests --spike $HOME/spike/bin/spike
@@ -310,7 +317,7 @@ jobs:
         # axi 20, irq-0-14 17-23, irq-28-42 22, irq-42- (PMP, S/U, MMU: 67 dot bien) 10; irq-14-28 mat 39 roi 56 phut
         # (sat gioi han 60) nen tach doi: 14-21 khoang 17-25, 21-28 khoang 22-32. Truoc khi them
         # --stop-on-fail cho dot bien "rand", nhom bpred + mul + zb vuot 60 phut (moi dot bien bpred 8-17 phut).
-        group: [rvc, random, cache, bpred, tage, mul, zb, soc, axi, irq-0-14, irq-14-21, irq-21-28, irq-28-42, irq-42-]
+        group: [rvc, random, cache, bpred, tage, mul, zb, a, soc, axi, irq-0-14, irq-14-21, irq-21-28, irq-28-42, irq-42-]
     env:
       SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
     steps:
@@ -352,6 +359,7 @@ jobs:
             tage)   python3 tage/mutate_tage.py --spike $S ;;
             mul)    python3 mul/mutate_mul.py ;;
             zb)     python3 zb/mutate_zb.py ;;
+            a)      python3 a/mutate_a.py --jobs 2 ;;   # mo rong A: 43 dot bien (do 26/11: ~40 s tren may 2 nhan)
             soc)
               sh soc/sw/build.sh
               python3 soc/mutate_soc.py --jobs 4 ;;

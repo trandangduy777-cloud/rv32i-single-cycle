@@ -32,7 +32,13 @@ module tb_trace_pipe;
 `ifndef ZICOND
 `define ZICOND 0
 `endif
-`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
+`ifndef A_EXT
+`define A_EXT 0
+`endif
+`ifndef A_ST_CLR
+`define A_ST_CLR 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .A_EXT(`A_EXT), .A_ST_CLR(`A_ST_CLR)
 `ifdef PIPE_FULL
 `ifdef BPSTRESS   // bo du doan nho, tag 1 bit: BTB trung nham lien tuc, RAS tran, gshare 2 bit (kiem cac duong sua o ID/EX)
 `ifdef MA
@@ -124,6 +130,17 @@ module tb_trace_pipe;
     end
 `endif
 
+
+`ifdef PIPE_FULL
+    // AMO doc-sua-ghi 2 pha: bus chi duoc ghi o pha 1; ghi o pha doc (hoac ghi khi A tat) la loi. Ghi thua nay khong lam sai
+    // vet cam ket (pha 1 ghi de len), nen kiem bang bo giam sat bus; $finish lam vet ngan hon => run_verify bao lech.
+    always @(posedge clk) begin
+        if (rst_n && `A_EXT != 0 && dut.exmem_valid && dut.exmem_amo && dut.dmem_we && !dut.amo_phase) begin
+            $display("ERROR: AMO ghi bo nho o pha doc tai pc=%08x", dut.exmem_pc);
+            $finish;
+        end
+    end
+`endif
 
 `ifdef CACHE
     // Bo dem ghi: store xong o MEM truoc khi toi bo nho. Mo hinh kien truc arch[] cap nhat khi store hoan tat (WB);

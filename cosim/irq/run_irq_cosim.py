@@ -35,6 +35,10 @@ CORES = [
     ("RV32IM + S/U + cache 2x2, tre 1-8", "-DSU " + C22, CACHE, "rv32im_xsu", ["+lat=8", "+irqdly=600"]),
     ("RV32IMC + S/U + MMU Sv32 + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM " + C22, CACHE, "rv32imc_xsu_xmmu",
      ["+lat=8", "+irqdly=600"]),
+    # A + S / U + MMU: AMO / SC dich nhu store (loi trang 15, loi truy cap 7), LR nhu load; AMO tranh bo duyet bang trang
+    ("RV32IMAC + S/U + MMU Sv32", "-DRVC -DSU -DMMUON -DBIGMEM -DA_EXT=1", PIPE, "rv32imac_xsu_xmmu", []),
+    ("RV32IMAC + S/U + MMU Sv32 + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM -DA_EXT=1 " + C22, CACHE,
+     "rv32imac_xsu_xmmu", ["+lat=8", "+irqdly=600"]),
 ]
 
 
@@ -242,6 +246,7 @@ def main():
              build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_su("rv32im", tmp) + ("rv32im_xsu",), build_su("rv32imc", tmp) + ("rv32imc_xsu",),
              build_mmu("rv32im", tmp) + ("rv32im_xsu_xmmu",), build_mmu("rv32imc", tmp) + ("rv32imc_xsu_xmmu",),
+             build_mmu("rv32imac", tmp) + ("rv32imac_xsu_xmmu",), build_mmu("rv32ima", tmp) + ("rv32ima_xsu_xmmu",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),
@@ -281,7 +286,11 @@ def main():
             sys.exit(r.stderr)
         sims.append((title, vvp, isa, plus))
 
-    jobs = [(p, s, sd) for p in progs for s in sims if exts(p[2]) <= exts(s[2]) for sd in range(1, seeds + 1)]
+    # loi co mo rong A chi chay cac chuong trinh lien quan (MMU, che do S / U, PMP, bao ngat): cac chuong trinh dai (CoreMark, bench)
+    # khong dung lenh A, da chay tren loi khong co A
+    def a_ok(p, s):
+        return "a" not in exts(s[2]) or any(k in p[0] for k in ("mmu-", "irq_storm", "su-", "pmp", "rv32si", "rv32mi", "rv32ui-v-"))
+    jobs = [(p, s, sd) for p in progs for s in sims if exts(p[2]) <= exts(s[2]) and a_ok(p, s) for sd in range(1, seeds + 1)]
     tot = {"instr": 0, "irq_ext": 0, "irq_soft": 0, "irq_timer": 0, "exceptions": 0}
     on, maxlag, fails, t0 = {}, 0, 0, time.time()
     print(f"{len(progs)} chuong trinh x {len(sims)} loi x {seeds} seed = {len(jobs)} lan chay (loi chi chay chuong "

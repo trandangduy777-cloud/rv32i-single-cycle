@@ -57,7 +57,10 @@ module rv32im_pipeline #(
     parameter        ZBB        = 0,             // andn orn xnor clz ctz cpop sext.b sext.h zext.h min max minu maxu rol ror rori orc.b rev8
     parameter        ZBS        = 0,             // bclr bclri bext bexti binv binvi bset bseti
     parameter        ZBC        = 0,             // clmul clmulh clmulr
-    parameter        ZICOND     = 0              // czero.eqz czero.nez
+    parameter        ZICOND     = 0,             // czero.eqz czero.nez
+    // Mo rong A (xem "Mo rong A: LR/SC va AMO"): mac dinh tat (RTL, so lieu flow va CI cu giu nguyen), misa co bit A khi bat
+    parameter        A_EXT      = 0,             // 1: LR.W, SC.W, AMOSWAP/ADD/XOR/AND/OR/MIN/MAX/MINU/MAXU.W
+    parameter        A_ST_CLR   = 0              // 1: store thuong cua chinh lo (va AMO) vao tu dang dat cho cung xoa dat cho; 0: giong Spike
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -403,6 +406,17 @@ module rv32im_pipeline #(
     wire legal_jalr   = is_jalr & (funct3 == 3'b000);
     wire legal_fence  = is_fence & (funct3 == 3'b000 | funct3 == 3'b001);
 
+    // Mo rong A: opcode AMO, funct3 = 010 (word), funct5 = instr[31:27]; aq (bit 26) va rl (bit 25) chap nhan moi gia tri
+    // (loi in-order, 1 cong bo nho: moi truy cap da dung thu tu chuong trinh). LR bat buoc rs2 = 0.
+    wire [4:0] id_amo_f5   = instr[31:27];
+    wire is_amo_op      = (opcode == 7'b0101111) & (funct3 == 3'b010) & (A_EXT != 0);
+    wire legal_lr       = is_amo_op & (id_amo_f5 == 5'b00010) & (rs2 == 5'd0);
+    wire legal_sc       = is_amo_op & (id_amo_f5 == 5'b00011);
+    wire legal_amo      = is_amo_op & (id_amo_f5 == 5'b00001 | id_amo_f5 == 5'b00000 | id_amo_f5 == 5'b00100 | id_amo_f5 == 5'b01100 |
+                                       id_amo_f5 == 5'b01000 | id_amo_f5 == 5'b10000 | id_amo_f5 == 5'b10100 | id_amo_f5 == 5'b11000 |
+                                       id_amo_f5 == 5'b11100);
+    wire legal_atomic   = legal_lr | legal_sc | legal_amo;
+
     wire is_ecall  = (instr == 32'h0000_0073);
     wire is_ebreak = (instr == 32'h0010_0073);
     wire is_mret   = (instr == 32'h3020_0073);
@@ -442,7 +456,7 @@ module rv32im_pipeline #(
     wire legal_csr     = is_csr & id_csr_exists & ~(id_csr_we_req & id_csr_ro);
 
     wire illegal = ~(is_lui | is_auipc | is_jal | legal_jalr | legal_branch | legal_load |
-                     legal_store | legal_imm | legal_reg | legal_fence |
+                     legal_store | legal_imm | legal_reg | legal_fence | legal_atomic |
                      is_ecall | is_ebreak | is_mret | is_wfi | is_sret | is_sfence | legal_csr);
 
     wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]};
@@ -451,16 +465,17 @@ module rv32im_pipeline #(
     wire [31:0] imm_u = {instr[31:12], 12'b0};
     wire [31:0] imm_j = {{11{instr[31]}}, instr[31], instr[19:12], instr[20], instr[30:21], 1'b0};
 
-    wire [31:0] imm = is_store            ? imm_s :
+    wire [31:0] imm = legal_atomic        ? 32'd0 :       // dia chi = rs1
+                      is_store            ? imm_s :
                       is_branch           ? imm_b :
                       (is_lui | is_auipc) ? imm_u :
                       is_jal              ? imm_j : imm_i;
 
-    wire rd_we = is_lui | is_auipc | is_jal | legal_jalr | legal_load | legal_imm | legal_reg | legal_csr;
+    wire rd_we = is_lui | is_auipc | is_jal | legal_jalr | legal_load | legal_imm | legal_reg | legal_csr | legal_atomic;
 
     // toan hang nao that su duoc dung
     wire uses_rs1 = ~(is_lui | is_auipc | is_jal);
-    wire uses_rs2 = is_reg | is_branch | is_store;
+    wire uses_rs2 = is_reg | is_branch | is_store | legal_sc | legal_amo;
 
     // ---- Du doan nhanh ----
     // IF: BTB (BTB_N muc, anh xa truc tiep theo pc, tag 10 bit) cho biet o pc dang nap co lenh dieu khien da tung nhay
@@ -595,6 +610,7 @@ module rv32im_pipeline #(
     reg         idex_fa_mem, idex_fa_wb, idex_fb_mem, idex_fb_wb;   // forwarding: lay tu EX/MEM hoac MEM/WB
     reg         idex_illegal_r, idex_ecall_r, idex_ebreak_r, idex_mret_r, idex_csr_r, idex_mext_r, idex_wfi_r;
     reg         idex_fencei_r, idex_fence_r, idex_sret_r, idex_sfence_r;
+    reg         idex_atom_r, idex_amo_r;                      // LR / SC / AMO (LR = load, SC = store, AMO riêng); A_EXT = 0 thi luon 0
     reg         idex_ipf_r, idex_iaf, idex_ipf2;                 // MMU: loi dich dia chi fetch (lenh la NOP)
     reg  [31:0] idex_ppa, idex_ppa2;                             // dia chi vat ly cua lenh (PMP)
     reg         idex_zb;                                      // lenh Zba/Zbb/Zbs/Zbc/Zicond (ket qua tu zb_out); khong can reset hay gate voi
@@ -608,6 +624,9 @@ module rv32im_pipeline #(
     wire idex_branch = idex_branch_r & idex_valid;
     wire idex_load = idex_load_r & idex_valid;
     wire idex_store = idex_store_r & idex_valid;
+    wire idex_atom  = idex_atom_r  & idex_valid;
+    wire idex_amo   = idex_amo_r   & idex_valid;
+    wire idex_ldlike = idex_load | idex_amo | (idex_store & idex_atom);   // rd nhan ket qua o MEM: lenh dung ngay sau phai cho 1 chu ky
     wire idex_imm_op = idex_imm_op_r & idex_valid;
     wire idex_reg_op = idex_reg_op_r & idex_valid;
     wire idex_rd_we = idex_rd_we_r & idex_valid;
@@ -623,14 +642,14 @@ module rv32im_pipeline #(
     wire idex_ipf = idex_ipf_r & idex_valid;
 
     // load-use
-    assign stall = ifid_valid & idex_valid & idex_load & (idex_rd != 5'd0) &
+    assign stall = ifid_valid & idex_valid & idex_ldlike & (idex_rd != 5'd0) &
                    ((uses_rs1 & (idex_rd == rs1)) | (uses_rs2 & (idex_rd == rs2)));
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             idex_valid_r <= 1'b0;
             idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
-            idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0;
+            idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0; idex_atom_r <= 1'b0; idex_amo_r <= 1'b0;
             idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
             idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
             idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
@@ -648,7 +667,7 @@ module rv32im_pipeline #(
             if (stall) begin
                 idex_pred_taken <= 1'b0; idex_jp_v <= 1'b0;
                 idex_lui_r    <= 1'b0; idex_auipc_r  <= 1'b0; idex_jal_r    <= 1'b0; idex_jalr_r   <= 1'b0;
-                idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0;
+                idex_branch_r <= 1'b0; idex_load_r   <= 1'b0; idex_store_r  <= 1'b0; idex_atom_r <= 1'b0; idex_amo_r <= 1'b0;
                 idex_imm_op_r <= 1'b0; idex_reg_op_r <= 1'b0; idex_rd_we_r  <= 1'b0;
                 idex_fa_mem <= 1'b0; idex_fa_wb  <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb  <= 1'b0;
                 idex_illegal_r <= 1'b0; idex_ecall_r <= 1'b0; idex_ebreak_r <= 1'b0;
@@ -661,8 +680,10 @@ module rv32im_pipeline #(
                 idex_jal_r     <= is_jal & ifid_valid;
                 idex_jalr_r    <= legal_jalr & ifid_valid;
                 idex_branch_r  <= legal_branch & ifid_valid;
-                idex_load_r    <= legal_load & ifid_valid;
-                idex_store_r   <= legal_store & ifid_valid;
+                idex_load_r    <= (legal_load | legal_lr) & ifid_valid;
+                idex_store_r   <= (legal_store | legal_sc) & ifid_valid;
+                idex_atom_r    <= legal_atomic & ifid_valid;
+                idex_amo_r     <= legal_amo & ifid_valid;
                 idex_imm_op_r  <= legal_imm & ifid_valid;
                 idex_reg_op_r  <= legal_reg & ifid_valid;
                 idex_rd_we_r   <= rd_we & ifid_valid;
@@ -719,7 +740,7 @@ module rv32im_pipeline #(
     // ============================================================
     // EX
     // ============================================================
-    reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence;
+    reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence, exmem_amo;
     reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val, exmem_tva;
     reg         exmem_tirq, exmem_trap, exmem_icnt;
     reg  [4:0]  exmem_rd;
@@ -933,7 +954,7 @@ module rv32im_pipeline #(
     always @* begin
         case (csr_addr)
             12'h300: csr_rdata = mstatus_v;
-            12'h301: csr_rdata = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0) |   // MXL = 32, I, M (va C khi ENABLE_C)
+            12'h301: csr_rdata = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0) | ((A_EXT != 0) ? 32'h1 : 32'h0) |   // MXL = 32, I, M (va C khi ENABLE_C, A khi A_EXT)
                                  ((SU != 0) ? 32'h0014_0000 : 32'h0);                    // S, U
             12'h304: csr_rdata = mie_v;
             12'h305: csr_rdata = {mtvec_r, 1'b0, mtvec_vec};
@@ -1040,6 +1061,10 @@ module rv32im_pipeline #(
                     (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
     wire st_misal = (MISALIGNED == 0) & idex_store &
                     (((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));
+    // LR / SC / AMO lech dia chi luon trap (ke ca MISALIGNED = 1): LR cause 4, SC va AMO cause 6, mtval = dia chi
+    wire at_misal = idex_atom & (ea_lo != 2'b00);
+    wire ld_trap = ld_misal | (idex_load & at_misal);
+    wire st_trap = st_misal | ((idex_store | idex_amo) & at_misal);
 
     // ---- MMU Sv32 (SU = 1, MMU = 1): dich dia chi load / store o EX, duyet bang trang, SFENCE.VMA ----
     // Che do hieu dung cua load / store la MPP khi MPRV = 1. TLB truot: EX dung (dwait), toan hang da forward duoc chot,
@@ -1054,10 +1079,11 @@ module rv32im_pipeline #(
     wire [5:0]  d_fl;
     reg         dfr_v, dfr_af;                         // lan duyet cho load / store da loi
     reg  [31:0] dfr_va;
-    wire        d_acc   = (idex_load | idex_store) & ~ld_misal & ~st_misal;
+    wire        d_acc   = (idex_load | idex_store | idex_amo) & ~ld_trap & ~st_trap;
     wire        d_rec   = dfr_v & (dfr_va == ea);
-    wire        d_bad   = (idex_store ? ~d_fl[1] : ~(d_fl[0] | (mxr_v & d_fl[2]))) |
-                          ((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3]) | ~d_fl[4] | (idex_store & ~d_fl[5]);
+    wire        d_wr    = idex_store | idex_amo;        // SC, AMO dich nhu store (AMO can ca R va W; W khong co R la ma hoa du tru)
+    wire        d_bad   = (d_wr ? ~d_fl[1] : ~(d_fl[0] | (mxr_v & d_fl[2]))) |
+                          ((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3]) | ~d_fl[4] | (d_wr & ~d_fl[5]);
     wire        d_pf    = xd & d_acc & ((d_hit & d_bad) | (d_rec & ~dfr_af));
     wire        d_af    = xd & d_acc & ((d_hit & ~d_bad & (d_pa[33:32] != 2'b00)) | (d_rec & dfr_af));
     assign      dwait   = xd & d_acc & ~d_hit & ~d_rec;
@@ -1068,7 +1094,7 @@ module rv32im_pipeline #(
     wire        wk_start = ~wk_busy & (dwait | i_need) & ~mmu_flush;
     wire        mmu_done, mmu_pf, mmu_af, mmu_mreq, mmu_pte_ok;
     wire [33:0] mmu_maddr;
-    wire        mem_busy = exmem_valid & (exmem_load | exmem_store | exmem_fence);
+    wire        mem_busy = exmem_valid & (exmem_load | exmem_store | exmem_amo | exmem_fence);
     generate if (SU != 0 && MMU != 0) begin : g_mmu
         rv32_mmu #(.TLB_N(TLB_N)) u_mmu (
             .clk(clk), .rst_n(rst_n), .asid(satp_asid), .root_ppn(satp_ppn), .flush(mmu_flush),
@@ -1099,8 +1125,8 @@ module rv32im_pipeline #(
         end
     end
 
-    wire trap_ex = irq_take | idex_ipf | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak | misaligned | ld_misal |
-                   st_misal | d_pf | d_af | pmp_lfault | pmp_sfault;
+    wire trap_ex = irq_take | idex_ipf | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak | misaligned | ld_trap |
+                   st_trap | d_pf | d_af | pmp_lfault | pmp_sfault;
     wire mret_ex = idex_mret & ~irq_take & ~frz & ~ex_priv_ill;
     wire sret_ex = idex_sret & ~irq_take & ~frz & ~ex_priv_ill;
     wire sfence_ex = idex_sfence & ~irq_take & ~frz & ~ex_priv_ill;
@@ -1116,10 +1142,10 @@ module rv32im_pipeline #(
         else if (ex_illegal)    begin trap_cause = 32'd2;  trap_tval = idex_instr; end
         else if (idex_ecall)    begin trap_cause = {28'd0, 2'b10, priv}; trap_tval = 32'd0; end   // 8 U, 9 S, 11 M
         else if (idex_ebreak)   begin trap_cause = 32'd3;  trap_tval = idex_pc;    end
-        else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;         end
-        else if (st_misal)      begin trap_cause = 32'd6;  trap_tval = ea;         end
-        else if (d_pf)          begin trap_cause = idex_store ? 32'd15 : 32'd13; trap_tval = ea; end   // loi trang
-        else if (d_af)          begin trap_cause = idex_store ? 32'd7 : 32'd5;   trap_tval = ea; end   // loi truy cap
+        else if (ld_trap)       begin trap_cause = 32'd4;  trap_tval = ea;         end
+        else if (st_trap)       begin trap_cause = 32'd6;  trap_tval = ea;         end
+        else if (d_pf)          begin trap_cause = d_wr ? 32'd15 : 32'd13; trap_tval = ea; end   // loi trang
+        else if (d_af)          begin trap_cause = d_wr ? 32'd7 : 32'd5;   trap_tval = ea; end   // loi truy cap
         else if (pmp_lfault)    begin trap_cause = 32'd5;  trap_tval = ea;         end   // load bi PMP cam
         else if (pmp_sfault)    begin trap_cause = 32'd7;  trap_tval = ea;         end   // store bi PMP cam
         else                    begin trap_cause = 32'd0;  trap_tval = bad_target; end
@@ -1279,7 +1305,7 @@ module rv32im_pipeline #(
                             (idex_jal | idex_jalr)? pc_next         :
                             idex_csr              ? csr_rdata       :
                             idex_mext             ? m_result        :
-                            (idex_load | idex_store) ? d_paddr :
+                            (idex_load | idex_store | idex_amo) ? d_paddr :
                             idex_zb               ? zb_out          :
                                                       alu_out;
 
@@ -1388,6 +1414,7 @@ module rv32im_pipeline #(
             exmem_load  <= 1'b0;
             exmem_store <= 1'b0;
             exmem_fence <= 1'b0;
+            exmem_amo   <= 1'b0;
             exmem_trap  <= 1'b0;
             exmem_icnt  <= 1'b0;
         end else if (!frz) begin
@@ -1396,6 +1423,7 @@ module rv32im_pipeline #(
             exmem_load      <= idex_load & ~ex_stall & ~trap_ex;
             exmem_store     <= idex_store & ~ex_stall & ~trap_ex;
             exmem_fence     <= idex_fence_r & idex_valid & ~ex_stall & ~trap_ex;
+            exmem_amo       <= idex_amo & ~ex_stall & ~trap_ex;
             exmem_pc        <= idex_pc;
             exmem_instr     <= idex_instr;
             exmem_tirq      <= irq_take;                    // chi de testbench: lenh bi ngat chan lai (chay lai sau mret)
@@ -1420,11 +1448,40 @@ module rv32im_pipeline #(
     wire [1:0] byte_off = exmem_result[1:0];
     reg  [63:0] st_wide;
     reg  [7:0]  st_strb8;
+    // Mo rong A (xem "Mo rong A: LR/SC va AMO"): AMO la doc-sua-ghi 2 pha o MEM (pha 0 doc tu, pha 1 ghi tu da tinh), SC chi
+    // ghi khi con dat cho dung dia chi (neu khong, khong truy cap bo nho, rd = 1), LR doc nhu LW roi dat cho.
+    wire        m_atom   = (A_EXT != 0) & (exmem_instr[6:0] == 7'b0101111);     // lenh 16 bit khong bao gio khop (bit 1:0 != 11)
+    wire        m_is_sc  = m_atom & exmem_store;
+    wire        m_is_lr  = m_atom & exmem_load;
+    reg         res_v;                                      // dang dat cho
+    reg  [31:2] res_a;                                      // tu duoc dat cho
+    wire        sc_ok    = res_v & (res_a == exmem_result[31:2]);
+    wire        sc_fail  = m_is_sc & ~sc_ok;
+    reg         amo_phase;                                  // 1: pha ghi cua AMO
+    reg  [31:0] amo_old;                                    // gia tri cu doc o pha 0 (cung la ket qua rd)
+    wire [4:0]  amo_f5   = exmem_instr[31:27];
+    wire        amo_lt   = $signed(amo_old) < $signed(exmem_store_val);
+    wire        amo_ltu  = amo_old < exmem_store_val;
+    reg  [31:0] amo_new;
+    always @* begin
+        case (amo_f5)
+            5'b00001: amo_new = exmem_store_val;                                  // amoswap
+            5'b00000: amo_new = amo_old + exmem_store_val;                        // amoadd
+            5'b00100: amo_new = amo_old ^ exmem_store_val;                        // amoxor
+            5'b01100: amo_new = amo_old & exmem_store_val;                        // amoand
+            5'b01000: amo_new = amo_old | exmem_store_val;                        // amoor
+            5'b10000: amo_new = amo_lt  ? amo_old : exmem_store_val;              // amomin
+            5'b10100: amo_new = amo_lt  ? exmem_store_val : amo_old;              // amomax
+            5'b11000: amo_new = amo_ltu ? amo_old : exmem_store_val;              // amominu
+            default:  amo_new = amo_ltu ? exmem_store_val : amo_old;              // amomaxu
+        endcase
+    end
+    wire [31:0] st_val = exmem_amo ? amo_new : exmem_store_val;
     always @* begin
         case (exmem_funct3[1:0])
-            2'b00:   begin st_wide = {56'b0, exmem_store_val[7:0]};  st_strb8 = 8'b0000_0001; end
-            2'b01:   begin st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0011; end
-            default: begin st_wide = {32'b0, exmem_store_val};       st_strb8 = 8'b0000_1111; end
+            2'b00:   begin st_wide = {56'b0, st_val[7:0]};  st_strb8 = 8'b0000_0001; end
+            2'b01:   begin st_wide = {48'b0, st_val[15:0]}; st_strb8 = 8'b0000_0011; end
+            default: begin st_wide = {32'b0, st_val};       st_strb8 = 8'b0000_1111; end
         endcase
         st_wide  = st_wide << {byte_off, 3'b000};
         st_strb8 = st_strb8 << byte_off;
@@ -1444,14 +1501,32 @@ module rv32im_pipeline #(
                        ma_phase ? {exmem_result[31:2] + 30'd1, 2'b00} :
                        ma_cross ? {exmem_result[31:2], 2'b00} : exmem_result;
 
-    assign dmem_we    = exmem_valid & exmem_store;
-    assign dmem_re    = (exmem_valid & exmem_load) | mmu_mreq;   // bo duyet bang trang doc PTE khi tang MEM ranh
+    assign dmem_we    = exmem_valid & ((exmem_store & ~sc_fail) | (exmem_amo & amo_phase));
+    assign dmem_re    = (exmem_valid & (exmem_load | (exmem_amo & ~amo_phase))) | mmu_mreq;   // bo duyet bang trang doc PTE khi tang MEM ranh
     assign dmem_fence = exmem_valid & exmem_fence;
     // lenh o MEM xong khi bo nho san sang va (khong vat qua tu, hoac dang o pha cuoi)
-    wire   mem_last   = ~ma_cross | ma_phase;
+    wire   mem_last   = (~ma_cross | ma_phase) & (~exmem_amo | amo_phase);
     assign frz        = (dmem_we | dmem_re | dmem_fence) & ~(dmem_ready & mem_last);
     assign dmem_wdata = st_data;
     assign dmem_wstrb = dmem_we ? st_strb : 4'b0000;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)                             amo_phase <= 1'b0;
+        else if (exmem_valid & exmem_amo & dmem_ready) amo_phase <= ~amo_phase;
+    end
+    always @(posedge clk) if (exmem_valid & exmem_amo & ~amo_phase & dmem_ready) amo_old <= dmem_rdata;
+
+    // dat cho: LR dat, SC (thanh cong hay khong) xoa, trap / ngat xoa; A_ST_CLR = 1: store thuong va AMO cung xoa khi trung tu
+    wire mem_done = exmem_valid & ~frz;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)                                              res_v <= 1'b0;
+        else if (A_EXT != 0) begin
+            if (trap_q)                                          res_v <= 1'b0;
+            else if (mem_done & m_is_lr)                         begin res_v <= 1'b1; res_a <= exmem_result[31:2]; end
+            else if (mem_done & m_is_sc)                         res_v <= 1'b0;
+            else if (A_ST_CLR != 0 & mem_done & ((exmem_store & ~m_atom) | exmem_amo) & (res_a == exmem_result[31:2])) res_v <= 1'b0;
+        end
+    end
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)                             ma_phase <= 1'b0;
@@ -1475,7 +1550,7 @@ module rv32im_pipeline #(
         endcase
     end
 
-    wire [31:0] mem_val = exmem_load ? ld_data : exmem_result;
+    wire [31:0] mem_val = exmem_amo ? amo_old : m_is_sc ? {31'b0, sc_fail} : exmem_load ? ld_data : exmem_result;
 `ifdef RISCV_FORMAL
     assign fv_m_valid = exmem_valid & (exmem_load | exmem_store);
     assign fv_m_store = exmem_store;
@@ -1542,7 +1617,7 @@ module rv32im_pipeline #(
     //  - Bo nho: RVFI_ALIGNED_MEM, mem_addr chia het cho 4, rmask / wmask theo byte trong tu. Chi dung voi MISALIGNED = 0
     //    (truy cap lech tach 2 pha o MEM khong bieu dien duoc bang 1 kenh RVFI).
     // ============================================================
-    localparam [31:0] RV_MISA = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0);
+    localparam [31:0] RV_MISA = 32'h4000_1100 | ((ENABLE_C != 0) ? 32'h4 : 32'h0) | ((A_EXT != 0) ? 32'h1 : 32'h0);
     wire [31:0] csr_rdata_const_misa    = RV_MISA;
     wire [31:0] csr_rdata_const_mhartid = 32'd0;
 
@@ -1903,8 +1978,10 @@ module rv32im_pipeline #(
     wire        ls_same = (|pmp_m2) & (|pmp_m3) & (pmp_oh2 == pmp_oh3);
     assign pmp_ifault = (PMP_N != 0) & idex_valid & ~irq_take & (if_f1 | if_f2);
     assign pmp_itval  = if_f1 ? idex_pc : if_p2;
-    assign pmp_lfault = (PMP_N != 0) & idex_load  & ~ld_misal & (ls_hit ? ~(ls_same & |(pmp_oh2 & okr_d)) : ~pm_d);
-    assign pmp_sfault = (PMP_N != 0) & idex_store & ~st_misal & (ls_hit ? ~(ls_same & |(pmp_oh2 & okw_d)) : ~pm_d);
+    assign pmp_lfault = (PMP_N != 0) & idex_load  & ~ld_trap & (ls_hit ? ~(ls_same & |(pmp_oh2 & okr_d)) : ~pm_d);
+    // AMO doc roi ghi: can ca quyen R va W cua muc khop (vi pham luon bao nhu store / AMO, cause 7); SC bi kiem nhu store ke ca khi se that bai
+    assign pmp_sfault = (PMP_N != 0) & (idex_store | idex_amo) & ~st_trap &
+                        (ls_hit ? ~(ls_same & |(pmp_oh2 & okw_d & (idex_amo ? okr_d : {PN{1'b1}}))) : ~pm_d);
     // doc CSR
     integer pk;
     always @* begin

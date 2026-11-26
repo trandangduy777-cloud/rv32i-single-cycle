@@ -160,7 +160,7 @@ m("S8", "soc_syscon.v", "if (wr && addr == 3'd3) berr <= 32'd0;\n            els
 m("T1", "soc_top.v", ".src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx})", ".src({ext_irq, 1'b0, irq_uart_tx, irq_uart_rx})", "top: ngat GPIO khong toi loi")
 m("T2", "soc_top.v", ".src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx})", ".src({ext_irq, irq_gpio, 1'b0, 1'b0})", "top: ngat UART khong toi loi")
 m("T3", "soc_top.v", ".irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)", ".irq_timer(irq_soft), .irq_soft(irq_timer), .irq_ext(irq_ext)", "top: ngat timer va phan mem dao")
-m("T4", "soc_top.v", "rv32im_pipeline #(.ENABLE_C(1))", "rv32im_pipeline #(.ENABLE_C(0))", "top: tat lenh nen C")
+m("T4", "soc_top.v", "rv32im_pipeline #(.ENABLE_C(1), .A_EXT(A_EXT))", "rv32im_pipeline #(.ENABLE_C(0), .A_EXT(A_EXT))", "top: tat lenh nen C")
 m("T5", "soc_top.v", ".sel(sel_uart), .addr(dmem_addr[4:2]), .we(dmem_we), .re(dmem_re)", ".sel(sel_uart), .addr(dmem_addr[4:2]), .we(dmem_we), .re(1'b1)", "top: UART re luon bat")
 m("T6", "soc_top.v", "assign imem_data = i_sel_rom ? rom_idata : i_sel_ram ? ram_idata : 32'd0;", "assign imem_data = i_sel_rom ? rom_idata : ram_idata;", "top: fetch ngoai ROM")
 m("T7", "soc_top.v", ".sel(sel_gpio), .addr(dmem_addr[5:2]), .we(dmem_we), .wstrb(dmem_wstrb),", ".sel(sel_gpio), .addr(dmem_addr[5:2]), .we(dmem_we), .wstrb(4'b0001),", "top: GPIO chi nhan byte 0")

@@ -292,6 +292,30 @@ m8:
 m8b:
     TRAP    3, 2, 0x84
     NOTRAP  0x85
+#ifdef __riscv_atomic
+    // 9. A (LR / SC / AMO) qua MMU: dich nhu load (LR) / store (SC, AMO); AMO can ca R va W; lech dia chi trap truoc loi trang
+    GO      0, VA_UC + 0x700
+m9:
+    TRAP    3, 15, 0x91                 // amoadd, D = 0
+    TVAL    VA_ND, 0x92
+    TRAP    3, 15, 0x93                 // amoadd, A = 0 (AMO la store)
+    TRAP    3, 13, 0x94                 // lr, A = 0
+    TRAP    3, 15, 0x95                 // amoand, trang khong U
+    TRAP    3, 15, 0x96                 // amomax, V = 0
+    TRAP    3, 15, 0x97                 // amomin, W khong R
+    TRAP    3, 7, 0x98                  // amoor, dia chi vat ly >= 2^32: loi truy cap (store / AMO)
+    TRAP    3, 5, 0x99                  // lr, dia chi vat ly >= 2^32
+    TRAP    3, 6, 0x9a                  // amoadd lech: lech truoc
+    TVAL    VA_D0 + 2, 0x9b
+    TRAP    3, 4, 0x9c                  // lr lech
+    TRAP    3, 6, 0x9d                  // sc lech
+    NOTRAP  0x9e
+    li      a0, 0x9f                    // AMO / SC thanh cong qua MMU: amoswap cuoi ghi 5 vao dpage0 + 8 (doc qua dia chi vat ly)
+    la      t0, dpage0
+    lw      t1, 8(t0)
+    li      t2, 5
+    bne     t1, t2, fail
+#endif
     csrw    satp, zero
     li      a0, 1
 fail:
@@ -450,6 +474,43 @@ ucodeA:
     lui     a0, %hi(m8b)
     addi    a0, a0, %lo(m8b)
     ecall
+#ifdef __riscv_atomic
+    .balign 0x100                       // 9. VA_UC + 0x700
+    li      s0, VA_D0 + 8
+    li      t2, 5
+    li      s3, VA_RO
+    amoadd.w t1, t2, (s0)               // ok (U, R W A D); TLB truot -> bo duyet bang trang
+    lw      t4, 0(s3)                   // ngay sau AMO: TLB truot o EX trong luc AMO dang o MEM (bo duyet phai cho cong bo nho)
+    amoswap.w t1, t2, (s0)
+    lw      t4, 0(s3)
+    lr.w    t1, (s0)
+    sc.w    t1, t2, (s0)
+    amoswap.w t1, t2, (s0)              // ok
+    li      s0, VA_ND
+    amoadd.w t1, t2, (s0)               // 15
+    li      s0, VA_NA
+    amoadd.w t1, t2, (s0)               // 15
+    lr.w    t1, (s0)                    // 13
+    li      s0, VA_S
+    amoand.w t1, t2, (s0)               // 15
+    li      s0, VA_INV
+    amomax.w t1, t2, (s0)               // 15
+    li      s0, VA_WNR
+    amomin.w t1, t2, (s0)               // 15
+    li      s0, VA_HI
+    amoor.w t1, t2, (s0)                // 7
+    lr.w    t1, (s0)                    // 5
+    li      s0, VA_D0 + 2
+    amoadd.w t1, t2, (s0)               // 6
+    li      s0, VA_D0 + 1
+    lr.w    t1, (s0)                    // 4
+    li      s0, VA_D0 + 2
+    sc.w    t1, t2, (s0)                // 6
+    li      a7, SVC
+    lui     a0, %hi(m9)
+    addi    a0, a0, %lo(m9)
+    ecall
+#endif
     .skip   ucodeA + 0xFFE - .
     .half   0x8593                      // nua thap cua addi a1, a1, 85 (0x05558593)
 // ---- trang dem giua A va B (khong anh xa) ----

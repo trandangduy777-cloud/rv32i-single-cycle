@@ -19,7 +19,13 @@
 `ifndef ZICOND
 `define ZICOND 0
 `endif
-`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
+`ifndef A_EXT
+`define A_EXT 0
+`endif
+`ifndef A_ST_CLR
+`define A_ST_CLR 0
+`endif
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .A_EXT(`A_EXT), .A_ST_CLR(`A_ST_CLR)
 module tb_riscv_tests;
     reg clk = 0;
     reg rst_n = 0;

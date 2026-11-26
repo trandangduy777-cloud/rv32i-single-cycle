@@ -1,0 +1,6 @@
+amo ops ok
+lr/sc ok
+sc after irq ok
+atomic count ok
+lock ok
+misaligned ok

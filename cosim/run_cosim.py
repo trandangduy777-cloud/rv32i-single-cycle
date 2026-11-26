@@ -65,6 +65,14 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
           ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"], "rv32imc_zifencei_" + ZBARCH),
          ("RV32IMC + Zb* + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2 " + ZBFLAGS,
           CACHE_FILES, "rv32imc_zifencei_" + ZBARCH, ["+lat=8", "+seed=17"]),
+         # mo rong A (tham so A_EXT = 1): chay them atomic.S va rv32ua; qua cache 2x2 va bo nho tre (AMO doc-sua-ghi qua bo dem ghi)
+         # va voi load/store lech dia chi bang phan cung (LR/SC/AMO lech van phai trap)
+         ("RV32IMC + A", "-DPIPE_FULL -DRVC -DA_EXT=1 -DSKIP_TRAPPED", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
+          "rv32imac_zifencei"),
+         ("RV32IMC + A + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DA_EXT=1 -DSKIP_TRAPPED -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2", CACHE_FILES,
+          "rv32imac_zifencei", ["+lat=8", "+seed=19"]),
+         ("RV32IMC + A lech phan cung + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DA_EXT=1 -DSKIP_TRAPPED -DMA -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
+          CACHE_FILES, "rv32imac_zifencei_zicclsm", ["+lat=8", "+seed=23"]),
          # huong nhanh doan bang TAGE (rv32_tage.v, TAGE = 1): bo nho to hop, va qua cache 2x2 tre ngau nhien
          ("RV32IMC TAGE", "-DPIPE_FULL -DRVC -DTAGEON", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v",
           "rv32_tage.v"], "rv32imc_zifencei"),
@@ -169,18 +177,21 @@ def rtl_trace(lines):
     return out
 
 
-TRAPPING = (0x00000073, 0x00100073, 0x9002)
+TRAPPING = (0x00000073, 0x00100073, 0x9002, 0xFFFFFFFF)   # + tu bat hop le 0xFFFFFFFF (atomic.S)
 
 SP_RE = re.compile(r"core\s+\d+: 3 (0x[0-9a-f]+) \((0x[0-9a-f]+)\)(.*)")
 
 
 def spike_trace(path):
     out = []
+    spike_trace.ords = ords = []               # so thu tu lenh trong vet tho cua Spike (ke ca bootrom), song song voi out
+    raw = 0
     with open(path) as f:
         for l in f:
             m = SP_RE.match(l)
             if not m:
                 continue
+            raw += 1
             pc, ins = int(m.group(1), 16), int(m.group(2), 16)
             if pc < BASE:                      # bootrom cua Spike
                 continue
@@ -205,9 +216,38 @@ def spike_trace(path):
             if rd == 0:
                 val = 0
             out.append((pc, ins, rd, val, s))
+            ords.append(raw)
             if s and s[0] == TOHOST:
                 break
     return out
+
+
+SPIKE_QUANTUM = 5000       # Spike chay xen ke moi 5000 lenh (INTERLEAVE) va bo dat cho o ranh gioi do
+
+
+def drop_spurious_sc(ref, ords, dut):
+    """Spike lam SC.W that bai gia ngay sau ranh gioi 5000 lenh (bo dat cho khi doi luot, spec cho phep SC that bai vi bat ky ly do
+    nao, chi dam bao tien trinh cho vong LR/SC rang buoc). RTL (dat cho den khi trap/SC/store cung tu) thanh cong, Spike lap lai
+    vong: bo doan Spike thua [SC that bai ... den truoc lan SC thanh cong cung pc] de hai vet tiep tuc. Chi chap nhan dung mau nay:
+    SC.W cung pc/lenh, Spike rd=1 khong store, RTL rd=0 co store, thu tu lenh Spike = 1..4 sau boi so cua 5000."""
+    ref = list(ref)
+    n_drop = 0
+    i = 0
+    while i < min(len(ref), len(dut)):
+        a, b = ref[i], dut[i]
+        if a != b and a[1] & 0xF800707F == 0x1800202F and a[0] == b[0] and a[1] == b[1] and a[2] and a[2] == b[2] \
+                and a[3] == 1 and a[4] is None and b[3] == 0 and b[4] is not None \
+                and 1 <= ords[i] % SPIKE_QUANTUM <= 4:
+            j = i + 1
+            while j < len(ref) and ref[j][0] != a[0]:
+                j += 1
+            if j < len(ref) and ref[j] == b:
+                del ref[i:j]
+                del ords[i:j]
+                n_drop += 1
+                continue
+        i += 1
+    return ref, n_drop
 
 
 def fmt(e):
@@ -260,8 +300,9 @@ def main():
     # bo test Zba/Zbb/Zbc/Zbs/Zicond cua riscv-tests: bien dich voi -march tuong ung, chi chay tren loi co phan mo rong do
     zsuites = tuple((d, "rv32im_" + d[5:]) for d in ("rv32uzba", "rv32uzbb", "rv32uzbc", "rv32uzbs", "rv32uzicond")
                     if os.path.isdir(os.path.join(a.riscv_tests, "isa", d)))
+    asuites = (("rv32ua", "rv32ia"), ("rv32ua", "rv32iac")) if os.path.isdir(os.path.join(a.riscv_tests, "isa", "rv32ua")) else ()
     for suite, march in (("rv32ui", "rv32i"), ("rv32um", "rv32im"), ("rv32ui", "rv32ic"), ("rv32um", "rv32imc"),
-                         ("rv32uc", "rv32ic")) + zsuites:
+                         ("rv32uc", "rv32ic")) + zsuites + asuites:
         d = os.path.join(a.riscv_tests, "isa", suite)
         for fn in sorted(os.listdir(d)):
             t = fn[:-2]
@@ -285,6 +326,9 @@ def main():
     progs.append(build_bench("bench_m", "rv32imc", tmp) + ("rv32imc",))
     progs.append(build_bench("bench_call", "rv32i", tmp) + ("rv32i",))
     progs.append(build_bench("bench_call", "rv32ic", tmp) + ("rv32ic",))
+    # mo rong A: test tu viet atomic.S (moi AMO x bang gia tri bien, cac tinh huong dat cho LR/SC, lech dia chi, hazard, ngau nhien)
+    progs.append(build_asm(os.path.join(HERE, "tests", "atomic.S"), "rv32ia_zicsr", tmp) + ("rv32ia",))
+    progs.append(build_asm(os.path.join(HERE, "tests", "atomic_pmp.S"), "rv32ia_zicsr", tmp) + ("rv32ia",))
     # Zba/Zbb/Zbs/Zbc/Zicond: test tu viet zb.S (moi lenh, gia tri bien, hazard) va benchmark bien dich co Zb
     # (trinh bien dich tu dung shNadd, andn, min/max, rori, bset...): chi chay tren loi co cac phan mo rong nay
     progs.append(build_asm(os.path.join(HERE, "tests", "zb.S"), "rv32im_" + ZBARCH, tmp) + ("rv32im_" + ZBARCH,))
@@ -321,6 +365,7 @@ def main():
         except subprocess.TimeoutExpired:
             print(f"FAIL {name}: Spike khong ket thuc (chuong trinh khong ghi TOHOST?)"); fails += 1; continue
         ref = spike_trace(log)
+        spike_trace.ords_saved = spike_trace.ords
         if r.returncode or not ref:
             print(f"FAIL {name}: Spike bao loi (ma {r.returncode})"); fails += 1; continue
         hexf = elf[:-4] + ".hex"
@@ -331,9 +376,14 @@ def main():
                 continue
             try:
                 out = sh(["vvp", "-n", vvp, f"+prog={hexf}"] + plus, timeout=600).stdout.splitlines()
-                err = compare(ref, rtl_trace(out))
+                rtl = rtl_trace(out)
             except subprocess.TimeoutExpired:            # RTL treo (vong trap...): mo phong qua 600 s la loi
+                rtl = None
+            if rtl is None:
                 err = "RTL khong ket thuc sau 600 s (treo)"
+            else:
+                ref2, nd = drop_spurious_sc(ref, list(spike_trace.ords_saved), rtl) if exts(march) & {"a"} else (ref, 0)
+                err = compare(ref2, rtl)
             if err:
                 fails += 1
                 print(f"FAIL {name} tren {title}: {err}", flush=True)

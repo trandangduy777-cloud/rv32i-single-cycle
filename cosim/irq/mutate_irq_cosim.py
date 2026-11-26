@@ -77,7 +77,7 @@ EXTRA += [(n, o, w, PMP) for n, o, w in [
     ("khop mot phan van duoc phep", "wire        ls_same = (|pmp_m2) & (|pmp_m3) & (pmp_oh2 == pmp_oh3);",
      "wire        ls_same = 1'b1;"),
     ("load / store lech chi kiem tu dau", "wire [29:0] pmp_w3 = ls_end[31:2];", "wire [29:0] pmp_w3 = ea[31:2];"),
-    ("store kiem quyen R thay vi W", "~(ls_same & |(pmp_oh2 & okw_d))", "~(ls_same & |(pmp_oh2 & okr_d))"),
+    ("store kiem quyen R thay vi W", "~(ls_same & |(pmp_oh2 & okw_d & (idex_amo ? okr_d : {PN{1'b1}})))", "~(ls_same & |(pmp_oh2 & okr_d & (idex_amo ? okr_d : {PN{1'b1}})))"),
     ("fetch khong kiem nua sau lenh 32 bit",
      "wire        if_f2   = (ENABLE_C != 0) & ~idex_c & idex_pc[1] & ((|pmp_m1) ? ~|(pmp_oh1 & okx_i) : ~pm_i);",
      "wire        if_f2   = 1'b0;"),
@@ -158,9 +158,9 @@ EXTRA += [(n, o, w, MMUA) for n, o, w in [
     ("U doc duoc trang khong U", "((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3])", "((pd == 2'd1) ? (d_fl[3] & ~sum_v) : 1'b0)"),
     ("SUM bi bo qua", "((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3])", "((pd == 2'd1) ? (d_fl[3]) : ~d_fl[3])"),
     ("MXR bi bo qua", "~(d_fl[0] | (mxr_v & d_fl[2]))", "~(d_fl[0])"),
-    ("A = 0 khong loi (du lieu)", "~d_fl[4] | (idex_store & ~d_fl[5])", "(idex_store & ~d_fl[5])"),
-    ("store voi D = 0 khong loi", "~d_fl[4] | (idex_store & ~d_fl[5])", "~d_fl[4]"),
-    ("store khong can W", "(idex_store ? ~d_fl[1] :", "(idex_store ? 1'b0 :"),
+    ("A = 0 khong loi (du lieu)", "~d_fl[4] | (d_wr & ~d_fl[5])", "(d_wr & ~d_fl[5])"),
+    ("store voi D = 0 khong loi", "~d_fl[4] | (d_wr & ~d_fl[5])", "~d_fl[4]"),
+    ("store khong can W", "(d_wr ? ~d_fl[1] :", "(d_wr ? 1'b0 :"),
     ("S chay duoc trang U", "((priv == 2'd1) ? i_fl[3] : ~i_fl[3])", "((priv == 2'd1) ? 1'b0 : ~i_fl[3])"),
     ("fetch khong can X", "wire        i_bad  = ~i_fl[2] | ~i_fl[4] |", "wire        i_bad  = ~i_fl[4] |"),
     ("dia chi vat ly >= 2^32 khong loi (du lieu)", "(d_hit & ~d_bad & (d_pa[33:32] != 2'b00))", "(1'b0)"),
@@ -179,6 +179,13 @@ EXTRA += [(n, o, w, MMUA) for n, o, w in [
     ("toan hang load / store khong chot khi cho duyet", "            idex_rs1_val <= op_a;\n            idex_rs2_val <= op_b;",
      "            idex_rs1_val <= idex_rs1_val;\n            idex_rs2_val <= idex_rs2_val;"),
 ]]
+# A + MMU: chay tren loi 9 (RV32IMAC + S/U + MMU), chuong trinh mmu-imac (pha 9: LR / SC / AMO qua MMU)
+MMUAA = ["--only", "mmu-imac", "--core", "9", "--seeds", "1", "--tmax", "300000"]
+EXTRA += [(n, o, w, MMUAA) for n, o, w in [
+    ("AMO / SC dich nhu load (A + MMU)", "wire        d_wr    = idex_store | idex_amo;", "wire        d_wr    = idex_store;"),
+    ("bo duyet bang trang khong nhuong AMO (A + MMU)", "wire        mem_busy = exmem_valid & (exmem_load | exmem_store | exmem_amo | exmem_fence);",
+     "wire        mem_busy = exmem_valid & (exmem_load | exmem_store | exmem_fence);"),
+]]
 
 
 def main():
@@ -195,7 +202,7 @@ def main():
     if a.su:
         muts = [m for m in muts if len(m) > 3 and m[3] is SUM]
     if a.mmu:
-        muts = [m for m in muts if len(m) > 3 and m[3] is MMUA]
+        muts = [m for m in muts if len(m) > 3 and m[3] in (MMUA, MMUAA)]
     if a.range:
         lo, hi = (int(x) if x else None for x in a.range.split(":"))
         muts = muts[lo:hi]

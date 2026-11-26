@@ -48,6 +48,8 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
         cmd[2:2] = [f"-DMULLAT={MUL_LAT}"]   # bo nhan cua pipeline RV32IM
         for e in ZB:                    # Zba/Zbb/Zbs/Zbc/Zicond: tham so tuong ung cua pipeline = 1
             cmd[2:2] = [f"-D{e.upper()}=1"]
+        if A_EXT:                       # mo rong A (A_ST_CLR = 1: store thuong cung xoa dat cho)
+            cmd[2:2] = ["-DA_EXT=1"] + (["-DA_ST_CLR=1"] if A_ST_CLR else [])
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
@@ -62,6 +64,9 @@ WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 
 MA = False                              # --ma: pipeline RV32IM voi MISALIGNED = 1, ISS cung khong trap khi lech
 ZB = ()                                 # --zb: cac phan mo rong zba/zbb/zbs/zbc/zicond dang bat (RTL, ISS, bo sinh cung bat)
 STOP_FAIL = False                       # --stop-on-fail: dung o chuong trinh dau tien lech (mutation test: bat duoc la du)
+A_EXT = False                          # --a: mo rong A (LR/SC/AMO) bat o RTL, ISS va bo sinh
+A_ST_CLR = False                        # --a-st-clr: A_ST_CLR = 1 (store thuong va AMO vao tu dang dat cho xoa dat cho)
+A_PROBE = False                         # --a-probe: bo sinh them ma AMO khong hop le / (khi A tat) hop le phai trap
 ZB_PROBE = False                        # --zb-probe: bo sinh them ma Zb cua phan mo rong tat / gan hop le (phai trap lenh bat hop le)
 BPSTRESS = False                        # --bpstress: BTB 4 muc tag 1 bit, RAS 2 muc, gshare 2 bit
 MUL_LAT = 2                             # --mul-lat: bo nhan 0 lap, 1 song song 1 chu ky, 2 song song 2 tang
@@ -100,7 +105,7 @@ def check_one(vvp, prog_words, dmem_words, tmp, tag, irq_csrs=False):
     write_hex(p, prog_words + [0x13] * (1024 - len(prog_words)))
     write_hex(d, dmem_words)
     rtl_lines, timeout = run_rtl(vvp, p, d)
-    iss = ISS(prog_words, dmem_words, irq_csrs, misaligned_hw=MA, zb=ZB)
+    iss = ISS(prog_words, dmem_words, irq_csrs, misaligned_hw=MA, zb=ZB, a_ext=A_EXT, a_st_clr=A_ST_CLR)
     iss_lines, halted = iss.run()
     if timeout or not halted:
         return ("TIMEOUT", None), iss.coverage
@@ -127,7 +132,7 @@ def run_suite(rtl, n, length, seed0, tmp, verbose=True, pipe=False, full_pipe=Fa
             return cov, fails
     # chuong trinh ngau nhien
     for s in range(seed0, seed0 + n):
-        words, dmem = Gen(s, length, profile, ma=MA, zb=ZB, zb_probe=ZB_PROBE).build()
+        words, dmem = Gen(s, length, profile, ma=MA, zb=ZB, zb_probe=ZB_PROBE, a=A_EXT, a_probe=A_PROBE).build()
         res, c = check_one(vvp, words, dmem, tmp, f"s{s}", full_pipe)
         for k, v in c.items():
             cov[k] = cov.get(k, 0) + v
@@ -161,6 +166,12 @@ def report(cov, fails, n, pipe=False):
               ("| chua phu: " + ", ".join(miss_t)) if miss_t else "| du 6 loai trap")
     low = sorted((v, k) for k, v in cov.items() if k in (ALL_INSTR_BASE if pipe else ALL_INSTR))[:5]
     print("Lenh it xuat hien nhat:", ", ".join(f"{k}={v}" for v, k in low))
+    if A_EXT:                           # phu lenh A, ket qua SC va 2 loai trap lech dia chi
+        an = ["lr.w", "sc.w", "amoswap.w", "amoadd.w", "amoxor.w", "amoand.w", "amoor.w", "amomin.w", "amomax.w", "amominu.w", "amomaxu.w"]
+        amiss = [n for n in an if cov.get(n, 0) == 0]
+        print("Phu lenh A: %d/%d" % (len(an) - len(amiss), len(an)), ("| chua phu: " + ", ".join(amiss)) if amiss else "| du lenh",
+              "| sc thanh cong = %d, sc that bai = %d, lech: lr %d sc/amo %d" % (cov.get("sc_ok", 0), cov.get("sc_fail", 0),
+                                                                              cov.get("trap:4", 0), cov.get("trap:6", 0)))
     if ZB:                              # phu lenh cua cac phan mo rong dang bat
         zn = sorted({n for e in ZB for n in rv32_zb.NAMES_OF[e]})
         zmiss = [n for n in zn if cov.get(n, 0) == 0]
@@ -331,18 +342,27 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: M dung toan hang chua forward", ".a(op_a), .b(op_b),", ".a(idex_rs1_val), .b(idex_rs2_val),"),
     ("X: LH/SH lech khong trap", "wire ld_misal = (MISALIGNED == 0) & idex_load  &\n                    (((idex_funct3[1:0] == 2'b01) & ea_lo[0])",
      "wire ld_misal = (MISALIGNED == 0) & idex_load  &\n                    (((idex_funct3[1:0] == 2'b01) & 1'b0)"),
-    ("X: SW lech chi kiem tra bit 0", "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));\n\n",
-     "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & ea_lo[0]));\n\n"),
+    ("X: SW lech chi kiem tra bit 0", "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));\n    // LR / SC / AMO lech",
+     "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & ea_lo[0]));\n    // LR / SC / AMO lech"),
     # tang MEM viet lai theo byte (64 bit / wstrb 8 bit) tu khi co MISALIGNED: thay 2 dot bien chung voi RV32I
     ("P: LB khong mo rong dau", "3'b000:  ld_data = {{24{ld_sh[7]}},  ld_sh[7:0]};", "3'b000:  ld_data = {24'b0, ld_sh[7:0]};"),
-    ("P: SH sai byte-enable", "st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0011;",
-     "st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0110;"),
+    ("P: SH sai byte-enable", "st_wide = {48'b0, st_val[15:0]}; st_strb8 = 8'b0000_0011;",
+     "st_wide = {48'b0, st_val[15:0]}; st_strb8 = 8'b0000_0110;"),
     ("X: store lech van ghi bo nho", "exmem_store     <= idex_store & ~ex_stall & ~trap_ex;", "exmem_store     <= idex_store & ~ex_stall;"),
     ("X: load lech van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~(trap_ex & ~ld_misal);"),
-    ("X: store lech sai cause (4)", "else if (st_misal)      begin trap_cause = 32'd6;", "else if (st_misal)      begin trap_cause = 32'd4;"),
-    ("X: load lech mtval = 0", "else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;", "else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = 32'd0;"),
+    ("X: store lech sai cause (4)", "else if (st_trap)       begin trap_cause = 32'd6;", "else if (st_trap)       begin trap_cause = 32'd4;"),
+    ("X: load lech mtval = 0", "else if (ld_trap)       begin trap_cause = 32'd4;  trap_tval = ea;", "else if (ld_trap)       begin trap_cause = 32'd4;  trap_tval = 32'd0;"),
     ("X: dia chi lech tinh sai (bo cong imm)", "wire [1:0]  ea_lo = op_a[1:0] + idex_imm[1:0];", "wire [1:0]  ea_lo = op_a[1:0];"),
 ]
+
+
+# Ban RV32IM them AMO/SC vao dieu kien stall va vao mux dia chi (mo rong A): sua chuoi goc / chuoi thay cho 2 dot bien dung chung
+_PIPEM_FIX = {
+    "P: khong stall load-use": ("idex_valid & idex_load", "idex_valid & idex_ldlike"),
+    "P: dia chi load/store dung rs1 chua forward": ("(idex_load | idex_store)", "(idex_load | idex_store | idex_amo)"),
+}
+PIPEM_MUTATIONS = [(n, o.replace(*_PIPEM_FIX[n]), w.replace(*_PIPEM_FIX[n])) if n in _PIPEM_FIX else (n, o, w)
+                   for n, o, w in PIPEM_MUTATIONS]
 
 
 def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=False):
@@ -408,6 +428,9 @@ if __name__ == "__main__":
     ap.add_argument("--stop-on-fail", action="store_true", help="dung o chuong trinh dau tien lech (cho mutation test)")
     ap.add_argument("--zb-probe", action="store_true",
                     help="bo sinh them ma Zb cua phan mo rong tat va ma gan hop le: ca RTL va ISS phai bao lenh bat hop le")
+    ap.add_argument("--a", action="store_true", help="voi --pipem: bat mo rong A (A_EXT = 1; RTL, ISS, bo sinh)")
+    ap.add_argument("--a-st-clr", action="store_true", help="voi --a: A_ST_CLR = 1 (store thuong cung xoa dat cho khi trung tu)")
+    ap.add_argument("--a-probe", action="store_true", help="bo sinh them ma AMO khong hop le; khi khong co --a, ma AMO hop le cung phai trap")
     ap.add_argument("--mul-lat", type=int, default=2, choices=[0, 1, 2], help="voi --pipem: kieu bo nhan")
     a = ap.parse_args()
     MUL_LAT = a.mul_lat
@@ -415,6 +438,9 @@ if __name__ == "__main__":
     if any(e not in rv32_zb.ALL_EXTS for e in ZB) or (ZB and not a.pipem):
         sys.exit("--zb chi dung voi --pipem, danh sach: " + ",".join(rv32_zb.ALL_EXTS) + " hoac all")
     ZB_PROBE = a.zb_probe and a.pipem
+    A_EXT = a.a and a.pipem
+    A_ST_CLR = a.a_st_clr and A_EXT
+    A_PROBE = a.a_probe and a.pipem
     STOP_FAIL = a.stop_on_fail or a.mutate   # mutation: mot chuong trinh lech la du bat (chuong trinh treo chay toi gioi han chu ky)
     CACHE = a.cache and a.pipem
     BPSTRESS = a.bpstress and a.pipem
