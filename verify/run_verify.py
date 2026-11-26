@@ -290,7 +290,10 @@ M_CORE_MUTATIONS = [
 PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
                                                              "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
                                                              "P: SH sai byte-enable", "P: dia chi load/store dung rs1 chua forward",
-                                                             "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID")] + [
+                                                             "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID",
+                                                             "B: dich nhay som la pc+4")] + [
+    # pipeline RV32IM: dich JAL / nhanh tinh san o IF (ifid_tgt)
+    ("B: dich nhay som la pc+4", "ifid_tgt   <= pc + ((if_dec[6:0] == 7'b1101111) ? if_immj : if_immb);", "ifid_tgt   <= pc + 32'd4;"),
     # pipeline RV32IM: dia chi load / store tinh rieng (ea, dung chung cho PMP / MMU)
     ("P: dia chi load/store dung rs1 chua forward", "wire [31:0] ea    = op_a + idex_imm;", "wire [31:0] ea    = idex_rs1_val + idex_imm;"),
     # bo du doan RV32IM (BTB / RAS, xem bpred/): ID sua hoac nhay som qua id_fix_tgt / id_fix_seq / id_late
