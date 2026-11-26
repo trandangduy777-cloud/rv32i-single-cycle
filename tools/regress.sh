@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
-#   bash tools/regress.sh                 # nhom "nhanh" (buoc 0-9, 15, 17, 19, 22, 24, 26; khoang 2 gio)
-#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 0, 10-14, 16, 18, 20, 21, 23, 25, 27; vai gio)
+#   bash tools/regress.sh                 # nhom "nhanh" (buoc 0-9, 15, 17, 19, 22, 24, 26, 28-30, 32, 34; khoang 2 gio)
+#   bash tools/regress.sh dot-bien        # nhom mutation (buoc 0, 10-14, 16, 18, 20, 21, 23, 25, 27, 31, 33; vai gio)
 #   bash tools/regress.sh tat-ca          # ca hai nhom, tuan tu
 #   bash tools/regress.sh may-2-nhan      # ca hai nhom, 2 hang chay song song (A: mo phong / SoC / Spike, B: so vet ngat,
 #                                         #   mutation ngat, riscv-formal); khong dung o buoc that bai, tong ket o cuoi
@@ -26,7 +26,11 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
        "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y" "mutation Zba/Zbb/Zbs/Zbc/Zicond" \
        "so vet ngau nhien voi Spike (22 loi, 8 chuong trinh moi loi) + test co huong csr_mie" "mutation so vet ngau nhien (16 dot bien)" \
        "SoC AXI4 + DMA: interconnect ngau nhien, giao thuc, chuong trinh C, DMA, FreeRTOS" "mutation AXI4 + DMA (55 mutant)" \
-       "TAGE: so tung du doan voi mo hinh tham chieu (35 vet, 4 cau hinh)" "mutation TAGE (28 dot bien)")
+       "TAGE: so tung du doan voi mo hinh tham chieu (35 vet, 4 cau hinh)" "mutation TAGE (28 dot bien)" \
+       "Verilator lint -Wall (13 muc tieu, cac mien tru co giai thich)" "so vet voi Spike bang Verilator (riscv-tests, bench, CoreMark; trace phai khop iverilog)" \
+       "SVA bind (bo phan xu, cache, pipeline) tren RTL sach" "mutation SVA (25 dot bien, moi nhom assertion phai bat duoc)" \
+       "cocotb: cache du lieu + he thong bo nho, scoreboard + functional coverage" "mutation cocotb (12 dot bien, khong co SVA ho tro)" \
+       "Verilator --coverage cua pipeline (loi RV32IMC: riscv-tests + bench + CoreMark)")
 
 # Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
 # 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77). Doi nhom bang
@@ -95,6 +99,13 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     25) AXI=1 sh soc/sw/build.sh && python3 soc/mutate_axi.py --jobs 2 ;;
     26) python3 tage/check_tage.py --spike "$SPIKE" ;;
     27) python3 tage/mutate_tage.py --spike "$SPIKE" ;;
+    28) python3 verilator/lint.py ;;
+    29) python3 verilator/run_vlcosim.py cosim "$RT" --spike "$SPIKE" --core "RV32IMC + cache 2x2" && python3 verilator/run_vlcosim.py random --n 4 --seed0 1000 --idx 3 4 ;;
+    30) python3 verilator/run_sva.py --n 3 ;;
+    31) python3 verilator/mutate_sva.py --jobs 2 ;;
+    32) python3 verilator/run_cocotb.py --seeds 3 --nops 2000 ;;
+    33) python3 verilator/mutate_cocotb.py ;;
+    34) rm -rf /tmp/plcov_r && python3 verilator/run_plcov.py run --dat /tmp/plcov_r --cores 3 --riscv-tests "$RT" --spike "$SPIKE" && python3 verilator/run_plcov.py merge --dat /tmp/plcov_r --report /tmp/plcov_r/pipeline.txt ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
 }
@@ -109,12 +120,12 @@ run_one() {   # run_one <buoc> <tien to>: chay 1 buoc, in DUNG 1 dong ket qua (i
     printf '%s\n' "$line"; return 1
 }
 
-QA="0 1 2 3 4 5 6 7 8 9 10 11 12 13a 13b 13c 14 17 18 21 22 23 24 25 26 27"   # cac buoc dung chung thu muc build (bench, soc/sw) o cung hang
+QA="0 1 2 3 4 5 6 7 8 9 10 11 12 13a 13b 13c 14 17 18 21 22 23 24 25 26 27 28 29 30 31 32 33 34"   # cac buoc dung chung thu muc build (bench, soc/sw) o cung hang
 QB="15a 15b 15c 15d 16a 16b 16c 16d 19 20"                               # 20 can riscv-formal do 19 dung, nen di sau 19
 case "${1:-nhanh}" in
-    nhanh)   STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26" ;;
-    dot-bien) STEPS="0 10 11 12 13 14 16 18 20 21 23 25 27" ;;
-    tat-ca)  STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 10 11 12 13 14 16 18 20 21 23 25 27" ;;
+    nhanh)   STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 28 29 30 32 34" ;;
+    dot-bien) STEPS="0 10 11 12 13 14 16 18 20 21 23 25 27 31 33" ;;
+    tat-ca)  STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 28 29 30 32 34 10 11 12 13 14 16 18 20 21 23 25 27 31 33" ;;
     may-2-nhan)
         t0=$(date +%s); fails="$LOGDIR/fails"; : > "$fails"
         # ma nguon CoreMark (coremark/eembc) duoc ca buoc 8 (hang A) va 15 (hang B) tu clone khi chua co: lay truoc mot lan,
