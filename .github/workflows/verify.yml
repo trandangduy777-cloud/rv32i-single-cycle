@@ -17,6 +17,30 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # tools/check_commits.py can lich su main
+
+      # Chot chan quy trinh (vai giay), chay truoc moi mo phong. Xem README muc "Quy trinh commit".
+      - name: Chuoi goc cua moi dot bien xuat hien dung 1 lan (tools/check_mutants.py)
+        run: python3 tools/check_mutants.py -v
+
+      - name: Author cua commit la chu repo
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then R="origin/main..$PR_HEAD"
+          elif [ "${{ github.ref }}" = refs/heads/main ]; then R="$BEFORE..${{ github.sha }}"
+          else R="origin/main..${{ github.sha }}"; fi
+          python3 tools/check_commits.py --author --range "$R"
+
+      - name: Nhip commit tren main (1 cha, <= 12 commit / ngay gio VN, canh bao commit chẻ vụn)
+        if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then python3 tools/check_commits.py --pr
+          else python3 tools/check_commits.py --range "$BEFORE..${{ github.sha }}"; fi
 
       - name: Cai iverilog va trinh bien dich RISC-V
         run: |
@@ -228,15 +252,16 @@ jobs:
         run: python3 run_verify.py ${{ matrix.core }} --mutate
 
   mutation-ext:
-    # Mutation mo rong (can Spike), tach khoi job cosim: chung mot job da mat 136 / 150 phut truoc khi them Zb*, SoC
-    # 151 dot bien va mutation chuong trinh ngau nhien.
+    # Mutation mo rong (can Spike), moi nhom 1 job, muc tieu <= 50 phut moi job (gio do duoc ghi canh tung nhom, lan
+    # workflow_dispatch tren nhanh sua-ha-tang 26/11/2026). Them dot bien cho nhom nao thi do lai va tach nhom trong cung commit.
     if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        group: [rvc-irq-random, cache, bpred-mul-soc-zb, axi]
+        group: [rvc, random, cache, bpred-mul-zb, soc, axi,
+                irq-0-14, irq-14-28, irq-28-42, irq-42-56, irq-56-70, irq-70-84, irq-84-98, irq-98-]
     env:
       SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
     steps:
@@ -271,19 +296,20 @@ jobs:
           git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
           S=$HOME/spike/bin/spike
           case "${{ matrix.group }}" in
-            rvc-irq-random)
-              python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $S
-              python3 cosim/irq/mutate_irq_cosim.py --spike $S
-              python3 cosim/mutate_random.py --n 80 --spike $S ;;
-            cache)
-              python3 cache/mutate_cache.py /tmp/riscv-tests --spike $S ;;
-            bpred-mul-soc-zb)
+            rvc)    python3 rvc/mutate_rvc.py /tmp/riscv-tests --spike $S ;;
+            random) python3 cosim/mutate_random.py --n 80 --spike $S ;;
+            cache)  python3 cache/mutate_cache.py /tmp/riscv-tests --spike $S ;;
+            bpred-mul-zb)
               python3 bpred/mutate_bpred.py
               python3 mul/mutate_mul.py
-              sh soc/sw/build.sh
-              python3 soc/mutate_soc.py --jobs 4
               python3 zb/mutate_zb.py ;;
+            soc)
+              sh soc/sw/build.sh
+              python3 soc/mutate_soc.py --jobs 4 ;;
             axi)
               AXI=1 sh soc/sw/build.sh
               python3 soc/mutate_axi.py --jobs 2 ;;
+            irq-*)  # mutate_irq_cosim.py (16 dot bien ngat co ban + ngat, bo dem, PMP, S/U, MMU), chia theo --range
+              r=${{ matrix.group }}; r=${r#irq-}; r=${r/-/:}
+              python3 cosim/irq/mutate_irq_cosim.py --spike $S --range "$r" ;;
           esac
