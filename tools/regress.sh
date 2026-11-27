@@ -37,13 +37,13 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
 
 # Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
 # 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77).
-# loi 9 (MMU + lech phan cung + cache, them 27/11): 62 phut, chay rieng o 15e. Doi nhom bang bien IRQ_CORES_A..E neu them loi. Buoc 16 (mutate_irq_cosim.py, 124 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
+# loi 9 (MMU + lech phan cung + cache, them 27/11): 62 phut, va loi 10 (phat doi, 28/11): vai phut, chay o 15e. Doi nhom bang bien IRQ_CORES_A..E neu them loi. Buoc 16 (mutate_irq_cosim.py, 124 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
 # 21:28 ~ 22-32, 28:42 = 22, 42: = 10 (may 2 nhan cham hon khoang 1,5 lan).
 declare -A SUBNAMES=(
     [13a]="mutation lenh C (so vet Spike)" [13b]="mutation bo nhan song song" [13c]="mutation du doan nhanh"
     [15a]="so vet ngat voi Spike: loi ${IRQ_CORES_A:-8}" [15b]="so vet ngat voi Spike: loi ${IRQ_CORES_B:-1 3}"
     [15c]="so vet ngat voi Spike: loi ${IRQ_CORES_C:-6 7 4}" [15d]="so vet ngat voi Spike: loi ${IRQ_CORES_D:-0 2 5}"
-    [15e]="so vet ngat voi Spike: loi ${IRQ_CORES_E:-9}"
+    [15e]="so vet ngat voi Spike: loi ${IRQ_CORES_E:-9 10}"
     [16a]="mutation ngat qua Spike, doan 0:14" [16b]="mutation ngat qua Spike, doan 14:21"
     [16c]="mutation ngat qua Spike, doan 21:42" [16d]="mutation ngat qua Spike, doan 42:")
 name_of() { if [ -n "${SUBNAMES[$1]+x}" ]; then echo "${SUBNAMES[$1]}"; else echo "${NAMES[$1]:-?}"; fi; }
@@ -88,7 +88,7 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     15b) irq_cores "${IRQ_CORES_B:-1 3}" ;;
     15c) irq_cores "${IRQ_CORES_C:-6 7 4}" ;;
     15d) irq_cores "${IRQ_CORES_D:-0 2 5}" ;;
-    15e) irq_cores "${IRQ_CORES_E:-9}" ;;
+    15e) irq_cores "${IRQ_CORES_E:-9 10}" ;;
     16) step 16a && step 16b && step 16c && step 16d ;;
     16a) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 0:14 ;;
     16b) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 14:21 ;;
