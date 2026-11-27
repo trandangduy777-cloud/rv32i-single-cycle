@@ -1,6 +1,11 @@
 // Dinh cho flow: pipeline RV32IM bat lenh nen C (ENABLE_C = 1), bo nho to hop ben ngoai nhu ban flow cu.
 // Muc dich: do anh huong cua bo giai nen lenh C (nam o IF) len dien tich va duong toi han.
-module rv32imc_top (
+// Cac tham so duoi day chuyen thang xuong rv32im_pipeline de LibreLane (SYNTH_PARAMETERS, chparam tren module dinh)
+// chon cau hinh: mac dinh = cau hinh mac dinh cua pipeline (khong S/U, khong MMU, khong TAGE, khong Zb*).
+module rv32imc_top #(
+    parameter SU = 0, MMU = 0, TAGE = 0, MISALIGNED = 0,
+    parameter ZBA = 0, ZBB = 0, ZBS = 0, ZBC = 0, ZICOND = 0
+) (
     input  wire        clk,
     input  wire        rst_n,
     output wire [31:0] imem_addr,
@@ -16,7 +21,8 @@ module rv32imc_top (
     input  wire        irq_ext,
     output wire        icache_flush
 );
-    rv32im_pipeline #(.ENABLE_C(1)) u_core (
+    rv32im_pipeline #(.ENABLE_C(1), .SU(SU), .MMU(MMU), .TAGE(TAGE), .MISALIGNED(MISALIGNED),
+                      .ZBA(ZBA), .ZBB(ZBB), .ZBS(ZBS), .ZBC(ZBC), .ZICOND(ZICOND)) u_core (
         .clk(clk), .rst_n(rst_n),
         .imem_addr(imem_addr), .imem_data(imem_data), .imem_ready(1'b1),
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata), .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
