@@ -11,7 +11,7 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 | `rv32im_pipeline.v`: 5 tầng | RV32IMC + CSR + trap + ngắt + WFI, nhân lặp (nay: + BTB/RAS, nhân song song, Zicntr/Zihpm, `mtvec` vectored, Zb* tùy chọn) ** | ≈ 13,67 ns, ≈ 73 MHz | 1,16 / 3,55 (tắt BTB/RAS, nhân lặp: 1,32 / 5,00) | 51.623 |
 | như trên + cache 2 × 256 B | RV32IMC, cache ánh xạ trực tiếp, chưa có bộ đệm ghi, không đạt 15 ns *** | ≈ 18,76 ns, ≈ 53 MHz (ngoại suy) | 1,20-1,37 / 4,98-5,18 | 137.359 |
 
-**Cột chu kỳ và số cell là kết quả flow trên RTL cũ (ngày 22/11/2026 trở về trước), không phải RTL hiện tại; cột CPI đo trên RTL hiện tại.** Lõi hiện tại mới có tổng hợp + STA trước P&R (yosys + ABC + OpenSTA, không có dây, sai số cỡ 1 ns): RV32IMC mặc định (có PMP 8 mục) 499.445 µm² cell, slack xấu nhất +0,008 ns ở 15 ns (đường bộ chia lặp); bản có S/U + MMU và bản S/U + MMU + TAGE cũng đạt 15 ns (+0,141 / +0,033 ns), xem mục Tổng hợp và STA. Flow LibreLane cho RTL hiện tại chưa chạy.  
+**Cột chu kỳ và số cell là kết quả flow trên RTL cũ (ngày 22/11/2026 trở về trước), không phải RTL hiện tại; cột CPI đo trên RTL hiện tại.** Lõi hiện tại mới có tổng hợp + STA trước P&R (yosys + ABC + OpenSTA, không có dây, sai số cỡ 1 ns): RV32IMC mặc định (có PMP 8 mục) 499.445 µm² cell, slack xấu nhất +0,008 ns ở 15 ns (đường bộ chia lặp); bản có S/U + MMU và bản S/U + MMU + TAGE cũng đạt 15 ns (+0,141 / +0,033 ns) trên RTL ngày 26/11, trên RTL 27/11 tối là −0,297 / −0,339 ns (trong mức dao động ±0,6 ns của ABC), xem mục Tổng hợp và STA và mục Chạy lại flow. Flow LibreLane cho RTL hiện tại chưa chạy.  
 \* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
 \*\* Bản đầy đủ với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC.
 \*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. CPI đo với bộ nhớ trễ tối đa 1 / 4 / 8 chu kỳ, khi còn bộ nhân lặp.
@@ -59,7 +59,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `irq/` | Kiểm chứng ngắt và WFI: chương trình `irq_test.S`, testbench `tb_irq.v`, mutation test `mutate_irq.py` (xem mục Ngắt) |
 | `config_pipeline.json` | Cấu hình LibreLane cho pipeline RV32I thuần (`CLOCK_PERIOD` = 14 ns, đã chạy đạt timing) |
 | `config_pipeline_full.json` | Cấu hình LibreLane cho pipeline đầy đủ (`CLOCK_PERIOD` = 15 ns, đã chạy đạt timing) |
-| `config_pipeline_c.json`, `config_cached.json`, `flow/` | Cấu hình LibreLane và module đỉnh cho bản RV32IMC (đạt 15 ns) và bản có cache (không đạt), script `flow/run_flow.sh` |
+| `config_pipeline_c.json`, `config_su_mmu.json`, `config_zb.json`, `config_cached.json`, `flow/` | Cấu hình LibreLane và module đỉnh cho bản RV32IMC (mặc định, S/U + MMU, Zb* đầy đủ; bản cũ đạt 15 ns) và bản có cache (không đạt), script `flow/run_flow.sh` |
 | `prog_base.hex` | Chương trình test chỉ gồm RV32I thuần (229 lệnh), dùng cho pipeline |
 | `asm.py` | Assembler mini sinh `prog.hex` (823 lệnh tự kiểm tra, gồm CSR/trap và M) |
 | `verify/` | Mô hình tham chiếu (ISS), bộ sinh chương trình ngẫu nhiên, so vết từng lệnh, mutation test (xem `verify/README.md`) |
@@ -656,6 +656,30 @@ Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR,
 Ở clock 20 ns thiết kế không đạt setup ở góc chậm (slack -1,813 ns), nên chu kỳ được nới lên 24 ns.
 
 ## Flow cho bản RV32IMC và bản có cache
+
+### Chạy lại flow cho RTL hiện tại (chuẩn bị 27/11/2026, chưa chạy)
+
+Ba cấu hình trên cùng module đỉnh `flow/rv32imc_top.v`. Module đỉnh nay nhận tham số `SU`, `MMU`, `TAGE`, `MISALIGNED`, `ZBA` / `ZBB` / `ZBS` / `ZBC` / `ZICOND` và chuyển xuống pipeline; LibreLane đặt chúng qua `SYNTH_PARAMETERS` (chparam trên module đỉnh):
+
+| File | Cấu hình | STA trước P&R, RTL 27/11 tối (`synth/run_cfg_sta.sh`) | Đường xấu nhất |
+|---|---|---|---|
+| `config_pipeline_c.json` | mặc định (có PMP 8 mục, bộ đếm, BTB + RAS) | 499.453 µm², +0,125 ns | bộ nhân |
+| `config_su_mmu.json` | `SU = 1`, `MMU = 1` | 628.934 µm², −0,297 ns | `idex_fa_wb` → `exmem_fence` |
+| `config_zb.json` | Zba + Zbb + Zbs + Zbc + Zicond | 544.919 µm², −0,160 ns | bộ nhân |
+
+- So với bảng ở mục STA theo cấu hình (RTL 26/11), RTL hiện tại đã thêm Debug Module (chỉ khi `-DDBG`), chân SEIP, tách truy cập vắt trang và `menvcfg`; cấu hình S/U + MMU từ +0,141 thành −0,297 ns, Zb* đầy đủ từ +0,220 thành −0,160 ns, mặc định từ +0,008 thành +0,125 ns. Các chênh lệch này nằm trong mức dao động khoảng ±0,6 ns của ABC đã ghi ở mục đó, đường xấu nhất vẫn là bộ nhân / forwarding → `exmem_fence` như trước; flow LibreLane (có resizer, có dây) sẽ cho con số chốt.
+
+Lệnh (trong container có LibreLane và PDK IHP SG13G2, ví dụ image `isaiassh/unic-cass-tools`, từ thư mục gốc repo):
+
+```
+bash flow/run_flow.sh --check                 # vài giây: kiểm JSON và danh sách file Verilog
+bash flow/run_flow.sh                         # cả 3 cấu hình, lần lượt
+bash flow/run_flow.sh config_su_mmu.json      # một cấu hình
+```
+
+- Thanh tiến độ của LibreLane (bước hiện tại / tổng số bước) in thẳng ra terminal, không bị chuyển vào file; script thêm dòng `[cấu hình k/n]`, giờ bắt đầu, số phút đã chạy và mã thoát của từng cấu hình.
+- Cuối cùng in bảng tóm tắt (số cell, diện tích cell, WNS setup / hold, số vi phạm, DRC, LVS) và ghi vào `results/flow_summary.md`; `metrics.json` của từng cấu hình chép vào `results/flow_<tên>/`. Cấu hình lỗi thì 40 dòng cuối của log nằm ở `results/flow_<tên>/log_tail.txt` và script vẫn chạy tiếp cấu hình sau.
+- Đã kiểm ở đây: `--check` đạt, yosys dựng phân cấp đúng cho cả 3 bộ tham số (bản S/U + MMU có `rv32_mmu`), và chạy toàn bộ script với một `librelane` giả (một cấu hình cố ý lỗi) để kiểm bảng tóm tắt; chưa chạy LibreLane thật trên RTL hiện tại.
 
 Chạy bằng `flow/run_flow.sh` (LibreLane, IHP SG13G2, SDC mặc định, clock 15 ns), số liệu trong `results/metrics_rv32imc_15ns.json` và `results/metrics_rv32imc_cached_15ns.json`. Module đỉnh: `flow/rv32imc_top.v` (lõi với `ENABLE_C = 1`, bộ nhớ ngoài như các lần flow trước) và `flow/rv32imc_cached_top.v` (lõi + cache lệnh + cache dữ liệu 16 dòng × 4 từ + bộ phân xử, ra ngoài một bus bộ nhớ).
 
