@@ -6,6 +6,10 @@
 // - uy quyen loi trang (medeleg 12 / 13 / 15) ve S; MPRV + MPP = U cho load cua M
 // - sua PTE roi SFENCE.VMA; lenh 32 bit vat qua ranh gioi trang (2 trang vat ly khong lien nhau, chi khi co C),
 //   loi trang o nua sau (mtval = pc + 2); TVM (satp, SFENCE.VMA o S), SFENCE.VMA o U
+// - -DMA (loi MISALIGNED = 1, Spike zicclsm): load / store lech vat qua ranh gioi trang (2 trang vat ly khong lien nhau),
+//   loi o trang sau (mtval = dau trang sau) / trang dau (mtval = dia chi), PMP cam / cho phep tung trang (co dich va
+//   khong dich: hai muc PMP khac nhau tiep giap o ranh gioi 4 KiB). Store loi o trang sau: Spike da ghi phan trang dau,
+//   lo khong ghi gi (spec cho phep ca hai); chuong trinh khong doc lai cac byte do.
 // Ma U chay o dia chi ao nen dung dia chi tuyet doi (lui / addi) thay cho la (theo pc).
 // Trinh xu ly M / S ghi (che do, cause, tval, epc) vao plog; ECALL voi a7 = 0x99: ve M tai a0. TOHOST = 1: dat.
 #include "irq_defs.h"
@@ -36,6 +40,11 @@
 #define VA_SPM  0x40400000              // trang lon lech (PPN[9:0] != 0)
 #define VA_UT   0x40800000              // PTE muc 1 tro bang nhung co U
 #define VA_PB   0x40C00000              // qua bang muc 0 thu hai (l0pb), dung cho PMP cam bang trang
+#define VA_MA0  0x4000C000              // -DMA: dpage1 U R W A D
+#define VA_MA1  0x4000D000              //       dpage0 U R W A D (trang vat ly dung TRUOC trang cua VA_MA0)
+#define VA_MA2  0x4000E000              //       V = 0
+#define VA_MA3  0x4000F000              //       xpage U R W A D (store loi o trang sau: Spike ghi mot phan o day)
+#define VA_MA4  0x40010000              //       dpage0 U R A D (khong W)
 
 .macro NOTRAP code
     li      a0, \code
@@ -138,6 +147,12 @@ _start:
     sw      t0, 4 * 10(t1)
     SETPTE  l0pt, 11, dpage0, PTE_V     // so 11: PTE khong la o muc 0
     SETPTE  l0pb, 0, dpage1, PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D
+#ifdef MA
+    SETPTE  l0pt, 12, dpage1, PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D
+    SETPTE  l0pt, 13, dpage0, PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D
+    SETPTE  l0pt, 15, xpage,  PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D
+    SETPTE  l0pt, 16, dpage0, PTE_V | PTE_R | PTE_U | PTE_A | PTE_D
+#endif
     la      t0, l1pt
     srli    t0, t0, 12
     li      t1, 0x80000000 | (5 << 22) // Sv32, ASID 5
@@ -292,7 +307,81 @@ m8:
 m8b:
     TRAP    3, 2, 0x84
     NOTRAP  0x85
+#ifdef MA
+    // 9. load / store lech vat qua ranh gioi trang: U tu kiem gia tri (a1 = ma loi dau tien), M kiem ban ghi trap
+    li      a1, 0
+    GO      0, VA_UC + 0x700
+m9:
+    li      a0, 0x90
+    bnez    a1, fail
+    TRAP    3, 13, 0x91                 // lw: trang sau V = 0
+    TVAL    VA_MA2, 0x92                // mtval = dau trang sau
+    TRAP    3, 15, 0x93                 // sh: trang sau V = 0
+    TVAL    VA_MA2, 0x94
+    TRAP    3, 13, 0x95                 // lh: trang dau V = 0
+    TVAL    VA_MA2 + 0xFFF, 0x96        // mtval = dia chi
+    TRAP    3, 15, 0x97                 // sw: trang sau khong W
+    TVAL    VA_MA4, 0x98
+    NOTRAP  0x99
+    // PMP muc 0 (NAPOT 4 KiB) tren dpage0: khong quyen -> phan o dpage0 bi cam; RW -> hai muc khac nhau deu cho phep
+    la      t0, dpage0
+    srli    t0, t0, 2
+    ori     t0, t0, 0x1FF
+    csrw    pmpaddr0, t0
+    li      t0, 0x18
+    csrw    pmpcfg0, t0
+    GO      0, VA_UC + 0x800
+m9b:
+    TRAP    3, 5, 0x9a                  // lw VA_MA0 + 0xFFE: trang sau (dpage0) bi cam
+    TVAL    VA_MA1, 0x9b
+    TRAP    3, 7, 0x9c                  // sh VA_MA1 + 0xFFF: trang dau (dpage0) bi cam truoc loi trang sau
+    TVAL    VA_MA1 + 0xFFF, 0x9d
+    NOTRAP  0x9e
+    li      t0, 0x1B
+    csrw    pmpcfg0, t0
+    li      a1, 0
+    GO      0, VA_UC + 0x900
+m9c:
+    li      a0, 0x9f
+    bnez    a1, fail
+    NOTRAP  0xa0
+#endif
     csrw    satp, zero
+#ifdef MA
+    // 10. khong dich (satp = 0), U: lw vat qua ranh gioi dpage0 | dpage1, dpage0 thuoc muc 0, dpage1 thuoc muc 7.
+    // Ghi lai tu cuoi cua dpage0 / dpage1 truoc (store loi o muc 9 co the da ghi mot phan o Spike, khong o lo)
+    li      t1, 0x33333333
+    li      t2, 0xFFC
+    la      t0, dpage0
+    add     t0, t0, t2
+    sw      t1, 0(t0)
+    la      t0, dpage1
+    add     t0, t0, t2
+    sw      t1, 0(t0)
+    li      a1, 0
+    la      a2, m10
+    GOL     0, u10
+m10:
+    li      a0, 0xa1
+    bnez    a1, fail
+    NOTRAP  0xa2
+    la      t0, dpage1                  // muc 0 tren dpage1, khong quyen: phan o dpage1 bi cam, mtval = dpage1
+    srli    t0, t0, 2
+    ori     t0, t0, 0x1FF
+    csrw    pmpaddr0, t0
+    li      t0, 0x18
+    csrw    pmpcfg0, t0
+    la      a2, m10b
+    GOL     0, u10
+m10b:
+    TRAP    3, 5, 0xa3
+    la      t1, dpage1
+    li      a0, 0xa4
+    lw      t0, -8(s9)
+    bne     t0, t1, fail
+    NOTRAP  0xa5
+    csrw    pmpcfg0, zero
+#endif
     li      a0, 1
 fail:
     li      t0, TOHOST_ADDR
@@ -357,6 +446,22 @@ s_rec:
     sret
 1:  csrw    sepc, ra
     sret
+
+#ifdef MA
+    .balign 4
+u10:                                    // U, khong dich: lw vat qua ranh gioi dpage0 | dpage1; ve M tai a2
+    la      s0, dpage0 + 0xFFE
+    li      t1, 0
+    lw      t1, 0(s0)                   // dpage0[0xFFE..0xFFF] + dpage1[0..1]
+    li      t2, 0x3333
+    slli    t3, t1, 16
+    srli    t3, t3, 16
+    beq     t3, t2, 1f
+    li      a1, 0xa6
+1:  li      a7, SVC
+    mv      a0, a2
+    ecall
+#endif
 
     .data
     .balign 4096
@@ -450,6 +555,75 @@ ucodeA:
     lui     a0, %hi(m8b)
     addi    a0, a0, %lo(m8b)
     ecall
+#ifdef MA
+    .skip   ucodeA + 0x700 - .
+    // 9. VA_UC + 0x700: lech vat trang (VA_MA0 -> dpage1, VA_MA1 -> dpage0: trang vat ly sau nam TRUOC trang dau)
+    li      s0, VA_MA0 + 0xFFE
+    lw      t1, 0(s0)                   // dpage1[0xFFE..0xFFF] + dpage0[0..1]
+    li      t2, 0x11112222
+    beq     t1, t2, 1f
+    li      a1, 0x81
+1:  li      t0, 0xA1B2C3D4
+    sw      t0, -1(s0)                  // 3 byte o trang dau, 1 byte o trang sau
+    lw      t1, -1(s0)
+    beq     t1, t0, 1f
+    li      a1, 0x82
+1:  lbu     t1, 2(s0)                   // VA_MA1 + 0 = byte cao
+    li      t2, 0xA1
+    beq     t1, t2, 1f
+    li      a1, 0x83
+1:  lh      t1, 1(s0)                   // half vat trang: 0xA1B2 mo rong dau
+    li      t2, 0xFFFFA1B2
+    beq     t1, t2, 1f
+    li      a1, 0x84
+1:  sh      t0, 1(s0)                   // 0xD4 o cuoi trang dau, 0xC3 o dau trang sau
+    lhu     t1, 1(s0)
+    li      t2, 0xC3D4
+    beq     t1, t2, 1f
+    li      a1, 0x85
+1:  lw      t1, -2(s0)                  // VA_MA0 + 0xFFC: tu cuoi trang dau, khong vat trang
+    li      t2, 0xD4C3D422
+    beq     t1, t2, 1f
+    li      a1, 0x86
+1:  li      s0, VA_MA1 + 0xFFE
+    lw      t1, 0(s0)                   // 13, mtval = VA_MA2
+    sh      t0, 1(s0)                   // 15, mtval = VA_MA2
+    li      s0, VA_MA2 + 0xFFF
+    lh      t1, 0(s0)                   // 13, mtval = VA_MA2 + 0xFFF
+    li      s0, VA_MA3 + 0xFFD
+    lw      t1, 0(s0)                   // doc duoc (trang sau chi R)
+    sw      t0, 0(s0)                   // 15, mtval = VA_MA4
+    li      a7, SVC
+    lui     a0, %hi(m9)
+    addi    a0, a0, %lo(m9)
+    ecall
+    .skip   ucodeA + 0x800 - .
+    // VA_UC + 0x800: PMP muc 0 cam dpage0
+    li      s0, VA_MA0 + 0xFFE
+    lw      t1, 0(s0)                   // 5, mtval = VA_MA1
+    li      s0, VA_MA1 + 0xFFF
+    sh      t0, 0(s0)                   // 7, mtval = VA_MA1 + 0xFFF (trang sau V = 0 khong duoc xet)
+    li      a7, SVC
+    lui     a0, %hi(m9b)
+    addi    a0, a0, %lo(m9b)
+    ecall
+    .skip   ucodeA + 0x900 - .
+    // VA_UC + 0x900: PMP muc 0 cho RW tren dpage0, dpage1 thuoc muc 7: truy cap vat trang qua hai muc deu duoc
+    li      s0, VA_MA0 + 0xFFE
+    lw      t1, 0(s0)
+    li      t2, 0x11C3D4C3
+    beq     t1, t2, 1f
+    li      a1, 0x87
+1:  li      t0, 0x5566
+    sh      t0, 1(s0)
+    lhu     t1, 1(s0)
+    beq     t1, t0, 1f
+    li      a1, 0x88
+1:  li      a7, SVC
+    lui     a0, %hi(m9c)
+    addi    a0, a0, %lo(m9c)
+    ecall
+#endif
     .skip   ucodeA + 0xFFE - .
     .half   0x8593                      // nua thap cua addi a1, a1, 85 (0x05558593)
 // ---- trang dem giua A va B (khong anh xa) ----

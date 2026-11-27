@@ -35,6 +35,9 @@ CORES = [
     ("RV32IM + S/U + cache 2x2, tre 1-8", "-DSU " + C22, CACHE, "rv32im_xsu", ["+lat=8", "+irqdly=600"]),
     ("RV32IMC + S/U + MMU Sv32 + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM " + C22, CACHE, "rv32imc_xsu_xmmu",
      ["+lat=8", "+irqdly=600"]),
+    # load / store lech bang phan cung cung MMU: truy cap vat qua trang dich tung trang (mmu.S -DMA, muc 9)
+    ("RV32IMC + S/U + MMU Sv32 + lech phan cung + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM -DMA " + C22, CACHE,
+     "rv32imc_xsu_xmmu_zicclsm", ["+lat=8", "+irqdly=600"]),
 ]
 
 
@@ -137,13 +140,13 @@ def build_rt_su(rt, suite, test, march, tmp):
     return name, elf
 
 
-def build_mmu(march, tmp):
-    name = f"mmu-{march[4:]}"
+def build_mmu(march, tmp, ma=False):
+    name = f"mmu-{march[4:]}" + ("-ma" if ma else "")
     elf = os.path.join(tmp, name + ".elf")
     ld = os.path.join(tmp, "irq80.ld")
     open(ld, "w").write(open(os.path.join(ROOT, "bench", "bench.ld")).read().replace(". = 0x0;", f". = 0x{BASE:x};"))
-    r = rc.sh(rc.GCC + [f"-march={march}_zicsr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE, "-T", ld,
-                        os.path.join(HERE, "mmu.S"), "-o", elf])
+    r = rc.sh(rc.GCC + [f"-march={march}_zicsr", f"-DTOHOST_ADDR=0x{TOHOST:x}", "-I", HERE, "-T", ld] +
+              (["-DMA"] if ma else []) + [os.path.join(HERE, "mmu.S"), "-o", elf])
     if r.returncode:
         sys.exit(r.stderr)
     return name, elf
@@ -242,6 +245,7 @@ def main():
              build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_su("rv32im", tmp) + ("rv32im_xsu",), build_su("rv32imc", tmp) + ("rv32imc_xsu",),
              build_mmu("rv32im", tmp) + ("rv32im_xsu_xmmu",), build_mmu("rv32imc", tmp) + ("rv32imc_xsu_xmmu",),
+             build_mmu("rv32imc", tmp, ma=True) + ("rv32imc_xsu_xmmu_zicclsm",),
              build_bench_irq("bench", "rv32ic", tmp) + ("rv32ic",),
              build_bench_irq("bench_m", "rv32imc", tmp) + ("rv32imc",),
              build_bench_irq("bench_call", "rv32ic", tmp) + ("rv32ic",),

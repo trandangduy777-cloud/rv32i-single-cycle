@@ -356,7 +356,7 @@ jobs:
       fail-fast: false
       matrix:
         # do ngay 26/11/2026 (buoc Mutation, may CI): rvc 22 phut, random 1, cache 31-41, bpred 17, tage 4, mul < 1, zb 1,5, soc 4,
-        # axi 20, irq-0-14 17-23, irq-28-42 22, irq-42- (PMP, S/U, MMU: 67 dot bien) 10; irq-14-28 mat 39 roi 56 phut
+        # axi 20, irq-0-14 17-23, irq-28-42 22, irq-42- (PMP, S/U, MMU, lech vat trang: 75 dot bien) 10 + 2; irq-14-28 mat 39 roi 56 phut
         # (sat gioi han 60) nen tach doi: 14-21 khoang 17-25, 21-28 khoang 22-32. Truoc khi them
         # --stop-on-fail cho dot bien "rand", nhom bpred + mul + zb vuot 60 phut (moi dot bien bpred 8-17 phut).
         group: [rvc, random, cache, bpred, tage, mul, zb, soc, axi, irq-0-14, irq-14-21, irq-21-28, irq-28-42, irq-42-]
@@ -408,7 +408,7 @@ jobs:
             axi)
               AXI=1 sh soc/sw/build.sh
               python3 soc/mutate_axi.py --jobs 2 ;;
-            irq-*)  # mutate_irq_cosim.py (16 dot bien ngat co ban + ngat, bo dem, PMP, S/U, MMU), chia theo --range
+            irq-*)  # mutate_irq_cosim.py (16 dot bien ngat co ban + ngat, bo dem, PMP, S/U, MMU, lech vat trang), chia theo --range
               r=${{ matrix.group }}; r=${r#irq-}; r=${r/-/:}
               python3 cosim/irq/mutate_irq_cosim.py --spike $S --range "$r" ;;
           esac
