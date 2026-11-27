@@ -17,6 +17,7 @@ gls/build/
 bench/*.bin
 coremark/eembc/
 synth/build/
+synth/build_cfg/
 
 # SoC: chuong trinh C va tong hop
 soc/sw/build/
