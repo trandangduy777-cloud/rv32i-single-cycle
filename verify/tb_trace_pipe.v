@@ -32,7 +32,11 @@ module tb_trace_pipe;
 `ifndef ZICOND
 `define ZICOND 0
 `endif
+`ifdef DUAL_FETCH   // --dual: phat doi (DUAL = 1, PMP_N = 0), bo nho lenh cap them lenh tai imem_addr + 4
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .DUAL(1), .PMP_N(0)
+`else
 `define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND)
+`endif
 `ifdef PIPE_FULL
 `ifdef BPSTRESS   // bo du doan nho, tag 1 bit: BTB trung nham lien tuc, RAS tran, gshare 2 bit (kiem cac duong sua o ID/EX)
 `ifdef MA
@@ -59,6 +63,9 @@ module tb_trace_pipe;
 `ifndef NO_IRQ_PORTS
         , .irq_timer(1'b0), .irq_soft(1'b0), .irq_ext(1'b0)     // ngat duoc kiem tra rieng trong tb_irq.v
         , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re), .dmem_fence(dmem_fence)
+`ifdef DUAL_FETCH
+        , .imem_data2(imem_data2)
+`endif
 `endif
 `endif
     );
@@ -110,6 +117,9 @@ module tb_trace_pipe;
     end
 `else
     assign imem_data  = imem[imem_addr[11:2]];
+`ifdef DUAL_FETCH
+    wire [31:0] imem_data2 = imem[imem_addr[11:2] + 10'd1];
+`endif
     assign dmem_rdata = dmem[dmem_addr[11:2]];
     assign imem_ready = 1'b1;
     assign dmem_ready = 1'b1;
@@ -178,6 +188,11 @@ module tb_trace_pipe;
                      dut.memwb_pc, dut.memwb_instr,
                      rd_w ? dut.memwb_rd : 5'd0, rd_w ? dut.memwb_val : 32'd0,
                      dut.memwb_tst, dut.memwb_taddr, t_d[31:0], t_s[3:0]);
+`ifdef DUAL_FETCH
+            if (dut.wb1_commit)                // lan 1: cung chu ky, sau lenh lan 0
+                $display("pc=%08x ins=%08x rd=%0d val=%08x st=0 addr=00000000 data=00000000 strb=0",
+                         dut.memwb1_pc, dut.memwb1_instr, dut.memwb1_rd, dut.memwb1_rd != 5'd0 ? dut.memwb1_val : 32'd0);
+`endif
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) $finish;
         end
     end

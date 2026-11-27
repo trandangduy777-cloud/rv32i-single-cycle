@@ -48,6 +48,8 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
         cmd[2:2] = [f"-DMULLAT={MUL_LAT}"]   # bo nhan cua pipeline RV32IM
         for e in ZB:                    # Zba/Zbb/Zbs/Zbc/Zicond: tham so tuong ung cua pipeline = 1
             cmd[2:2] = [f"-D{e.upper()}=1"]
+        if DUAL:                        # phat doi (DUAL = 1, PMP_N = 0)
+            cmd[2:2] = ["-DDUAL_FETCH"]
         if CACHE:                       # bo nho co do tre qua cache 2 x 2 (xem tb_trace_pipe.v)
             cmd[2:2] = ["-DCACHE", f"-DCWY={WAYS}"]
             cmd += [os.path.join(HERE, "..", f) for f in ("rv32_icache.v", "rv32_dcache.v")]
@@ -58,6 +60,7 @@ def compile_rtl(rtl, out_vvp, tb="tb_trace.v", full_pipe=False):
 
 
 CACHE = False                           # --cache: chay pipeline RV32IM qua cache voi bo nho tre ngau nhien
+DUAL = False                            # --dual: pipeline RV32IM phat doi
 WAYS = 1                                # --ways: so duong cua 2 cache (2 dong: 1 = anh xa truc tiep, 2 = 1 tap 2 duong)
 MA = False                              # --ma: pipeline RV32IM voi MISALIGNED = 1, ISS cung khong trap khi lech
 ZB = ()                                 # --zb: cac phan mo rong zba/zbb/zbs/zbc/zicond dang bat (RTL, ISS, bo sinh cung bat)
@@ -412,6 +415,7 @@ if __name__ == "__main__":
     ap.add_argument("--zb-probe", action="store_true",
                     help="bo sinh them ma Zb cua phan mo rong tat va ma gan hop le: ca RTL va ISS phai bao lenh bat hop le")
     ap.add_argument("--mul-lat", type=int, default=2, choices=[0, 1, 2], help="voi --pipem: kieu bo nhan")
+    ap.add_argument("--dual", action="store_true", help="voi --pipem: phat doi (DUAL = 1, PMP_N = 0)")
     a = ap.parse_args()
     MUL_LAT = a.mul_lat
     ZB = tuple(rv32_zb.ALL_EXTS) if a.zb == "all" else tuple(e for e in a.zb.split(",") if e)
@@ -420,6 +424,7 @@ if __name__ == "__main__":
     ZB_PROBE = a.zb_probe and a.pipem
     STOP_FAIL = a.stop_on_fail or a.mutate   # mutation: mot chuong trinh lech la du bat (chuong trinh treo chay toi gioi han chu ky)
     CACHE = a.cache and a.pipem
+    DUAL = a.dual and a.pipem
     BPSTRESS = a.bpstress and a.pipem
     WAYS = a.ways
     MA = a.ma and a.pipem

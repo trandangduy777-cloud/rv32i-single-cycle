@@ -22,22 +22,24 @@ CACHE = PIPE + ["rv32_icache.v", "rv32_dcache.v", "rv32_bus_arbiter.v"]
 C22 = "-DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2"
 # (ten, co -D, file RTL, ISA cua loi, plusargs)
 CORES = [
-    ("RV32IMC", "-DRVC", PIPE, "rv32imc", []),
-    ("RV32IMC + cache 2x2, tre 1-8", "-DRVC " + C22, CACHE, "rv32imc", ["+lat=8", "+irqdly=600"]),
-    ("RV32IMC nhan lap", "-DRVC -DMULLAT=0", PIPE, "rv32imc", []),
-    ("RV32IM + cache 16x4 2 duong, tre 1-4", "-DCACHE -DCWY=2", CACHE, "rv32im", ["+lat=4", "+irqdly=100"]),
-    ("RV32IMC lech phan cung + cache 2x2, tre 1-8", "-DRVC -DMA " + C22, CACHE, "rv32imc_zicclsm",
+    ("RV32IMC", "-DRVC", PIPE, "rv32imc_xpmp", []),
+    ("RV32IMC + cache 2x2, tre 1-8", "-DRVC " + C22, CACHE, "rv32imc_xpmp", ["+lat=8", "+irqdly=600"]),
+    ("RV32IMC nhan lap", "-DRVC -DMULLAT=0", PIPE, "rv32imc_xpmp", []),
+    ("RV32IM + cache 16x4 2 duong, tre 1-4", "-DCACHE -DCWY=2", CACHE, "rv32im_xpmp", ["+lat=4", "+irqdly=100"]),
+    ("RV32IMC lech phan cung + cache 2x2, tre 1-8", "-DRVC -DMA " + C22, CACHE, "rv32imc_zicclsm_xpmp",
      ["+lat=8", "+irqdly=600"]),
-    ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DRVC -DBTBN=4 -DRASN=2 -DGHRB=2 -DBTAG=1 " + C22, CACHE, "rv32imc",
+    ("RV32IMC du doan ep + cache 2x2, tre 1-6", "-DRVC -DBTBN=4 -DRASN=2 -DGHRB=2 -DBTAG=1 " + C22, CACHE, "rv32imc_xpmp",
      ["+lat=6", "+irqdly=500"]),
     # che do Supervisor / User (SU = 1): "xsu" chi la nhan noi bo (chuong trinh can S / U), Spike chay voi che do MSU
-    ("RV32IMC + S/U + MMU Sv32", "-DRVC -DSU -DMMUON -DBIGMEM", PIPE, "rv32imc_xsu_xmmu", []),
-    ("RV32IM + S/U + cache 2x2, tre 1-8", "-DSU " + C22, CACHE, "rv32im_xsu", ["+lat=8", "+irqdly=600"]),
-    ("RV32IMC + S/U + MMU Sv32 + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM " + C22, CACHE, "rv32imc_xsu_xmmu",
+    ("RV32IMC + S/U + MMU Sv32", "-DRVC -DSU -DMMUON -DBIGMEM", PIPE, "rv32imc_xsu_xmmu_xpmp", []),
+    ("RV32IM + S/U + cache 2x2, tre 1-8", "-DSU " + C22, CACHE, "rv32im_xsu_xpmp", ["+lat=8", "+irqdly=600"]),
+    ("RV32IMC + S/U + MMU Sv32 + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM " + C22, CACHE, "rv32imc_xsu_xmmu_xpmp",
      ["+lat=8", "+irqdly=600"]),
     # load / store lech bang phan cung cung MMU: truy cap vat qua trang dich tung trang (mmu.S -DMA, muc 9)
     ("RV32IMC + S/U + MMU Sv32 + lech phan cung + cache 2x2, tre 1-8", "-DRVC -DSU -DMMUON -DBIGMEM -DMA " + C22, CACHE,
-     "rv32imc_xsu_xmmu_zicclsm", ["+lat=8", "+irqdly=600"]),
+     "rv32imc_xsu_xmmu_zicclsm_xpmp", ["+lat=8", "+irqdly=600"]),
+    # phat doi (DUAL = 1): khong co PMP (PMP_N = 0, khong "xpmp" nen khong chay pmp.S), khong C; ngat roi vao cap lenh
+    ("RV32IM phat doi", "-DDUAL_FETCH", PIPE, "rv32im", []),
 ]
 
 
@@ -241,8 +243,8 @@ def main():
              build_storm("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
              build_storm("rv32imc", tmp, vec=True) + ("rv32imc",),
              build_counters("rv32im", tmp) + ("rv32im",), build_counters("rv32imc", tmp) + ("rv32imc",),
-             build_pmp("rv32im", tmp) + ("rv32im",), build_pmp("rv32imc", tmp) + ("rv32imc",),
-             build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm",),
+             build_pmp("rv32im", tmp) + ("rv32im_xpmp",), build_pmp("rv32imc", tmp) + ("rv32imc_xpmp",),
+             build_pmp("rv32imc", tmp, ma=True) + ("rv32imc_zicclsm_xpmp",),
              build_su("rv32im", tmp) + ("rv32im_xsu",), build_su("rv32imc", tmp) + ("rv32imc_xsu",),
              build_mmu("rv32im", tmp) + ("rv32im_xsu_xmmu",), build_mmu("rv32imc", tmp) + ("rv32imc_xsu_xmmu",),
              build_mmu("rv32imc", tmp, ma=True) + ("rv32imc_xsu_xmmu_zicclsm",),
@@ -300,7 +302,7 @@ def main():
         base, *z = isa.split("_")
         privs = "MSU" if "xsu" in z else "M"
         mmu = ["sv32"] if "xmmu" in z else []
-        z = [e for e in z if e not in ("xsu", "xmmu")]
+        z = [e for e in z if e not in ("xsu", "xmmu", "xpmp")]
         r = rc.sh([exe, binf, trf, "_".join([base] + sorted(z + ["zicntr", "zicsr", "zifencei", "zihpm"])), privs] + mmu)
         st = re.search(r"IRQSTAT (.*)", r.stdout)
         tag = f"[{j + 1}/{len(jobs)}] {name} / {title} / seed {sd}"

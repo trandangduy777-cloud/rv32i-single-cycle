@@ -34,6 +34,7 @@ CORES = [
      PIPE_FILES, []),
     ("pipeline RV32IM, BTB 16 + RAS 4, nhan lap", "rv32im", ["-DPIPE_FULL", "-DMULLAT=0"], PIPE_FILES, []),
     ("pipeline RV32IM, BTB 16 + RAS 4", "rv32im", ["-DPIPE_FULL"], PIPE_FILES, []),
+    ("pipeline RV32IM, BTB 16 + RAS 4, phat doi", "rv32im", ["-DPIPE_FULL", "-DDUAL_FETCH"], PIPE_FILES, []),
     ("pipeline RV32IMC, BTB 16 + RAS 4, nhan lap", "rv32imc", ["-DPIPE_FULL", "-DRVC", "-DMULLAT=0"], PIPE_FILES, []),
     ("pipeline RV32IMC, BTB 16 + RAS 4, nhan 1 chu ky", "rv32imc", ["-DPIPE_FULL", "-DRVC", "-DMULLAT=1"], PIPE_FILES, []),
     ("pipeline RV32IMC, BTB 16 + RAS 4", "rv32imc", ["-DPIPE_FULL", "-DRVC"], PIPE_FILES, []),

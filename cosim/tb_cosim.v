@@ -84,7 +84,12 @@ module tb_cosim;
 `else
 `define TAGEP 0
 `endif
+`ifdef DUAL_FETCH
+    // -DDUAL_FETCH: phat doi (DUAL = 1, can PMP_N = 0); bo nho cap them lenh tai imem_addr + 4
+`define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP), .TAGE(`TAGEP), .DUAL(1), .PMP_N(0)
+`else
 `define ZBPARAMS .ZBA(`ZBA), .ZBB(`ZBB), .ZBS(`ZBS), .ZBC(`ZBC), .ZICOND(`ZICOND), .SU(`SUP), .MMU(`MMUP), .TAGE(`TAGEP)
+`endif
 `ifdef MA
     localparam MA_HW = 1;              // -DMA: load/store lech dia chi bang phan cung (Spike chay voi --misaligned)
 `else
@@ -113,6 +118,9 @@ module tb_cosim;
 `endif
         , .imem_ready(imem_ready), .dmem_ready(dmem_ready), .dmem_re(dmem_re)
         , .icache_flush(icache_flush), .dmem_fence(dmem_fence)
+`ifdef DUAL_FETCH
+        , .imem_data2(imem_data2)
+`endif
 `endif
     );
 
@@ -253,6 +261,9 @@ module tb_cosim;
     // bo nho to hop: doc lenh tai dia chi chia het cho 2 (lenh 32 bit co the vat qua ranh gioi tu, mo rong C)
     wire [MEMB-3:0] iw = imem_addr[MEMB-1:2];
     assign imem_data  = imem_addr[1] ? {mem[iw + 1'b1][15:0], mem[iw][31:16]} : mem[iw];
+`ifdef DUAL_FETCH
+    wire [31:0] imem_data2 = mem[iw + 1'b1];        // DUAL: lenh thu hai (imem_addr chia het cho 4)
+`endif
 `ifdef IRQ
     assign dmem_rdata = is_th(dmem_addr) ? 32'd0 : is_dev(dmem_addr) ? dev_rd(dmem_addr) : mem[dmem_addr[MEMB-1:2]];
 `else
@@ -285,7 +296,7 @@ module tb_cosim;
     reg [63:0] t_d;
     reg [7:0]  t_s;
     reg [31:0] mask;
-    integer    n = 0;
+    integer    n = 0, n_dual = 0;
 
     // ---- CoreMark (coremark/port/core_portme.c): o danh dau thoi gian va vung dem ee_printf trong RAM ----
     // Store 1 / 2 vao MARK hoan tat: ghi lai chu ky va so lenh (bat dau / ket thuc phan do). Store vao vung CON: gom
@@ -456,7 +467,26 @@ module tb_cosim;
                          dut.memwb_tst, `TVA, t_d[31:0], t_s[3:0]);
 `endif
             n = n + 1;
+`ifdef DUAL_FETCH
+            // lan 1 hoan tat cung chu ky, sau lenh lan 0 (khong bao gio la store / trap)
+            if (dut.wb1_commit) begin
+                if (!quiet)
+`ifdef IRQ
+                    $display("pc=%08x ins=%08x rd=%0d val=%08x st=0 addr=00000000 data=00000000 strb=0 mip=%03x",
+                             dut.memwb1_pc, dut.memwb1_instr, dut.memwb1_rd, dut.memwb1_rd != 5'd0 ? dut.memwb1_val : 32'd0,
+                             mip_now);
+`else
+                    $display("pc=%08x ins=%08x rd=%0d val=%08x st=0 addr=00000000 data=00000000 strb=0",
+                             dut.memwb1_pc, dut.memwb1_instr, dut.memwb1_rd, dut.memwb1_rd != 5'd0 ? dut.memwb1_val : 32'd0);
+`endif
+                n = n + 1;
+                n_dual = n_dual + 1;
+            end
+`endif
             if (dut.memwb_tst && dut.memwb_taddr == TOHOST) begin
+`ifdef DUAL_FETCH
+                $display("DUAL cap=%0d", n_dual);
+`endif
                 tb_finish_report;
 `ifdef PIPE_FULL
                 $display("BPRED br=%0d brmiss=%0d jalr=%0d jalrmiss=%0d idredir=%0d btbtaken=%0d",
