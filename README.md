@@ -11,7 +11,7 @@ Ba lõi RISC-V tự viết bằng Verilog, dùng chung bộ kiểm chứng, đư
 | `rv32im_pipeline.v`: 5 tầng | RV32IMC + CSR + trap + ngắt + WFI, nhân lặp (nay: + BTB/RAS, nhân song song, Zicntr/Zihpm, `mtvec` vectored, Zb* tùy chọn) ** | ≈ 13,67 ns, ≈ 73 MHz | 1,16 / 3,55 (tắt BTB/RAS, nhân lặp: 1,32 / 5,00) | 51.623 |
 | như trên + cache 2 × 256 B | RV32IMC, cache ánh xạ trực tiếp, chưa có bộ đệm ghi, không đạt 15 ns *** | ≈ 18,76 ns, ≈ 53 MHz (ngoại suy) | 1,20-1,37 / 4,98-5,18 | 137.359 |
 
-**Cột chu kỳ và số cell là kết quả flow trên RTL cũ (ngày 22/11/2026 trở về trước), không phải RTL hiện tại; cột CPI đo trên RTL hiện tại.** Lõi hiện tại mới có tổng hợp + STA trước P&R (yosys + ABC + OpenSTA, không có dây, sai số cỡ 1 ns): RV32IMC mặc định (có PMP 8 mục) 499.445 µm² cell, slack xấu nhất +0,008 ns ở 15 ns (đường bộ chia lặp); bản có S/U + MMU và bản S/U + MMU + TAGE cũng đạt 15 ns (+0,141 / +0,033 ns), xem mục Tổng hợp và STA. Flow LibreLane cho RTL hiện tại chưa chạy.  
+**Cột chu kỳ và số cell là kết quả flow trên RTL cũ (ngày 22/11/2026 trở về trước), không phải RTL hiện tại; cột CPI đo trên RTL hiện tại.** Lõi hiện tại mới có tổng hợp + STA trước P&R (yosys + ABC + OpenSTA, không có dây, sai số cỡ 1 ns): RV32IMC mặc định (có PMP 8 mục) 499.445 µm² cell, slack xấu nhất +0,008 ns ở 15 ns (đường bộ chia lặp); bản có S/U + MMU và bản S/U + MMU + TAGE cũng đạt 15 ns (+0,141 / +0,033 ns) trên RTL ngày 26/11, trên RTL 27/11 tối là −0,297 / −0,339 ns (trong mức dao động ±0,6 ns của ABC), xem mục Tổng hợp và STA và mục Chạy lại flow. Flow LibreLane cho RTL hiện tại chưa chạy.  
 \* Số liệu flow của single-cycle đo trên bản RV32I thuần, trước khi thêm CSR, trap và M.
 \*\* Bản đầy đủ với `ENABLE_C = 1` (lệnh nén, ngắt, WFI, bắt tay bộ nhớ, `FENCE.I`), bộ nhớ tổ hợp; xem mục Flow cho bản RV32IMC.
 \*\*\* Mảng nhớ cache là flip-flop (chưa có macro SRAM), không đạt timing ở 15 ns; chu kỳ tối thiểu ngoại suy từ slack. Chỉ để tham khảo. CPI đo với bộ nhớ trễ tối đa 1 / 4 / 8 chu kỳ, khi còn bộ nhân lặp.
@@ -660,11 +660,13 @@ Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR,
 
 Ba cấu hình trên cùng module đỉnh `flow/rv32imc_top.v`. Module đỉnh nay nhận tham số `SU`, `MMU`, `TAGE`, `MISALIGNED`, `ZBA` / `ZBB` / `ZBS` / `ZBC` / `ZICOND` và chuyển xuống pipeline; LibreLane đặt chúng qua `SYNTH_PARAMETERS` (chparam trên module đỉnh):
 
-| File | Cấu hình | STA trước P&R (mục STA theo cấu hình) |
-|---|---|---|
-| `config_pipeline_c.json` | mặc định (có PMP 8 mục, bộ đếm, BTB + RAS) | 499.445 µm², +0,008 ns |
-| `config_su_mmu.json` | `SU = 1`, `MMU = 1` | 629.100 µm², +0,141 ns |
-| `config_zb.json` | Zba + Zbb + Zbs + Zbc + Zicond | 544.746 µm², +0,220 ns |
+| File | Cấu hình | STA trước P&R, RTL 27/11 tối (`synth/run_cfg_sta.sh`) | Đường xấu nhất |
+|---|---|---|---|
+| `config_pipeline_c.json` | mặc định (có PMP 8 mục, bộ đếm, BTB + RAS) | 499.453 µm², +0,125 ns | bộ nhân |
+| `config_su_mmu.json` | `SU = 1`, `MMU = 1` | 628.934 µm², −0,297 ns | `idex_fa_wb` → `exmem_fence` |
+| `config_zb.json` | Zba + Zbb + Zbs + Zbc + Zicond | 544.919 µm², −0,160 ns | bộ nhân |
+
+- So với bảng ở mục STA theo cấu hình (RTL 26/11), RTL hiện tại đã thêm Debug Module (chỉ khi `-DDBG`), chân SEIP, tách truy cập vắt trang và `menvcfg`; cấu hình S/U + MMU từ +0,141 thành −0,297 ns, Zb* đầy đủ từ +0,220 thành −0,160 ns, mặc định từ +0,008 thành +0,125 ns. Các chênh lệch này nằm trong mức dao động khoảng ±0,6 ns của ABC đã ghi ở mục đó, đường xấu nhất vẫn là bộ nhân / forwarding → `exmem_fence` như trước; flow LibreLane (có resizer, có dây) sẽ cho con số chốt.
 
 Lệnh (trong container có LibreLane và PDK IHP SG13G2, ví dụ image `isaiassh/unic-cass-tools`, từ thư mục gốc repo):
 
