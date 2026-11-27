@@ -119,6 +119,15 @@ jobs:
           AXI=1 sh soc/freertos/build.sh
           python3 soc/run_soc.py --axi
 
+      - name: SoC cau hinh Linux (S / U + MMU Sv32, CLINT chuan, PLIC context S; M -> S -> U, page fault, STIP / SSIP / SEIP; thuong va AXI4)
+        run: |
+          SU=1 sh soc/sw/build.sh
+          SU=1 sh soc/freertos/build.sh
+          python3 soc/run_soc.py --su
+          AXI=1 SU=1 sh soc/sw/build.sh
+          AXI=1 SU=1 sh soc/freertos/build.sh
+          python3 soc/run_soc.py --axi --su
+
       - name: Benchmark (CPI, so checksum giua cac loi)
         run: sh bench/run_bench.sh
 
@@ -354,6 +363,7 @@ jobs:
             zb)     python3 zb/mutate_zb.py ;;
             soc)
               sh soc/sw/build.sh
+              SU=1 sh soc/sw/build.sh
               python3 soc/mutate_soc.py --jobs 4 ;;
             axi)
               AXI=1 sh soc/sw/build.sh

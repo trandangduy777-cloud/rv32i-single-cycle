@@ -1,7 +1,7 @@
 #!/bin/bash
 # Regression day du cua repo, chia thanh cac buoc de chay tung phan (moi buoc in mot dong ket qua, log o $LOGDIR).
 # Dung (tu thu muc goc repo):
-#   bash tools/regress.sh                 # nhom "nhanh" (buoc 0-9, 15, 17, 19, 22, 24, 26, 28-30, 32, 34; khoang 2 gio)
+#   bash tools/regress.sh                 # nhom "nhanh" (buoc 0-9, 15, 17, 19, 22, 24, 26, 28-30, 32, 34, 36; khoang 2 gio)
 #   bash tools/regress.sh dot-bien        # nhom mutation (buoc 0, 10-14, 16, 18, 20, 21, 23, 25, 27, 31, 33, 35 = coverage S/U + MMU + PMP + TAGE, ~1 gio; vai gio)
 #   bash tools/regress.sh tat-ca          # ca hai nhom, tuan tu
 #   bash tools/regress.sh may-2-nhan      # ca hai nhom, 2 hang chay song song (A: mo phong / SoC / Spike, B: so vet ngat,
@@ -22,7 +22,7 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (17 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
-       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (152 mutant)" \
+       "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (185 mutant)" \
        "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y" "mutation Zba/Zbb/Zbs/Zbc/Zicond" \
        "so vet ngau nhien voi Spike (22 loi, 8 chuong trinh moi loi) + test co huong csr_mie" "mutation so vet ngau nhien (16 dot bien)" \
        "SoC AXI4 + DMA: interconnect ngau nhien, giao thuc, chuong trinh C, DMA, FreeRTOS" "mutation AXI4 + DMA (55 mutant)" \
@@ -30,7 +30,9 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
        "Verilator lint -Wall (13 muc tieu, cac mien tru co giai thich)" "so vet voi Spike bang Verilator (riscv-tests, bench, CoreMark; trace phai khop iverilog)" \
        "SVA bind (bo phan xu, cache, pipeline) tren RTL sach" "mutation SVA (25 dot bien, moi nhom assertion phai bat duoc)" \
        "cocotb: cache du lieu + he thong bo nho, scoreboard + functional coverage" "mutation cocotb (12 dot bien, khong co SVA ho tro)" \
-       "Verilator --coverage cua pipeline (loi RV32IMC: riscv-tests + bench + CoreMark)")
+       "Verilator --coverage cua pipeline (loi RV32IMC: riscv-tests + bench + CoreMark)" \
+       "Verilator coverage S/U + MMU + PMP + TAGE" \
+       "SoC cau hinh Linux (S / U + MMU Sv32): chuong trinh C, t_su, FreeRTOS; thuong va AXI4")
 
 # Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
 # 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77). Doi nhom bang
@@ -89,7 +91,7 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     16c) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 21:42 ;;
     16d) python3 cosim/irq/mutate_irq_cosim.py --spike "$SPIKE" --range 42: ;;
     17) sh soc/sw/build.sh && sh soc/freertos/build.sh && python3 soc/run_soc.py ;;
-    18) sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
+    18) sh soc/sw/build.sh && SU=1 sh soc/sw/build.sh && python3 soc/mutate_soc.py --jobs 4 ;;
     19) PATH=$HOME/.local/bin:$PATH bash formal/run.sh run '.' && PATH=$HOME/.local/bin:$PATH CFG=formal/checks_wfi.cfg WORK=/tmp/formal-wfi bash formal/run.sh run '^liveness_ch0$' && PATH=$HOME/.local/bin:$PATH bash formal/stitch/run.sh nomut && PATH=$HOME/.local/bin:$PATH bash formal/cache/run.sh nomut && PATH=$HOME/.local/bin:$PATH CFG=formal/checks_misal.cfg WORK=/tmp/formal-misal bash formal/run.sh run '^insn_(lb|lbu|lh|lhu|lw|sb|sh|sw)_ch0$' '^mon_misal_ch0$' ;;
     20) PATH=$HOME/.local/bin:$PATH bash formal/mutate.sh && PATH=$HOME/.local/bin:$PATH bash formal/stitch/run.sh && PATH=$HOME/.local/bin:$PATH bash formal/cache/run.sh ;;
     21) python3 zb/mutate_zb.py ;;
@@ -106,6 +108,7 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     32) python3 verilator/run_cocotb.py --seeds 3 --nops 2000 ;;
     33) python3 verilator/mutate_cocotb.py ;;
     35) rm -rf /tmp/plcov_p && python3 verilator/run_plcov.py run-priv --dat /tmp/plcov_p --riscv-tests "$RT" --no-coremark && python3 verilator/run_plcov.py merge --dat /tmp/plcov_p --extra-dat $(ls /tmp/plcov_r/core*.dat 2>/dev/null) --report /tmp/plcov_p/pipeline.txt ;;
+    36) SU=1 sh soc/sw/build.sh && SU=1 sh soc/freertos/build.sh && python3 soc/run_soc.py --su && AXI=1 SU=1 sh soc/sw/build.sh && AXI=1 SU=1 sh soc/freertos/build.sh && python3 soc/run_soc.py --axi --su ;;
     34) rm -rf /tmp/plcov_r && python3 verilator/run_plcov.py run --dat /tmp/plcov_r --cores 3 --riscv-tests "$RT" --spike "$SPIKE" && python3 verilator/run_plcov.py merge --dat /tmp/plcov_r --report /tmp/plcov_r/pipeline.txt ;;
     *) echo "khong co buoc $1"; return 1 ;;
     esac
@@ -121,12 +124,12 @@ run_one() {   # run_one <buoc> <tien to>: chay 1 buoc, in DUNG 1 dong ket qua (i
     printf '%s\n' "$line"; return 1
 }
 
-QA="0 1 2 3 4 5 6 7 8 9 10 11 12 13a 13b 13c 14 17 18 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35"   # cac buoc dung chung thu muc build (bench, soc/sw) o cung hang
+QA="0 1 2 3 4 5 6 7 8 9 10 11 12 13a 13b 13c 14 17 18 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36"   # cac buoc dung chung thu muc build (bench, soc/sw) o cung hang
 QB="15a 15b 15c 15d 16a 16b 16c 16d 19 20"                               # 20 can riscv-formal do 19 dung, nen di sau 19
 case "${1:-nhanh}" in
-    nhanh)   STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 28 29 30 32 34" ;;
+    nhanh)   STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 28 29 30 32 34 36" ;;
     dot-bien) STEPS="0 10 11 12 13 14 16 18 20 21 23 25 27 31 33 35" ;;
-    tat-ca)  STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 28 29 30 32 34 10 11 12 13 14 16 18 20 21 23 25 27 31 33 35" ;;
+    tat-ca)  STEPS="0 1 2 3 4 5 6 7 8 9 15 17 19 22 24 26 28 29 30 32 34 36 10 11 12 13 14 16 18 20 21 23 25 27 31 33 35" ;;
     may-2-nhan)
         t0=$(date +%s); fails="$LOGDIR/fails"; : > "$fails"
         # ma nguon CoreMark (coremark/eembc) duoc ca buoc 8 (hang A) va 15 (hang B) tu clone khi chua co: lay truoc mot lan,

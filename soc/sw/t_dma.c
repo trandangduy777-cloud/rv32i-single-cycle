@@ -88,10 +88,10 @@ int main(void) {
     dma_cfg(1, SYS_SCRATCH_ADDR, (u32)b, 4, 0, 4); DMA_REG(1, DMA_CTRL) = 1; dma_wait(1); DMA_REG(1, DMA_STAT) = 2;
     for (i = 0; i < 4; i++) ok &= alias_eq(b, i, 0x1000u + 3u * 7u);
     a[0] = 0xA5A55A5Au; a[1] = 0x0F1E2D3Cu; sync_io();                       /* burst INCR 2 tu vao MTIMECMP_LO / HI qua cau (moi beat 1 truy cap ngoai vi), doc lai bang INCR */
-    dma_cfg(0, (u32)a, CLINT_BASE + 8u, 2, 4, 4); DMA_REG(0, DMA_CTRL) = 1; dma_wait(0); DMA_REG(0, DMA_STAT) = 2;
+    dma_cfg(0, (u32)a, (u32)&MTIMECMP_LO, 2, 4, 4); DMA_REG(0, DMA_CTRL) = 1; dma_wait(0); DMA_REG(0, DMA_STAT) = 2;
     ok &= (MTIMECMP_LO == 0xA5A55A5Au) && (MTIMECMP_HI == 0x0F1E2D3Cu);
     fill(b, N, 0); sync_io();                                              /* doc lai burst INCR: hai tu phai khac nhau (bat loi khong tang dia chi ben cau) */
-    dma_cfg(1, CLINT_BASE + 8u, (u32)b, 2, 4, 4); DMA_REG(1, DMA_CTRL) = 1; dma_wait(1); DMA_REG(1, DMA_STAT) = 2;
+    dma_cfg(1, (u32)&MTIMECMP_LO, (u32)b, 2, 4, 4); DMA_REG(1, DMA_CTRL) = 1; dma_wait(1); DMA_REG(1, DMA_STAT) = 2;
     ok &= alias_eq(b, 0, 0xA5A55A5Au) & alias_eq(b, 1, 0x0F1E2D3Cu);
     MTIMECMP_HI = 0xFFFFFFFFu; MTIMECMP_LO = 0xFFFFFFFFu;
     a[0] = 0x1000u; a[1] = 0x1007u; sync_io();
