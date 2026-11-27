@@ -34,7 +34,7 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
 
 # Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
 # 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77). Doi nhom bang
-# bien IRQ_CORES_A..D neu them loi. Buoc 16 (mutate_irq_cosim.py, 109 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
+# bien IRQ_CORES_A..D neu them loi. Buoc 16 (mutate_irq_cosim.py, 116 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
 # 21:28 ~ 22-32, 28:42 = 22, 42: = 10 (may 2 nhan cham hon khoang 1,5 lan).
 declare -A SUBNAMES=(
     [13a]="mutation lenh C (so vet Spike)" [13b]="mutation bo nhan song song" [13c]="mutation du doan nhanh"

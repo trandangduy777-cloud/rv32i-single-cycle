@@ -181,12 +181,29 @@ EXTRA += [(n, o, w, MMUA) for n, o, w in [
 ]]
 
 
+# load / store lech bang phan cung vat qua trang (cosim/irq/mmu.S -DMA, muc 9-10): loi MMU + lech phan cung (so 9)
+MMUMA = ["--only", "mmu-imc-ma", "--core", "9", "--seeds", "1", "--tmax", "3000000"]
+EXTRA += [(n, o, w, MMUMA) for n, o, w in [
+    ("vat trang: khong tach, tu cao la tu vat ly ke tiep", "assign xp_wait = xpg & ~xp_ph & ~trap_ex & ~dwait;",
+     "assign xp_wait = 1'b0;"),
+    ("vat trang: MEM khong dung trang vat ly thu hai", "wire [31:0] ma_hi = exmem_xpg ?", "wire [31:0] ma_hi = 1'b0 ?"),
+    ("vat trang: loi trang sau co tval = dia chi", "trap_tval = (idex_load | idex_store) ? dva : bad_target;",
+     "trap_tval = (idex_load | idex_store) ? ea : bad_target;"),
+    ("vat trang: pha 1 dich lai trang dau", "wire [31:0] dva     = xp_ph ? xp_va : ea;", "wire [31:0] dva     = ea;"),
+    ("vat trang: dia chi lenh lay o pha 1", "(idex_load | idex_store) ? (xp_ph ? xp_pa : d_paddr) :",
+     "(idex_load | idex_store) ? d_paddr :"),
+    ("vat trang: PMP pha 0 kiem sang trang vat ly ke tiep", "xpg   ? {d_paddr[31:2], 2'b11} :", "1'b0  ? {d_paddr[31:2], 2'b11} :"),
+    ("vat trang: khong tach khi khong dich", "wire        xpg     = XPG & d_acc &", "wire        xpg     = XPG & xd & d_acc &"),
+]]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
     ap.add_argument("--pmp", action="store_true", help="chi chay cac dot bien PMP")
     ap.add_argument("--su", action="store_true", help="chi chay cac dot bien che do S / U")
     ap.add_argument("--mmu", action="store_true", help="chi chay cac dot bien MMU")
+    ap.add_argument("--mmu-ma", action="store_true", help="chi chay cac dot bien lech vat trang")
     ap.add_argument("--range", default="", help="a:b = chi chay dot bien thu a..b-1 (chia lan chay dai)")
     a = ap.parse_args()
     muts = list(mutate_irq.MUTATIONS) + EXTRA
@@ -196,6 +213,8 @@ def main():
         muts = [m for m in muts if len(m) > 3 and m[3] is SUM]
     if a.mmu:
         muts = [m for m in muts if len(m) > 3 and m[3] is MMUA]
+    if a.mmu_ma:
+        muts = [m for m in muts if len(m) > 3 and m[3] is MMUMA]
     if a.range:
         lo, hi = (int(x) if x else None for x in a.range.split(":"))
         muts = muts[lo:hi]

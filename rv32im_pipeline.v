@@ -645,7 +645,7 @@ module rv32im_pipeline #(
         end else if (ex_stall | frz) begin
             // lenh M dang chay, WFI dang cho o EX, hoac pipeline dong bang: giu nguyen ID/EX. Cho duyet bang trang:
             // toan hang da chot vao idex_rs*_val (nguon forward o MEM / WB se troi di) nen bo chon forward
-            if (dwait && !frz) begin
+            if ((dwait || xp_wait) && !frz) begin
                 idex_fa_mem <= 1'b0; idex_fa_wb <= 1'b0; idex_fb_mem <= 1'b0; idex_fb_wb <= 1'b0;
             end
         end else begin
@@ -716,7 +716,7 @@ module rv32im_pipeline #(
             idex_ipf2    <= ifid_ipf2;
             idex_ppa     <= ifid_ppa;
             idex_ppa2    <= ifid_ppa2;
-        end else if (dwait && !frz) begin    // cho duyet bang trang cho load / store: chot toan hang da forward
+        end else if ((dwait || xp_wait) && !frz) begin    // cho duyet bang trang / dich trang 2: chot toan hang da forward
             idex_rs1_val <= op_a;
             idex_rs2_val <= op_b;
         end
@@ -727,6 +727,8 @@ module rv32im_pipeline #(
     // ============================================================
     reg         exmem_valid, exmem_rd_we, exmem_load, exmem_store, exmem_fence;
     reg  [31:0] exmem_pc, exmem_instr, exmem_result, exmem_store_val, exmem_tva;
+    reg         exmem_xpg;                             // load / store lech vat qua trang (xem EX): tu cao o exmem_pahi
+    reg  [19:0] exmem_pahi;
     reg         exmem_tirq, exmem_trap, exmem_icnt;
     reg  [4:0]  exmem_rd;
     reg  [2:0]  exmem_funct3;
@@ -855,7 +857,8 @@ module rv32im_pipeline #(
     );
     wire   wfi_wait;                                   // WFI o EX va chua co ngat nao dang cho (gan o phan ngat)
     wire   dwait;                                      // load / store cho duyet bang trang (MMU)
-    assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait;
+    wire   xp_wait;                                    // load / store lech vat qua trang: chu ky dich trang dau (xem EX)
+    assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait | xp_wait;
 
     // nhanh
     wire eq  = (op_a == op_b);
@@ -1064,13 +1067,24 @@ module rv32im_pipeline #(
     reg         dfr_v, dfr_af;                         // lan duyet cho load / store da loi
     reg  [31:0] dfr_va;
     wire        d_acc   = (idex_load | idex_store) & ~ld_misal & ~st_misal;
-    wire        d_rec   = dfr_v & (dfr_va == ea);
+    // MISALIGNED = 1 va co MMU hoac PMP: truy cap lech vat qua ranh gioi trang 4 KiB duoc dich va kiem PMP tung phan nhu
+    // Spike (tach o PGSIZE ke ca khi khong dich). Pha 0 (xp_ph = 0): dich / kiem phan o trang dau voi ea, chot dia chi
+    // vat ly vao xp_pa, EX dung 1 chu ky (xp_wait). Pha 1: dich / kiem phan o trang sau voi xp_va = trang ke tiep
+    // (loi: tval = xp_va), ket qua dia chi cua lenh la xp_pa, trang vat ly thu hai di theo lenh xuong MEM (exmem_pahi).
+    localparam XPG = (MISALIGNED != 0) && ((SU != 0 && MMU != 0) || PMP_N != 0);
+    wire [2:0]  ls_e3   = {1'b0, ea[1:0]} + (idex_funct3[1:0] == 2'b10 ? 3'd3 : (idex_funct3[1:0] == 2'b01 ? 3'd1 : 3'd0));
+    wire        xpg     = XPG & d_acc & (&ea[11:2]) & ls_e3[2];
+    reg         xp_ph_r;
+    reg  [31:0] xp_pa, xp_va;
+    wire        xp_ph   = XPG & xp_ph_r;               // XPG = 0: hang 0, khong them logic
+    wire [31:0] dva     = xp_ph ? xp_va : ea;          // dia chi ao dang dich (cong d_va cua TLB, bo duyet, PMP)
+    wire        d_rec   = dfr_v & (dfr_va == dva);
     wire        d_bad   = (idex_store ? ~d_fl[1] : ~(d_fl[0] | (mxr_v & d_fl[2]))) |
                           ((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3]) | ~d_fl[4] | (idex_store & ~d_fl[5]);
     wire        d_pf    = xd & d_acc & ((d_hit & d_bad) | (d_rec & ~dfr_af));
     wire        d_af    = xd & d_acc & ((d_hit & ~d_bad & (d_pa[33:32] != 2'b00)) | (d_rec & dfr_af));
     assign      dwait   = xd & d_acc & ~d_hit & ~d_rec;
-    wire [31:0] d_paddr = xd ? d_pa[31:0] : ea;
+    wire [31:0] d_paddr = xd ? d_pa[31:0] : dva;
     // bo duyet dung chung: load / store uu tien hon fetch; ket qua loi duoc ghi lai theo dia chi ao
     reg         wk_busy, wk_d;
     reg  [31:0] wk_va;
@@ -1082,8 +1096,8 @@ module rv32im_pipeline #(
         rv32_mmu #(.TLB_N(TLB_N)) u_mmu (
             .clk(clk), .rst_n(rst_n), .asid(satp_asid), .root_ppn(satp_ppn), .flush(mmu_flush),
             .i_va(i_va), .i_hit(i_hit), .i_pa(i_pa), .i_fl(i_fl),
-            .d_va(ea), .d_hit(d_hit), .d_pa(d_pa), .d_fl(d_fl),
-            .req(wk_busy | wk_start), .req_va(dwait ? ea : i_va), .done(mmu_done), .pf(mmu_pf), .af(mmu_af),
+            .d_va(dva), .d_hit(d_hit), .d_pa(d_pa), .d_fl(d_fl),
+            .req(wk_busy | wk_start), .req_va(dwait ? dva : i_va), .done(mmu_done), .pf(mmu_pf), .af(mmu_af),
             .m_req(mmu_mreq), .m_addr(mmu_maddr), .m_grant(~mem_busy), .m_ready(dmem_ready), .m_rdata(dmem_rdata),
             .pte_ok(mmu_pte_ok));
     end else begin : g_no_mmu
@@ -1097,7 +1111,7 @@ module rv32im_pipeline #(
             wk_busy <= 1'b0; wk_d <= 1'b0; ifr_v <= 1'b0; dfr_v <= 1'b0;
         end else begin
             if (mmu_flush)          wk_busy <= 1'b0;
-            else if (wk_start)      begin wk_busy <= 1'b1; wk_d <= dwait; wk_va <= dwait ? ea : i_va; end
+            else if (wk_start)      begin wk_busy <= 1'b1; wk_d <= dwait; wk_va <= dwait ? dva : i_va; end
             else if (mmu_done)      wk_busy <= 1'b0;
             if (mmu_done && !mmu_flush && (mmu_pf || mmu_af) && !wk_d) begin
                 ifr_v <= 1'b1; ifr_va <= wk_va; ifr_af <= mmu_af;
@@ -1113,6 +1127,15 @@ module rv32im_pipeline #(
     // nhat bo du doan, bo dem su kien) dung trap_nm de khong noi vao duong do.
     wire trap_nm = irq_take | idex_ipf | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak | misaligned;
     wire trap_ex = trap_nm | ld_misal | st_misal | d_pf | d_af | pmp_lfault | pmp_sfault;
+    assign xp_wait = xpg & ~xp_ph & ~trap_ex & ~dwait;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)                 xp_ph_r <= 1'b0;
+        else if (redirect_q)        xp_ph_r <= 1'b0;
+        else if (!frz) begin
+            if (xp_wait)            begin xp_ph_r <= 1'b1; xp_pa <= d_paddr; xp_va <= {ea[31:12] + 20'd1, 12'h000}; end
+            else if (!ex_stall)     xp_ph_r <= 1'b0;     // lenh da roi EX (xuong MEM hoac trap)
+        end
+    end
     wire mret_ex = idex_mret & ~irq_nm & ~frz & ~ex_priv_ill;
     wire sret_ex = idex_sret & ~irq_nm & ~frz & ~ex_priv_ill;
     wire sfence_ex = idex_sfence & ~irq_nm & ~frz & ~ex_priv_ill;
@@ -1131,7 +1154,7 @@ module rv32im_pipeline #(
         // loi load / store deu co tval = ea, va chi load / store moi co cac loi nay; dich nhanh lech (bad_target) chi o
         // lenh nhay / nhanh. Vi vay tval chon theo loai lenh, khong cho ket qua kiem TLB / PMP (cuoi duong dai nhat o EX).
         else begin
-            trap_tval = (idex_load | idex_store) ? ea : bad_target;
+            trap_tval = (idex_load | idex_store) ? dva : bad_target;
             if (ld_misal)        trap_cause = 32'd4;
             else if (st_misal)   trap_cause = 32'd6;
             else if (d_pf)       trap_cause = idex_store ? 32'd15 : 32'd13;   // loi trang
@@ -1308,7 +1331,7 @@ module rv32im_pipeline #(
                             (idex_jal | idex_jalr)? pc_next         :
                             idex_csr              ? csr_rdata       :
                             idex_mext             ? m_result        :
-                            (idex_load | idex_store) ? d_paddr :
+                            (idex_load | idex_store) ? (xp_ph ? xp_pa : d_paddr) :
                             idex_zb               ? zb_out          :
                                                       alu_out;
 
@@ -1436,6 +1459,8 @@ module rv32im_pipeline #(
             exmem_result    <= ex_result;
             exmem_store_val <= op_b;
             exmem_tva       <= ea;                          // chi de testbench: dia chi ao cua load / store (vet)
+            exmem_xpg       <= xp_ph;
+            exmem_pahi      <= d_paddr[31:12];
         end
     end
 
@@ -1470,8 +1495,10 @@ module rv32im_pipeline #(
     wire [3:0]  st_strb = ma_phase ? st_strb8[7:4]  : st_strb8[3:0];
 
     // pha 1: dia chi tu ke tiep (can chinh); pha 0 cua truy cap vat qua tu: dia chi tu thap can chinh
+    // tu cao: tu ke tiep, hoac dau trang vat ly thu hai khi vat qua trang (exmem_xpg, xem EX)
+    wire [31:0] ma_hi = exmem_xpg ? {exmem_pahi, 12'h000} : {exmem_result[31:2] + 30'd1, 2'b00};
     assign dmem_addr = mmu_mreq ? mmu_maddr[31:0] :
-                       ma_phase ? {exmem_result[31:2] + 30'd1, 2'b00} :
+                       ma_phase ? ma_hi :
                        ma_cross ? {exmem_result[31:2], 2'b00} : exmem_result;
 
     assign dmem_we    = exmem_valid & exmem_store;
@@ -1521,7 +1548,7 @@ module rv32im_pipeline #(
     // ============================================================
     reg  [31:0] memwb_pc, memwb_instr;
     reg         memwb_tst;
-    reg  [31:0] memwb_taddr, memwb_tva;               // dia chi vat ly / dia chi ao (vet so voi Spike)
+    reg  [31:0] memwb_taddr, memwb_taddr2, memwb_tva;               // dia chi vat ly / dia chi ao (vet so voi Spike)
     reg  [63:0] memwb_tdata;                       // store vat qua tu: 64 bit va wstrb 8 bit (xem phan MEM)
     reg  [7:0]  memwb_tstrb;
     reg         memwb_new;                         // MEM/WB vua nhan lenh moi (khong phai chu ky dong bang)
@@ -1555,6 +1582,7 @@ module rv32im_pipeline #(
             memwb_skip  <= cnt_wr_ir;                // cnt_wr_ir da gom ~frz: dung canh lenh nay roi MEM
             memwb_tst   <= dmem_we;
             memwb_taddr <= dmem_we ? exmem_result : 32'd0;
+            memwb_taddr2 <= dmem_we ? ma_hi : 32'd0;       // tu cao cua store vat qua tu (mo hinh bo nho testbench)
             memwb_tva   <= dmem_we ? exmem_tva : 32'd0;
             memwb_tdata <= dmem_we ? st_wide : 64'd0;      // st_wide chi co cac byte duoc ghi (con lai la 0)
             memwb_tstrb <= dmem_we ? st_strb8 : 8'd0;
@@ -1877,7 +1905,10 @@ module rv32im_pipeline #(
     // cua muc k-1) va mot bo so sanh bang co mat na (NA4 / NAPOT). Viet bang mang bit (khong dung ham co vong lap) de
     // mo phong nhanh. Muc so nho nhat khop duoc dung: one-hot = m & -m.
     wire [31:0] if_p2  = idex_pc + 32'd2;
+    // vat qua trang (xpg, xem EX): pha 0 kiem tu byte dau toi het trang, pha 1 tu dau trang sau toi byte cuoi
     wire [31:0] ls_end = (MISALIGNED == 0) ? d_paddr :
+                         xp_ph ? {d_paddr[31:2], ls_e3[1:0]} :
+                         xpg   ? {d_paddr[31:2], 2'b11} :
                          d_paddr + {30'd0, idex_funct3[1:0] == 2'b10 ? 2'd3 : (idex_funct3[1:0] == 2'b01 ? 2'd1 : 2'd0)};
     // dia chi vat ly: lenh (idex_ppa / idex_ppa2 = pc / pc + 2 khi khong dich), load / store (d_paddr), PTE (lan 4)
     wire [31:0] ppa2   = (MMU != 0) ? idex_ppa2 : if_p2;
