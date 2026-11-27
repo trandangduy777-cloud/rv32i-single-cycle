@@ -290,7 +290,10 @@ M_CORE_MUTATIONS = [
 PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh o ID sau khi nhay", "B: ID nhay som thang redirect cua EX",
                                                              "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
                                                              "P: SH sai byte-enable", "P: dia chi load/store dung rs1 chua forward",
-                                                             "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID")] + [
+                                                             "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID",
+                                                             "B: dich nhay som la pc+4")] + [
+    # pipeline RV32IM: dich JAL / nhanh tinh san o IF (ifid_tgt)
+    ("B: dich nhay som la pc+4", "ifid_tgt   <= pc + ((if_dec[6:0] == 7'b1101111) ? if_immj : if_immb);", "ifid_tgt   <= pc + 32'd4;"),
     # pipeline RV32IM: dia chi load / store tinh rieng (ea, dung chung cho PMP / MMU)
     ("P: dia chi load/store dung rs1 chua forward", "wire [31:0] ea    = op_a + idex_imm;", "wire [31:0] ea    = idex_rs1_val + idex_imm;"),
     # bo du doan RV32IM (BTB / RAS, xem bpred/): ID sua hoac nhay som qua id_fix_tgt / id_fix_seq / id_late
@@ -299,10 +302,10 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("B: JAL khong nhay o ID (khi BTB chua co)", "wire id_late    = ~ifid_bp & (is_jal |", "wire id_late    = ~ifid_bp & (1'b0 |"),
     # pipeline RV32IM: dich "chay tiep" la pc_next (pc + 2 voi lenh nen, pc + 4 voi lenh 32 bit)
     ("B: doan sai nhay ve dich nham", "(idex_pred_taken ? pc_next : pc_imm)", "(idex_pred_taken ? pc_imm : pc_next)"),
-    ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= redirect_pc_q;"),
+    ("B: ID nhay som thang redirect cua EX", "end else if (redirect_q) begin\n            pc         <= rt_trap ? trap_pc : redirect_pc_q;", "end else if (redirect_q & ~id_redirect) begin\n            pc         <= rt_trap ? trap_pc : redirect_pc_q;"),
     ("P: khong huy lenh o ID sau khi nhay", "idex_valid_r <= ifid_valid & ~redirect_q & ~stall;", "idex_valid_r <= ifid_valid & ~stall;"),
     ("R: lenh o EX sau redirect khong bi vo hieu", "wire        idex_valid = idex_valid_r & ~redirect_q;", "wire        idex_valid = idex_valid_r;"),
-    ("R: redirect_pc_q khong dang ky (dung pc cu)", "pc         <= redirect_pc_q;", "pc         <= pc;"),
+    ("R: redirect_pc_q khong dang ky (dung pc cu)", "pc         <= rt_trap ? trap_pc : redirect_pc_q;", "pc         <= rt_trap ? trap_pc : pc;"),
     ("X: ID nhay som khi EX dang dong bang (lenh M)", "end else if (id_redirect & ~ex_stall) begin", "end else if (id_redirect) begin"),
     ("X: lenh trap van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall;"),
     ("X: mepc luu pc cua tang MEM", "tepc_q       <= idex_pc[31:1];", "tepc_q       <= exmem_pc[31:1];"),
@@ -339,8 +342,8 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
      "st_wide = {48'b0, exmem_store_val[15:0]}; st_strb8 = 8'b0000_0110;"),
     ("X: store lech van ghi bo nho", "exmem_store     <= idex_store & ~ex_stall & ~trap_ex;", "exmem_store     <= idex_store & ~ex_stall;"),
     ("X: load lech van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~(trap_ex & ~ld_misal);"),
-    ("X: store lech sai cause (4)", "else if (st_misal)      begin trap_cause = 32'd6;", "else if (st_misal)      begin trap_cause = 32'd4;"),
-    ("X: load lech mtval = 0", "else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = ea;", "else if (ld_misal)      begin trap_cause = 32'd4;  trap_tval = 32'd0;"),
+    ("X: store lech sai cause (4)", "else if (st_misal)   trap_cause = 32'd6;", "else if (st_misal)   trap_cause = 32'd4;"),
+    ("X: load lech mtval = 0", "trap_tval = (idex_load | idex_store) ? ea : bad_target;", "trap_tval = idex_load ? 32'd0 : (idex_store ? ea : bad_target);"),
     ("X: dia chi lech tinh sai (bo cong imm)", "wire [1:0]  ea_lo = op_a[1:0] + idex_imm[1:0];", "wire [1:0]  ea_lo = op_a[1:0];"),
 ]
 
