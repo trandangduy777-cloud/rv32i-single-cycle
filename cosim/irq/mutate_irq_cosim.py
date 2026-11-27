@@ -199,6 +199,18 @@ EXTRA += [(n, o, w, MMUMA) for n, o, w in [
 ]]
 
 
+# menvcfg / menvcfgh / senvcfg (cosim/irq/su.S muc 3b): loi S/U + MMU (so 6) va loi S/U khong MMU (so 7, FIOM doc 0)
+SUN = ["--only", "su-", "--core", "7", "--seeds", "1", "--tmax", "300000"]
+ENVCFG = [
+    ("menvcfg khong ton tai", "12'h302, 12'h303, 12'h306, 12'h30A, 12'h31A: id_csr_exists", "12'h302, 12'h303, 12'h306, 12'h31A: id_csr_exists", SUM),
+    ("senvcfg khong ton tai", "12'h100, 12'h104, 12'h105, 12'h106, 12'h10A, 12'h140", "12'h100, 12'h104, 12'h105, 12'h106, 12'h140", SUM),
+    ("senvcfg doc FIOM cua menvcfg", "12'h10A: su_rdata = {31'd0, senv_fiom};", "12'h10A: su_rdata = {31'd0, menv_fiom};", SUM),
+    ("menvcfgh doc FIOM", "12'h30A: su_rdata = {31'd0, menv_fiom};", "12'h30A, 12'h31A: su_rdata = {31'd0, menv_fiom};", SUM),
+    ("FIOM ghi duoc khi khong co MMU", "12'h30A: menv_fiom  <= csr_new[0] & (MMU != 0);", "12'h30A: menv_fiom  <= csr_new[0];", SUN),
+]
+EXTRA += ENVCFG
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spike", default=shutil.which("spike") or "/opt/spike/bin/spike")
@@ -206,6 +218,7 @@ def main():
     ap.add_argument("--su", action="store_true", help="chi chay cac dot bien che do S / U")
     ap.add_argument("--mmu", action="store_true", help="chi chay cac dot bien MMU")
     ap.add_argument("--mmu-ma", action="store_true", help="chi chay cac dot bien lech vat trang")
+    ap.add_argument("--envcfg", action="store_true", help="chi chay cac dot bien menvcfg / senvcfg")
     ap.add_argument("--range", default="", help="a:b = chi chay dot bien thu a..b-1 (chia lan chay dai)")
     a = ap.parse_args()
     muts = list(mutate_irq.MUTATIONS) + EXTRA
@@ -215,6 +228,8 @@ def main():
         muts = [m for m in muts if len(m) > 3 and m[3] is SUM]
     if a.mmu:
         muts = [m for m in muts if len(m) > 3 and m[3] is MMUA]
+    if a.envcfg:
+        muts = [m for m in muts if len(m) > 3 and m[0] in [e[0] for e in ENVCFG]]
     if a.mmu_ma:
         muts = [m for m in muts if len(m) > 3 and m[3] is MMUMA]
     if a.range:

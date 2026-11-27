@@ -3,6 +3,7 @@
 // - ECALL tu U / S / M (ma 8 / 9 / 11), uy quyen exception qua medeleg (ve S) hoac khong (ve M)
 // - CSR va lenh dac quyen: CSR M doc o S / U, CSR S doc o U, MRET o S, SRET o U va o S khi TSR, WFI o U va o S khi TW
 // - mcounteren / scounteren chan doc cycle / instret / hpmcounter o S / U
+// - menvcfg / menvcfgh / senvcfg: chi FIOM ghi duoc (khi co MMU), quyen truy cap theo che do
 // - ngat S (SSIP / STIP / SEIP do phan mem dat): uy quyen qua mideleg, SIE, uu tien SEI > SSI, stvec vectored,
 //   ngat ve M van duoc nhan o U khi MIE = 0, ngat timer M trong luc chay o U
 // - PMP voi S / U: muc khong khoa rang buoc S / U, khong khop muc nao la loi, MPRV + MPP = U cho load o che do M
@@ -211,6 +212,45 @@ m3c:
     TRAP    3, 2, 0x33
     csrw    mcounteren, zero
     csrw    scounteren, zero
+    NOTRAP  0x34
+
+    // 3b. menvcfg / menvcfgh / senvcfg: chi FIOM (bit 0) ghi duoc, va chi khi co MMU (Spike: co S va co phan trang);
+    // senvcfg doc / ghi o S, menvcfg o S va senvcfg / menvcfgh o U la lenh bat hop le
+    li      t0, -1
+    csrw    menvcfg, t0
+    csrr    t1, menvcfg
+    csrw    menvcfgh, t0
+    csrr    t2, menvcfgh
+    csrw    senvcfg, t0
+    csrr    t3, senvcfg
+    snez    s1, s7                      // FIOM ky vong = co MMU
+    li      a0, 0x35
+    bne     t1, s1, fail
+    li      a0, 0x36
+    bnez    t2, fail
+    li      a0, 0x37
+    bne     t3, s1, fail
+    csrw    menvcfg, zero
+    GO      MPP_S, s3d
+s3d:
+    csrr    s10, senvcfg                // S: doc duoc, van la gia tri M vua ghi (s10 / s11: trinh xu ly trap dung t*)
+    csrw    senvcfg, zero
+    csrr    s11, senvcfg
+    csrr    t3, menvcfg                 // bat hop le
+    BACK    m3d
+m3d:
+    TRAP    3, 2, 0x38
+    li      a0, 0x39
+    bne     s10, s1, fail
+    bnez    s11, fail
+    GO      0, u3d
+u3d:
+    csrr    t1, senvcfg                 // bat hop le
+    csrw    menvcfgh, zero              // bat hop le
+    BACK    m3e
+m3e:
+    TRAP    3, 2, 0x3a
+    TRAP    3, 2, 0x3b
 
     NOTRAP  0x3f
     // 4. uy quyen exception ve S: ECALL tu U, lenh khong hop le; ECALL tu S van ve M
