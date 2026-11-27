@@ -368,7 +368,8 @@ module tb_cosim;
                 // store co the vat qua 2 tu (MISALIGNED = 1): wstrb 8 bit, du lieu 64 bit tinh tu tu chua dia chi
                 for (ab = 0; ab < 8; ab = ab + 1)
                     if ((dut.memwb_tstrb >> ab) & 1)
-                        arch[dut.memwb_taddr[MEMB-1:2] + ab / 4][8 * (ab % 4) +: 8] = dut.memwb_tdata >> (8 * ab);
+                        arch[ab < 4 ? dut.memwb_taddr[MEMB-1:2] : dut.memwb_taddr2[MEMB-1:2]][8 * (ab % 4) +: 8] =
+                            dut.memwb_tdata >> (8 * ab);   // tu cao: taddr2 (khac tu ke tiep khi vat qua trang co MMU)
             end
             if (dut.memwb_instr[6:0] == 7'b0001111 && dut.memwb_instr[14:13] == 2'b00) begin   // FENCE, FENCE.I
                 for (ai = 0; ai < MEMW; ai = ai + 1)
