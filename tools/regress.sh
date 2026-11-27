@@ -27,7 +27,7 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
        "so vet ngau nhien voi Spike (22 loi, 8 chuong trinh moi loi) + test co huong csr_mie" "mutation so vet ngau nhien (16 dot bien)" \
        "SoC AXI4 + DMA: interconnect ngau nhien, giao thuc, chuong trinh C, DMA, FreeRTOS" "mutation AXI4 + DMA (55 mutant)" \
        "TAGE: so tung du doan voi mo hinh tham chieu (35 vet, 4 cau hinh)" "mutation TAGE (28 dot bien)" \
-       "Verilator lint -Wall (13 muc tieu, cac mien tru co giai thich)" "so vet voi Spike bang Verilator (riscv-tests, bench, CoreMark; trace phai khop iverilog)" \
+       "Verilator lint -Wall (14 muc tieu, cac mien tru co giai thich)" "so vet voi Spike bang Verilator (riscv-tests, bench, CoreMark; trace phai khop iverilog)" \
        "SVA bind (bo phan xu, cache, pipeline) tren RTL sach" "mutation SVA (25 dot bien, moi nhom assertion phai bat duoc)" \
        "cocotb: cache du lieu + he thong bo nho, scoreboard + functional coverage" "mutation cocotb (12 dot bien, khong co SVA ho tro)" \
        "Verilator --coverage cua pipeline (loi RV32IMC: riscv-tests + bench + CoreMark)" \
