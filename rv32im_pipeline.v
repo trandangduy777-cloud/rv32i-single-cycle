@@ -462,11 +462,12 @@ module rv32im_pipeline #(
         if (id_csr_addr == 12'h7A0 || id_csr_addr == 12'h7A1 || id_csr_addr == 12'h7A2 || id_csr_addr == 12'h7A4 ||
             id_csr_addr[11:2] == 10'h1EC) id_csr_exists = 1'b1;
 `endif
-        // che do S / U: sstatus sie stvec scounteren sscratch sepc scause stval sip satp, medeleg mideleg mcounteren
+        // che do S / U: sstatus sie stvec scounteren senvcfg sscratch sepc scause stval sip satp, medeleg mideleg
+        // mcounteren menvcfg menvcfgh
         if (SU != 0)
             case (id_csr_addr)
-                12'h100, 12'h104, 12'h105, 12'h106, 12'h140, 12'h141, 12'h142, 12'h143, 12'h144, 12'h180,
-                12'h302, 12'h303, 12'h306: id_csr_exists = 1'b1;
+                12'h100, 12'h104, 12'h105, 12'h106, 12'h10A, 12'h140, 12'h141, 12'h142, 12'h143, 12'h144, 12'h180,
+                12'h302, 12'h303, 12'h306, 12'h30A, 12'h31A: id_csr_exists = 1'b1;
                 default: ;
             endcase
     end
@@ -946,6 +947,11 @@ module rv32im_pipeline #(
     reg  [31:1] sepc_r;
     wire [31:0] sepc_v = {sepc_r[31:2], sepc_r[1] & (ENABLE_C != 0), 1'b0};
     reg  [31:0] sscratch, scause_r, stval_r, mcounteren, scounteren;
+    // menvcfg / senvcfg: chi FIOM (bit 0); ghi duoc khi co phan trang (MMU = 1), khong thi doc 0 (nhu Spike: FIOM chi
+    // duoc doc 0 khi khong co S hoac khong co phan trang). Mot hart, khong co thiet bi I/O lam lech thu tu: FIOM khong
+    // doi hanh vi FENCE. Cac truong khac (CBIE / CBCFE / CBZE, PBMTE, ADUE, STCE, ...) la 0 vi khong co phan mo rong
+    // tuong ung; menvcfgh = 0.
+    reg         menv_fiom, senv_fiom;
     reg  [9:0]  medeleg_r;                                 // bit 0-9 cua medeleg (0 chi ghi duoc khi khong co C)
     reg         medeleg19;                                 // loi phan cung (Spike cho uy quyen khi co Zicntr)
     reg         mideleg_ssi, mideleg_sti, mideleg_sei;
@@ -999,6 +1005,8 @@ module rv32im_pipeline #(
             12'h104: su_rdata = mie_v & mideleg_v;
             12'h105: su_rdata = {stvec_r, 1'b0, stvec_vec};
             12'h106: su_rdata = scounteren;
+            12'h10A: su_rdata = {31'd0, senv_fiom};
+            12'h30A: su_rdata = {31'd0, menv_fiom};
             12'h140: su_rdata = sscratch;
             12'h141: su_rdata = sepc_v;
             12'h142: su_rdata = scause_r;
@@ -1348,6 +1356,7 @@ module rv32im_pipeline #(
             st_mpp <= 2'd0; st_fs <= 2'd0;
             stvec_r <= 30'd0; stvec_vec <= 1'b0; sepc_r <= 31'd0;
             sscratch <= 32'd0; scause_r <= 32'd0; stval_r <= 32'd0; mcounteren <= 32'd0; scounteren <= 32'd0;
+            menv_fiom <= 1'b0; senv_fiom <= 1'b0;
             medeleg_r <= 10'd0; medeleg19 <= 1'b0; mideleg_ssi <= 1'b0; mideleg_sti <= 1'b0; mideleg_sei <= 1'b0;
             medeleg_pf <= 3'd0; st_sum <= 1'b0; st_mxr <= 1'b0; st_tvm <= 1'b0;
             satp_mode <= 1'b0; satp_asid <= 9'd0; satp_ppn <= 22'd0;
@@ -1410,6 +1419,8 @@ module rv32im_pipeline #(
                 end
                 12'h105: begin stvec_r <= csr_new[31:2]; stvec_vec <= csr_new[0]; end
                 12'h106: scounteren <= csr_new;
+                12'h10A: senv_fiom  <= csr_new[0] & (MMU != 0);
+                12'h30A: menv_fiom  <= csr_new[0] & (MMU != 0);
                 12'h140: sscratch <= csr_new;
                 12'h141: sepc_r   <= csr_new[31:1];
                 12'h142: scause_r <= csr_new;
