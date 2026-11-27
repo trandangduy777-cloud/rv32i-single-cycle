@@ -343,7 +343,7 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
     ("X: store lech van ghi bo nho", "exmem_store     <= idex_store & ~ex_stall & ~trap_ex;", "exmem_store     <= idex_store & ~ex_stall;"),
     ("X: load lech van ghi thanh ghi dich", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~trap_ex;", "exmem_rd_we     <= idex_rd_we & ~ex_stall & ~(trap_ex & ~ld_misal);"),
     ("X: store lech sai cause (4)", "else if (st_misal)   trap_cause = 32'd6;", "else if (st_misal)   trap_cause = 32'd4;"),
-    ("X: load lech mtval = 0", "trap_tval = (idex_load | idex_store) ? dva : bad_target;", "trap_tval = idex_load ? 32'd0 : (idex_store ? dva : bad_target);"),
+    ("X: load lech mtval = 0", "trap_tval = (idex_load | idex_store) ? ls_tval : bad_target;", "trap_tval = idex_load ? 32'd0 : (idex_store ? ls_tval : bad_target);"),
     ("X: dia chi lech tinh sai (bo cong imm)", "wire [1:0]  ea_lo = op_a[1:0] + idex_imm[1:0];", "wire [1:0]  ea_lo = op_a[1:0];"),
 ]
 

@@ -20,7 +20,7 @@ MUTS=(
 "wfi_ket#rv32im_pipeline.v#assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait | xp_wait;#assign ex_stall = (idex_mext & ~m_done) | wfi_wait | dwait | xp_wait | idex_wfi;#^liveness_ch0\$#checks_wfi.cfg"
 "ill_mtval#rv32im_pipeline.v#begin trap_cause = 32'd2;  trap_tval = idex_instr; end#begin trap_cause = 32'd2;  trap_tval = 32'd0;      end#^trapcsr_ill_mtval_ch0\$"
 "ill_mcause#rv32im_pipeline.v#begin trap_cause = 32'd2;  trap_tval = idex_instr; end#begin trap_cause = 32'd3;  trap_tval = idex_instr; end#^trapcsr_ill_mcause_ch0\$"
-"ld_mtval#rv32im_pipeline.v#trap_tval = (idex_load | idex_store) ? dva : bad_target;#trap_tval = (idex_load | idex_store) ? {dva[31:2], 2'b00} : bad_target;#^trapcsr_ld_mtval_ch0\$"
+"ld_mtval#rv32im_pipeline.v#trap_tval = (idex_load | idex_store) ? ls_tval : bad_target;#trap_tval = (idex_load | idex_store) ? {ls_tval[31:2], 2'b00} : bad_target;#^trapcsr_ld_mtval_ch0\$"
 "st_mcause#rv32im_pipeline.v#else if (st_misal)   trap_cause = 32'd6;#else if (st_misal)   trap_cause = 32'd4;#^trapcsr_st_mcause_ch0\$"
 "ma_ld_ghep#rv32im_pipeline.v#wire [63:0] ld_wide = ma_phase ? {dmem_rdata, ma_lo} : {32'b0, dmem_rdata};#wire [63:0] ld_wide = ma_phase ? {ma_lo, dmem_rdata} : {32'b0, dmem_rdata};#^mon_misal_ch0\$#checks_misal.cfg"
 "ma_st_pha#rv32im_pipeline.v#wire [31:0] st_data = ma_phase ? st_wide[63:32] : st_wide[31:0];#wire [31:0] st_data = ma_phase ? st_wide[31:0] : st_wide[63:32];#^mon_misal_ch0\$#checks_misal.cfg"

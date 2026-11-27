@@ -184,11 +184,13 @@ EXTRA += [(n, o, w, MMUA) for n, o, w in [
 # load / store lech bang phan cung vat qua trang (cosim/irq/mmu.S -DMA, muc 9-10): loi MMU + lech phan cung (so 9)
 MMUMA = ["--only", "mmu-imc-ma", "--core", "9", "--seeds", "1", "--tmax", "3000000"]
 EXTRA += [(n, o, w, MMUMA) for n, o, w in [
-    ("vat trang: khong tach, tu cao la tu vat ly ke tiep", "assign xp_wait = xpg & ~xp_ph & ~trap_ex & ~dwait;",
+    ("vat trang: khong tach, tu cao la tu vat ly ke tiep", "assign xp_wait = xp0 & ~trap_nb & ~dwait;",
      "assign xp_wait = 1'b0;"),
     ("vat trang: MEM khong dung trang vat ly thu hai", "wire [31:0] ma_hi = exmem_xpg ?", "wire [31:0] ma_hi = 1'b0 ?"),
-    ("vat trang: loi trang sau co tval = dia chi", "trap_tval = (idex_load | idex_store) ? dva : bad_target;",
-     "trap_tval = (idex_load | idex_store) ? ea : bad_target;"),
+    ("vat trang: loi trang sau co tval = dia chi", "wire [31:0] ls_tval = xp_hi ? xp_va : ea;",
+     "wire [31:0] ls_tval = ea;"),
+    ("vat trang: loi trang dau khong uu tien hon loi trang sau", "else if (xp_lo)      trap_cause =",
+     "else if (1'b0)       trap_cause ="),
     ("vat trang: pha 1 dich lai trang dau", "wire [31:0] dva     = xp_ph ? xp_va : ea;", "wire [31:0] dva     = ea;"),
     ("vat trang: dia chi lenh lay o pha 1", "(idex_load | idex_store) ? (xp_ph ? xp_pa : d_paddr) :",
      "(idex_load | idex_store) ? d_paddr :"),

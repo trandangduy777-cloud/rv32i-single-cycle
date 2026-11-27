@@ -1078,12 +1078,19 @@ module rv32im_pipeline #(
     reg  [31:0] xp_pa, xp_va;
     wire        xp_ph   = XPG & xp_ph_r;               // XPG = 0: hang 0, khong them logic
     wire [31:0] dva     = xp_ph ? xp_va : ea;          // dia chi ao dang dich (cong d_va cua TLB, bo duyet, PMP)
+    // Loi cua phan trang dau (TLB / PMP) duoc chot o pha 0 va bao o pha 1 (xp_lo, uu tien hon loi trang sau, tval = ea)
+    // thay vi trap ngay: nho vay xp_wait (vao ex_stall -> ID, bo du doan) khong phai cho ket qua kiem TLB / PMP.
+    reg         xp_lf, xp_lpf;                         // pha 0 co loi / loi do la loi trang
+    wire        xp0     = xpg & ~xp_ph;
+    wire        xp_lo   = xp_ph & xp_lf;
+    wire        xp_hi   = xp_ph & ~xp_lf;
+    wire [31:0] ls_tval = xp_hi ? xp_va : ea;          // tval cua loi load / store
     wire        d_rec   = dfr_v & (dfr_va == dva);
     wire        d_bad   = (idex_store ? ~d_fl[1] : ~(d_fl[0] | (mxr_v & d_fl[2]))) |
                           ((pd == 2'd1) ? (d_fl[3] & ~sum_v) : ~d_fl[3]) | ~d_fl[4] | (idex_store & ~d_fl[5]);
     wire        d_pf    = xd & d_acc & ((d_hit & d_bad) | (d_rec & ~dfr_af));
     wire        d_af    = xd & d_acc & ((d_hit & ~d_bad & (d_pa[33:32] != 2'b00)) | (d_rec & dfr_af));
-    assign      dwait   = xd & d_acc & ~d_hit & ~d_rec;
+    assign      dwait   = xd & d_acc & ~d_hit & ~d_rec & ~xp_lo;   // trang dau da loi: khong duyet trang sau
     wire [31:0] d_paddr = xd ? d_pa[31:0] : dva;
     // bo duyet dung chung: load / store uu tien hon fetch; ket qua loi duoc ghi lai theo dia chi ao
     reg         wk_busy, wk_d;
@@ -1125,14 +1132,19 @@ module rv32im_pipeline #(
     // trap_nm: moi nguon trap tru loi cua load / store. Loi load / store (lech, MMU, PMP) deu bi chan boi idex_load /
     // idex_store va nam cuoi duong forwarding -> dia chi -> TLB / PMP, nen logic chi dung cho nhanh / JAL / JALR (cap
     // nhat bo du doan, bo dem su kien) dung trap_nm de khong noi vao duong do.
-    wire trap_nm = irq_take | idex_ipf | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak | misaligned;
-    wire trap_ex = trap_nm | ld_misal | st_misal | d_pf | d_af | pmp_lfault | pmp_sfault;
-    assign xp_wait = xpg & ~xp_ph & ~trap_ex & ~dwait;
+    wire trap_nb = irq_take | idex_ipf | pmp_ifault | ex_illegal | idex_ecall | idex_ebreak;   // khong gom dich nhanh lech
+    wire trap_nm = trap_nb | misaligned;
+    wire ls_flt  = d_pf | d_af | pmp_lfault | pmp_sfault;
+    wire trap_ex = trap_nm | ld_misal | st_misal | (ls_flt & ~xp0) | xp_lo;
+    assign xp_wait = xp0 & ~trap_nb & ~dwait;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)                 xp_ph_r <= 1'b0;
         else if (redirect_q)        xp_ph_r <= 1'b0;
         else if (!frz) begin
-            if (xp_wait)            begin xp_ph_r <= 1'b1; xp_pa <= d_paddr; xp_va <= {ea[31:12] + 20'd1, 12'h000}; end
+            if (xp_wait)            begin
+                xp_ph_r <= 1'b1; xp_pa <= d_paddr; xp_va <= {ea[31:12] + 20'd1, 12'h000};
+                xp_lf   <= ls_flt; xp_lpf <= d_pf;
+            end
             else if (!ex_stall)     xp_ph_r <= 1'b0;     // lenh da roi EX (xuong MEM hoac trap)
         end
     end
@@ -1154,9 +1166,10 @@ module rv32im_pipeline #(
         // loi load / store deu co tval = ea, va chi load / store moi co cac loi nay; dich nhanh lech (bad_target) chi o
         // lenh nhay / nhanh. Vi vay tval chon theo loai lenh, khong cho ket qua kiem TLB / PMP (cuoi duong dai nhat o EX).
         else begin
-            trap_tval = (idex_load | idex_store) ? dva : bad_target;
+            trap_tval = (idex_load | idex_store) ? ls_tval : bad_target;
             if (ld_misal)        trap_cause = 32'd4;
             else if (st_misal)   trap_cause = 32'd6;
+            else if (xp_lo)      trap_cause = xp_lpf ? (idex_store ? 32'd15 : 32'd13) : (idex_store ? 32'd7 : 32'd5);
             else if (d_pf)       trap_cause = idex_store ? 32'd15 : 32'd13;   // loi trang
             else if (d_af)       trap_cause = idex_store ? 32'd7 : 32'd5;     // loi truy cap
             else if (pmp_lfault) trap_cause = 32'd5;                          // load bi PMP cam
