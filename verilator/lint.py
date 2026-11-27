@@ -17,6 +17,7 @@ TARGETS = [("rv32im_pipeline", "rv32im_pipeline", CORE, []), ("rv32i_core", "rv3
            ("soc_top", "soc_top", SOC, []),
            ("pipeline C+MA+gshare+Zb*", "rv32im_pipeline", CORE, ["-GENABLE_C=1", "-GMISALIGNED=1", "-GGHR_BITS=4", "-GMUL_LAT=0"] + ZB),
            ("pipeline MUL_LAT=1, BTB/RAS 0", "rv32im_pipeline", CORE, ["-GMUL_LAT=1", "-GBTB_N=0", "-GRAS_N=0", "-GENABLE_C=1"]),
+           ("pipeline phat doi", "rv32im_pipeline", CORE, ["-DDUAL_FETCH", "-GDUAL=1", "-GPMP_N=0"]),
            ("icache 4 duong", "rv32_icache", ["rv32_icache.v"], ["-GWAYS=4", "-GLINES=8"]),
            ("icache 2 duong", "rv32_icache", ["rv32_icache.v"], ["-GWAYS=2", "-GLINES=4", "-GWORDS=2"]),
            ("dcache 4 duong, bo dem ghi 1", "rv32_dcache", ["rv32_dcache.v"], ["-GWAYS=4", "-GWBUF=1", "-GLINES=8"]),

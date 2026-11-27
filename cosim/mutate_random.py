@@ -13,7 +13,7 @@ M = [
     ("bypass WB -> EX bo di (toan hang A)", "rv32im_pipeline.v",
      "(idex_fa_wb ? memwb_val : idex_rs1_val)", "idex_rs1_val", [3]),
     ("bypass MEM -> EX bo di (toan hang B)", "rv32im_pipeline.v",
-     "idex_fb_mem ? exmem_result : (idex_fb_wb", "1'b0 ? exmem_result : (idex_fb_wb", [3]),
+     "(D & idex_fb_mem1) ? exmem1_result : idex_fb_mem ? exmem_result :", "(D & idex_fb_mem1) ? exmem1_result : 1'b0 ? exmem_result :", [3]),
     ("load nua tu lech khong trap", "rv32im_pipeline.v",
      "(((idex_funct3[1:0] == 2'b01) & ea_lo[0]) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));\n    wire st_misal",
      "(((idex_funct3[1:0] == 2'b01) & 1'b0) | ((idex_funct3[1:0] == 2'b10) & (ea_lo != 2'b00)));\n    wire st_misal", [3]),

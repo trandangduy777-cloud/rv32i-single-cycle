@@ -294,7 +294,13 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
                                                              "B: doan sai nhay ve dich nham", "P: LB khong mo rong dau",
                                                              "P: SH sai byte-enable", "P: dia chi load/store dung rs1 chua forward",
                                                              "B: ID nhay som khi dang stall load-use", "B: JAL khong nhay o ID",
-                                                             "B: dich nhay som la pc+4")] + [
+                                                             "B: dich nhay som la pc+4", "P: forward uu tien lenh cu (A)",
+                                                             "P: khong bypass WB->ID (rs1)", "P: khong bypass WB->ID (rs2)")] + [
+    # pipeline RV32IM: mux forwarding / bypass co them nguon lan 1 (DUAL, hang 0 khi DUAL = 0)
+    ("P: forward uu tien lenh cu (A)", "wire [31:0] op_a = (D & idex_fa_mem1) ? exmem1_result : idex_fa_mem ? exmem_result :",
+     "wire [31:0] op_a = (D & idex_fa_mem1) ? exmem1_result : (idex_fa_wb & ~D) ? memwb_val : idex_fa_mem ? exmem_result :"),
+    ("P: khong bypass WB->ID (rs1)", "(wb_we && memwb_rd == rs1)   ? memwb_val  : regs[rs1];", "regs[rs1];"),
+    ("P: khong bypass WB->ID (rs2)", "(wb_we && memwb_rd == rs2)   ? memwb_val  : regs[rs2];", "regs[rs2];"),
     # pipeline RV32IM: dich JAL / nhanh tinh san o IF (ifid_tgt)
     ("B: dich nhay som la pc+4", "ifid_tgt   <= pc + ((if_dec[6:0] == 7'b1101111) ? if_immj : if_immb);", "ifid_tgt   <= pc + 32'd4;"),
     # pipeline RV32IM: dia chi load / store tinh rieng (ea, dung chung cho PMP / MMU)
@@ -351,14 +357,41 @@ PIPEM_MUTATIONS = [m for m in PIPE_MUTATIONS if m[0] not in ("P: khong huy lenh 
 ]
 
 
+# --pipem --dual --mutate: chi cac dot bien cua phan phat doi (DUAL = 1)
+DUAL_MUTATIONS = [
+    ("D: bo kiem RAW giua o 0 va o 1", "& ~raw01 & ~lu1 &", "& ~lu1 &"),
+    ("D: bo load-use cua o 1", "& ~raw01 & ~lu1 &", "& ~raw01 &"),
+    ("D: o 0 la lenh bat ky", "wire        s0_ok   = (legal_imm | (legal_reg & ~f7_m) | is_lui | is_auipc | legal_load | legal_store) & ~ifid_ipf;",
+     "wire        s0_ok   = 1'b1;"),
+    ("D: o 1 nhan lenh M", "((i1[31:25] == 7'b0000000) | ((i1[31:25] == 7'b0100000)",
+     "((i1[31:25] == 7'b0000000) | (i1[31:25] == 7'b0000001) | ((i1[31:25] == 7'b0100000)"),
+    ("D: lan 1 khong bi huy khi lan 0 trap", "exmem1_valid <= idex1_valid & ~ex_stall & ~trap_ex;",
+     "exmem1_valid <= idex1_valid & ~ex_stall;"),
+    ("D: cong ghi lan 0 thang khi cung rd", "        if (wb_we)  regs[memwb_rd]  <= memwb_val;\n        if (wb1_we) regs[memwb1_rd] <= memwb1_val;",
+     "        if (wb1_we) regs[memwb1_rd] <= memwb1_val;\n        if (wb_we)  regs[memwb_rd]  <= memwb_val;"),
+    ("D: lan 0 khong lay ket qua lan 1 o MEM", "wire [31:0] op_a = (D & idex_fa_mem1) ? exmem1_result",
+     "wire [31:0] op_a = 1'b0 ? exmem1_result"),
+    ("D: lan 0 khong lay ket qua lan 1 o WB", "                       (D & idex_fa_wb1)  ? memwb1_val    : (idex_fa_wb ? memwb_val : idex_rs1_val);",
+     "                       1'b0 ? memwb1_val    : (idex_fa_wb ? memwb_val : idex_rs1_val);"),
+    ("D: forwarding lan 1 uu tien lan 0 cung tang", "wire [31:0] op_a1 = idex1_fa_m1 ? exmem1_result : idex1_fa_m0 ? exmem_result :",
+     "wire [31:0] op_a1 = idex1_fa_m0 ? exmem_result : idex1_fa_m1 ? exmem1_result :"),
+    ("D: bypass WB -> ID bo cong ghi thu hai", "                         (wb1_we && memwb1_rd == rs1) ? memwb1_val :",
+     "                         1'b0 ? memwb1_val :"),
+    ("D: pc + 8 ca khi con lenh o o 1", "(D & ~r1) ? (if_pred1 ? if_ptgt1 : pc + 32'd8)", "D ? (if_pred1 ? if_ptgt1 : pc + 32'd8)"),
+    ("D: o 1 van hop le khi lenh truoc doan nhay", "ifid_v1 <= r1 | ~if_pred;", "ifid_v1 <= 1'b1;"),
+    ("D: SRA lan 1 thanh dich logic", "3'b101: alu1 = idex1_f7_5 ? sra1 : (op_a1 >> sh1);", "3'b101: alu1 = op_a1 >> sh1;"),
+]
+
+
 def run_mutations(rtl, n, length, seed0, tmp, only=None, pipe=False, full_pipe=False):
     global MUL_LAT
     src = open(rtl).read()
     caught = skipped = 0
-    muts = [m for m in (PIPEM_MUTATIONS if full_pipe else PIPE_MUTATIONS if pipe else MUTATIONS) if not only or only.lower() in m[0].lower()]
+    muts = [m for m in ((DUAL_MUTATIONS if DUAL else PIPEM_MUTATIONS) if full_pipe else PIPE_MUTATIONS if pipe else MUTATIONS)
+            if not only or only.lower() in m[0].lower()]
     core_path = os.path.join(HERE, "..", "rv32i_core.v")
     core_src = open(core_path).read()
-    if full_pipe and (not only or only.lower() in "m:"):
+    if full_pipe and not DUAL and (not only or only.lower() in "m:"):
         muts = muts + [m for m in M_CORE_MUTATIONS if not only or only.lower() in m[0].lower()]
     for name, old, new in muts:
         # chi o --pipem, mutation "M:" moi nam trong file rv32i_core.v rieng; o single-cycle, rv32i_core.v chinh la file dang kiem

@@ -210,6 +210,16 @@ ENVCFG = [
 ]
 EXTRA += ENVCFG
 
+# phat doi (DUAL = 1, loi so 10): minstret phai dem ca lenh lan 1 (counters.S doc minstret, so voi Spike)
+DUALI = ["--only", "counters", "--core", "10", "--seeds", "2", "--tmax", "300000"]
+DUALM = [
+    ("phat doi: minstret khong dem lenh lan 1", "    wire        ir_wb1    = D & wb1_commit & memwb1_icnt & ~memwb1_skip;",
+     "    wire        ir_wb1    = 1'b0;", DUALI),
+    ("phat doi: doc minstret bo lenh lan 1 con o MEM", "+ {2'b0, D & exmem1_valid & exmem1_icnt} + {2'b0, ir_wb1};",
+     "+ {2'b0, ir_wb1};", DUALI),
+]
+EXTRA += DUALM
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -219,6 +229,7 @@ def main():
     ap.add_argument("--mmu", action="store_true", help="chi chay cac dot bien MMU")
     ap.add_argument("--mmu-ma", action="store_true", help="chi chay cac dot bien lech vat trang")
     ap.add_argument("--envcfg", action="store_true", help="chi chay cac dot bien menvcfg / senvcfg")
+    ap.add_argument("--dual", action="store_true", help="chi chay cac dot bien phat doi (minstret)")
     ap.add_argument("--range", default="", help="a:b = chi chay dot bien thu a..b-1 (chia lan chay dai)")
     a = ap.parse_args()
     muts = list(mutate_irq.MUTATIONS) + EXTRA
@@ -228,6 +239,8 @@ def main():
         muts = [m for m in muts if len(m) > 3 and m[3] is SUM]
     if a.mmu:
         muts = [m for m in muts if len(m) > 3 and m[3] is MMUA]
+    if a.dual:
+        muts = [m for m in muts if len(m) > 3 and m[0] in [e[0] for e in DUALM]]
     if a.envcfg:
         muts = [m for m in muts if len(m) > 3 and m[0] in [e[0] for e in ENVCFG]]
     if a.mmu_ma:
