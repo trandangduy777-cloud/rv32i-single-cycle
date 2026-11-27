@@ -15,7 +15,8 @@ STA=${STA:-sta}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC="$ROOT/flow/rv32imc_top.v $ROOT/rv32im_pipeline.v $ROOT/rv32i_core.v $ROOT/rv32c_decompress.v $ROOT/rv32_mmu.v $ROOT/rv32_tage.v"
 
-# ten:tham so chparam cua rv32im_pipeline
+# ten:tham so chparam cua flow/rv32imc_top.v (module dinh chuyen xuong rv32im_pipeline; chparam truc tiep tren
+# rv32im_pipeline khong co tac dung vi instance da gan tham so)
 CFGS="mac-dinh:
 su-mmu:-set SU 1 -set MMU 1
 tage:-set TAGE 1
@@ -32,7 +33,7 @@ echo "$CFGS" | while IFS=: read -r NAME P; do
   D="$ROOT/synth/build_cfg/$NAME"; mkdir -p "$D"; cd "$D"
   cp "$LIBDIR/$LIB" "$ROOT/synth/abc.script" .
   echo "[$K/$N] $NAME ($P): tong hop ..."
-  $YOSYS -q -l syn.log -p "read_verilog $SRC; chparam $P rv32im_pipeline; synth -flatten -top rv32imc_top; \
+  $YOSYS -q -l syn.log -p "read_verilog $SRC; chparam $P rv32imc_top; synth -flatten -top rv32imc_top; \
     dfflibmap -liberty $LIB; \
     abc -liberty $LIB -D 15000 -script abc.script -dont_use sg13g2_sighold -dont_use sg13g2_lgcp_1 -dont_use sg13g2_slgcp_1; \
     opt_clean; hilomap -singleton -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO; \
