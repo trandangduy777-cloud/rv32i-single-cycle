@@ -34,8 +34,6 @@ ZBFLAGS = "-DZBA=1 -DZBB=1 -DZBS=1 -DZBC=1 -DZICOND=1"
 CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("pipeline RV32I", "-DPIPE", ["rv32i_pipeline.v"], "rv32i"),
          ("pipeline RV32IM", "-DPIPE_FULL", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im_zifencei"),
-         # phat doi (DUAL = 1, PMP_N = 0): moi chu ky toi da 2 lenh hoan tat, vet in lan 0 roi lan 1
-         ("pipeline RV32IM phat doi", "-DPIPE_FULL -DDUAL_FETCH", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im_zifencei"),
          ("pipeline RV32IMC", "-DPIPE_FULL -DRVC", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v"],
           "rv32imc_zifencei"),
          # co cache lenh/du lieu va bo nho chung co do tre ngau nhien
@@ -71,7 +69,10 @@ CORES = [("single-cycle", "-DSC", ["rv32i_core.v"], "rv32im_zifencei"),
          ("RV32IMC TAGE", "-DPIPE_FULL -DRVC -DTAGEON", ["rv32im_pipeline.v", "rv32i_core.v", "rv32c_decompress.v",
           "rv32_tage.v"], "rv32imc_zifencei"),
          ("RV32IMC TAGE + cache 2x2, tre 1-8", "-DPIPE_FULL -DRVC -DTAGEON -DCACHE -DICL=2 -DICW=2 -DDCL=2 -DDCW=2",
-          CACHE_FILES + ["rv32_tage.v"], "rv32imc_zifencei", ["+lat=8", "+seed=19"])]
+          CACHE_FILES + ["rv32_tage.v"], "rv32imc_zifencei", ["+lat=8", "+seed=19"]),
+         # phat doi (DUAL = 1, PMP_N = 0): moi chu ky toi da 2 lenh hoan tat, vet in lan 0 roi lan 1. Dat cuoi danh sach de chi
+         # so cua cac loi cu (run_random --idx, mutate_random, run_vlcov) khong doi
+         ("pipeline RV32IM phat doi", "-DPIPE_FULL -DDUAL_FETCH", ["rv32im_pipeline.v", "rv32i_core.v"], "rv32im_zifencei")]
 
 
 def exts(march):

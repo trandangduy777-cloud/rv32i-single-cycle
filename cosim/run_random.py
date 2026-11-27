@@ -34,7 +34,9 @@ EXTRA_CORES = [
      rc.CACHE_FILES + ["rv32_tage.v"], "rv32imc_zifencei", ["+lat=5", "+seed=29"]),
 ]
 # cac loi TAGE them sau vao run_cosim.CORES dat cuoi danh sach de chi so cu (--core, run_vlcov, run_directed) khong doi
-ALL_CORES = [c for c in rc.CORES if "TAGE" not in c[0]] + EXTRA_CORES + [c for c in rc.CORES if "TAGE" in c[0]]
+# loi phat doi cung dat cuoi (sau TAGE) vi cung ly do
+ALL_CORES = ([c for c in rc.CORES if "TAGE" not in c[0] and "phat doi" not in c[0]] + EXTRA_CORES +
+             [c for c in rc.CORES if "TAGE" in c[0]] + [c for c in rc.CORES if "phat doi" in c[0]])
 
 
 def sh(cmd, **kw):
