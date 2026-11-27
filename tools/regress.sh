@@ -20,7 +20,7 @@ mkdir -p "$LOGDIR"
 NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet voi ISS, 17 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (17 loi)" \
-       "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
+       "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM (+ phat doi)" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
        "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (185 mutant)" \
        "riscv-formal: moi check RVFI" "riscv-formal: dot bien co y" "mutation Zba/Zbb/Zbs/Zbc/Zicond" \
@@ -77,7 +77,8 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
     9) python3 cosim/run_cosim.py "$RT" --spike "$SPIKE" ;;
     10) (cd verify && python3 run_verify.py --mutate --stop-on-fail) ;;
     11) (cd verify && python3 run_verify.py --pipe --mutate --stop-on-fail) ;;
-    12) (cd verify && python3 run_verify.py --pipem --mutate --stop-on-fail) ;;
+    12) (cd verify && python3 run_verify.py --pipem --mutate --stop-on-fail &&
+         python3 run_verify.py --pipem --dual --bpstress --mutate --n 300 --stop-on-fail) ;;
     13) step 13a && step 13b && step 13c ;;
     13a) python3 rvc/mutate_rvc.py "$RT" --spike "$SPIKE" ;;
     13b) python3 mul/mutate_mul.py ;;
