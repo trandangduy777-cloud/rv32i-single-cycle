@@ -76,7 +76,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `cosim/` | So từng lệnh của 3 lõi với Spike: testbench `tb_cosim.v`, script `run_cosim.py` (xem mục So vết với Spike); chương trình ngẫu nhiên `gen_rand.py` / `run_random.py` / `run_directed.py` / `mutate_random.py`, coverage `cov_func.py` / `run_vlcov.py` (xem mục Chương trình ngẫu nhiên và coverage) |
 | `formal/` | riscv-formal (RVFI) cho pipeline RV32IMC, chứng minh bộ chia (`formal/div`), ghép thời gian nhân/chia với ALTOPS (`formal/stitch`), check trap/MRET tự viết (`formal/custom`): `checks.cfg`, `checks_wfi.cfg`, `wrapper.sv`, `rvfi_csrw_check.sv`, `run.sh` (chạy check), `mutate.sh` (đột biến cố ý), `setup_ci.sh` (dựng yosys + SymbiYosys + Boolector); xem mục Chứng minh hình thức bằng riscv-formal |
 | `gls/` | Mô phỏng gate-level netlist sau P&R (`run_gls.sh`, `make_func_lib.py`); netlist không được commit |
-| `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow |
+| `synth/` | Tổng hợp với thư viện IHP SG13G2 và STA trước P&R bằng OpenSTA, so sánh nhanh các cấu hình không cần chạy cả flow (`run_cfg_sta.sh`: 7 cấu hình một lần) |
 | `cosim/irq/` | So vết với Spike khi có ngắt: harness C++ dùng Spike làm thư viện, chương trình bão ngắt, mutation test |
 | `tools/` | `setup_env.sh` dựng môi trường kiểm chứng như CI (iverilog, GCC RISC-V, Spike ghim phiên bản, riscv-tests, yosys + z3); `regress.sh` chạy regression theo bước (`nhanh`, `dot-bien`, `tat-ca`, `may-2-nhan` hoặc số bước / bước con như `16b`), in một dòng kết quả mỗi bước; `check_mutants.py`, `check_commits.py`: chốt chặn của CI (mục Quy trình commit) |
 | `soc/` | SoC nhỏ quanh pipeline RV32IMC: bus ánh xạ bộ nhớ và bản bus AXI4 đầy đủ (interconnect, DMA 2 kênh, bộ kiểm giao thức, `soc/axi/`), ROM/RAM, UART, GPIO, CLINT, PLIC, SYSCON, phần mềm C (crt0, linker script), FreeRTOS V11.1.0 chạy trên RTL, testbench, mutation test và STA trước P&R (xem mục SoC nhỏ) |
@@ -89,7 +89,7 @@ Thêm: `FENCE` (coi như NOP), `FENCE.I` (Zifencei: pipeline RV32IM xoá cache l
 Phần mở rộng M: `MUL MULH MULHSU MULHU DIV DIVU REM REMU`.
 Phần mở rộng C (chỉ pipeline RV32IM, `ENABLE_C = 1`): mọi lệnh nén RV32C không dùng số thực.
 Bộ đếm (chỉ pipeline RV32IM, `ZICNTR = 1`, mặc định bật): Zicntr `mcycle`/`minstret` (và `cycle`/`instret`), Zihpm với `HPM_N` (mặc định 4) bộ đếm sự kiện `mhpmcounter3..`, `mcountinhibit`.
-Zba / Zbb / Zbs / Zbc / Zicond (chỉ pipeline RV32IM, tham số `ZBA`, `ZBB`, `ZBS`, `ZBC`, `ZICOND`, mặc định tắt): kiểm bằng so vết ISS, so vết Spike, riscv-tests `rv32uzb*` và `zb/mutate_zb.py`; chưa qua riscv-formal, chưa có số timing (chỉ diện tích trước P&R).
+Zba / Zbb / Zbs / Zbc / Zicond (chỉ pipeline RV32IM, tham số `ZBA`, `ZBB`, `ZBS`, `ZBC`, `ZICOND`, mặc định tắt): kiểm bằng so vết ISS, so vết Spike, riscv-tests `rv32uzb*` và `zb/mutate_zb.py`; chưa qua riscv-formal. Diện tích và timing trước P&R ở mục STA theo cấu hình (đạt 15 ns, chưa có số sau flow).
 
 ## Phần mở rộng M
 - Bộ nhân/chia lặp, mỗi chu kỳ xử lý 1 bit, một lệnh M mất 34 chu kỳ (1 nhận toán hạng, 32 lặp, 1 hoàn tất). Trong lúc đó lõi giữ nguyên PC (stall).
@@ -169,6 +169,25 @@ Sau khi thêm S/U, MMU Sv32 và TAGE, ba cấu hình lớn trượt 15 ns khá x
 
 - Kiểm: toàn bộ hồi quy (`tools/regress.sh tat-ca`), gồm so vết với Spike khi có ngắt / trap / S/U / MMU, riscv-formal, CoreMark và kiểm từng chu kỳ của bộ dự đoán (`perf_bpred --check`) cho số chu kỳ không đổi trên các bench không có trap. Các chuỗi đột biến cũ theo dòng RTL mới; thêm 1 đột biến cho đích JAL tính ở IF (dùng nhầm imm của nhánh).
 - Cấu hình `TAGE = 1` không có S/U còn −0,468 ns, đúng trên bộ chia lặp `STEPS = 2` (hai bộ trừ 33 bit nối tiếp); ABC cho kết quả dao động khoảng ±0,6 ns giữa các lần tổng hợp và tổng hợp trước P&R của yosys dùng bộ cộng ripple-carry, nên không sửa bộ chia ở đây. Nếu flow LibreLane vẫn trượt trên đường này thì giảm về `STEPS = 1` hoặc đăng ký giữa hai bước.
+
+### STA theo cấu hình, gồm Zb* (27/11/2026)
+
+`synth/run_cfg_sta.sh <thư mục lib> [cấu hình ...]` tổng hợp và chạy STA cho từng cấu hình tham số của pipeline với cùng thư viện, góc và ràng buộc như trên (SG13G2 góc chậm 1,08 V 125 °C, 15 ns, trễ vào/ra 3 ns, bỏ đường reset), in diện tích, slack xấu nhất kèm tên thanh ghi RTL đầu / cuối đường, và slack xấu nhất vào thanh ghi kết quả EX `exmem_result` (đích chung của ALU, Zb*, nhảy, CSR, địa chỉ load / store). Kết quả lưu ở `synth/build_cfg/<cấu hình>/`. RV32IMC, `MUL_LAT = 2`, `HPM_N = 4`, `PMP_N = 8`:
+
+| Cấu hình | Diện tích cell | Slack xấu nhất | Đường xấu nhất | Slack vào `exmem_result` |
+|---|---|---|---|---|
+| Mặc định | 499.445 µm² | +0,008 ns | bộ chia lặp | +2,098 ns |
+| `SU = 1`, `MMU = 1` | 629.100 µm² | +0,141 ns | `idex_fa_wb` → `exmem_fence` | +1,142 ns |
+| `TAGE = 1` | 902.752 µm² | −0,468 ns | bộ chia lặp | +0,863 ns |
+| `SU`, `MMU`, `TAGE` | 1.031.298 µm² | +0,033 ns | `minstret_r` → `mcycle_r` | +0,681 ns |
+| Zba + Zbb + Zbs + Zicond | 520.821 µm² (+4,3 %) | +0,191 ns | bộ chia lặp | +1,042 ns |
+| Chỉ Zbc | 522.657 µm² (+4,6 %) | +0,312 ns | bộ chia lặp | +1,131 ns |
+| Zb* đầy đủ (+ Zicond) | 544.746 µm² (+9,1 %) | +0,220 ns | bộ chia lặp | +1,330 ns |
+
+- Zb* đạt 15 ns trước P&R; đường xấu nhất của cả ba cấu hình Zb* vẫn là bộ chia, không phải logic Zb*. Thêm Zb* làm đường vào `exmem_result` mất khoảng 1 ns slack (2,10 → 1,04-1,33 ns): khối Zb* là một nhánh nữa của bộ chọn kết quả EX, nằm sau forwarding. Còn dư hơn 1 ns nên không cần chia tầng.
+- Zbc (nhân không nhớ 32 × 32) tốn diện tích ngang cả Zba + Zbb + Zbs + Zicond cộng lại nhưng không làm đường vào EX xấu hơn chúng. Bản đầy đủ có slack vào EX tốt hơn bản không Zbc 0,3 ns: nằm trong mức dao động khoảng ±0,6 ns của ABC, không nên đọc là Zbc làm mạch nhanh hơn.
+- Hai lần chạy trên cùng RTL cho đúng cùng con số (ABC tất định). Nhưng khi sửa RTL ở phần không có trong cấu hình đang đo (đã gặp: thêm logic chỉ sinh ra khi `MISALIGNED = 1`), Zb* đầy đủ đổi từ +0,220 thành −0,211 ns, vẫn trên bộ chia: ABC chọn cấu trúc khác. Vì vậy chỉ so các cấu hình trong cùng một lần chạy, và coi chênh lệch dưới khoảng 0,6 ns là không có ý nghĩa.
+- Vẫn là số trước P&R, adder ripple-carry của yosys (bi quan); con số chốt chờ flow LibreLane.
 
 Hiệu năng (pipeline RV32IM(C), BTB 16 + RAS 4, bộ nhớ tổ hợp):
 
