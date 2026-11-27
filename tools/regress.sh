@@ -19,7 +19,7 @@ mkdir -p "$LOGDIR"
 
 NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet voi ISS, 17 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
-       "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (17 loi)" \
+       "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (18 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM (+ phat doi)" "mutation lenh C, bo nhan, du doan nhanh" \
        "mutation cache" "so vet voi Spike khi co ngat" "mutation ngat qua so vet Spike" \
        "SoC: bus, UART, GPIO, timer, chuong trinh C" "mutation SoC (185 mutant)" \
