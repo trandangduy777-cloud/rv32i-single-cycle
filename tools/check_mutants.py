@@ -50,7 +50,8 @@ def collect():
 
     rv = load("verify/run_verify.py")
     for lst, f in ((rv.MUTATIONS, "rv32i_core.v"), (rv.PIPE_MUTATIONS, "rv32i_pipeline.v"),
-                   (rv.PIPEM_MUTATIONS, "rv32im_pipeline.v"), (rv.M_CORE_MUTATIONS, "rv32i_core.v")):
+                   (rv.PIPEM_MUTATIONS, "rv32im_pipeline.v"), (rv.M_CORE_MUTATIONS, "rv32i_core.v"),
+                   (getattr(rv, "DUAL_MUTATIONS", []), "rv32im_pipeline.v")):
         for name, old, _new in lst:
             add("verify/run_verify.py", name, [f], old)
 

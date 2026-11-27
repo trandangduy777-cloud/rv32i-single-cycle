@@ -17,7 +17,7 @@ SPIKE=${SPIKE:-/opt/spike/bin/spike}
 LOGDIR=${LOGDIR:-/tmp/regress_logs}
 mkdir -p "$LOGDIR"
 
-NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet voi ISS, 15 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
+NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet voi ISS, 17 cau hinh" "bo nhan: thu het W <= 10, W = 33" \
        "chung minh hinh thuc bo nhan" "ngat + mutation ngat" "giai nen lenh C" "riscv-tests" \
        "bench, du doan nhanh dung tung chu ky, CoreMark 1 vong" "so vet voi Spike (17 loi)" \
        "mutation single-cycle" "mutation pipeline RV32I" "mutation pipeline RV32IM" "mutation lenh C, bo nhan, du doan nhanh" \
@@ -37,7 +37,7 @@ NAMES=("kiem chuoi goc dot bien + YAML CI" "testbench tu kiem tra 3 loi" "so vet
 
 # Thoi gian do 26/11/2026 tren may 2 nhan, moi loi chay mot minh (run_irq_cosim.py --core N): loi 0: 13 phut, 1: 46, 2: 15,
 # 3: 5, 4: 48, 5: 49, 6: 17, 7: 4, 8: 64 -> 15a = 8 (64), 15b = 1 3 (51), 15c = 6 7 4 (69), 15d = 0 2 5 (77).
-# loi 9 (MMU + lech phan cung + cache, them 27/11): 62 phut, chay rieng o 15e. Doi nhom bang bien IRQ_CORES_A..E neu them loi. Buoc 16 (mutate_irq_cosim.py, 122 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
+# loi 9 (MMU + lech phan cung + cache, them 27/11): 62 phut, chay rieng o 15e. Doi nhom bang bien IRQ_CORES_A..E neu them loi. Buoc 16 (mutate_irq_cosim.py, 124 dot bien): CI do 0:14 = 17-23 phut, 14:21 ~ 17-25,
 # 21:28 ~ 22-32, 28:42 = 22, 42: = 10 (may 2 nhan cham hon khoang 1,5 lan).
 declare -A SUBNAMES=(
     [13a]="mutation lenh C (so vet Spike)" [13b]="mutation bo nhan song song" [13c]="mutation du doan nhanh"
@@ -61,7 +61,8 @@ step() {   # step <so>: chay buoc, tra ve 0 neu dat
        echo "3/3 PASS" ;;
     2) (cd verify && for o in "" "--pipe" "--pipem" "--pipem --cache" "--pipem --cache --ways 2" "--pipem --ma" "--pipem --ma --cache" \
                "--pipem --bpstress" "--pipem --bpstress --cache" "--pipem --mul-lat 0" "--pipem --mul-lat 1" "--pipem --mul-lat 1 --cache" \
-               "--pipem --zb all --zb-probe" "--pipem --zb zba,zbs --zb-probe --cache" "--pipem --zb zbb,zbc,zicond --zb-probe --bpstress --mul-lat 0"; do
+               "--pipem --zb all --zb-probe" "--pipem --zb zba,zbs --zb-probe --cache" "--pipem --zb zbb,zbc,zicond --zb-probe --bpstress --mul-lat 0" \
+               "--pipem --dual" "--pipem --dual --bpstress"; do
            python3 run_verify.py $o --n 60 > /tmp/r2 2>&1; l=$(head -1 /tmp/r2); echo "  [$o] $l"
            echo "$l" | grep -q "that bai: 0$" || exit 1
        done) ;;

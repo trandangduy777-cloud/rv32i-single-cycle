@@ -23,7 +23,9 @@ tage:-set TAGE 1
 su-mmu-tage:-set SU 1 -set MMU 1 -set TAGE 1
 zb-khong-zbc:-set ZBA 1 -set ZBB 1 -set ZBS 1 -set ZICOND 1
 zbc:-set ZBC 1
-zb-day-du:-set ZBA 1 -set ZBB 1 -set ZBS 1 -set ZBC 1 -set ZICOND 1"
+zb-day-du:-set ZBA 1 -set ZBB 1 -set ZBS 1 -set ZBC 1 -set ZICOND 1
+rv32im-pmp0:-set ENABLE_C 0 -set PMP_N 0
+phat-doi:-set ENABLE_C 0 -set PMP_N 0 -set DUAL 1"
 
 WANT="$*"
 N=$(echo "$CFGS" | wc -l); K=0
@@ -33,7 +35,8 @@ echo "$CFGS" | while IFS=: read -r NAME P; do
   D="$ROOT/synth/build_cfg/$NAME"; mkdir -p "$D"; cd "$D"
   cp "$LIBDIR/$LIB" "$ROOT/synth/abc.script" .
   echo "[$K/$N] $NAME ($P): tong hop ..."
-  $YOSYS -q -l syn.log -p "read_verilog $SRC; chparam $P rv32imc_top; synth -flatten -top rv32imc_top; \
+  DEFS=""; case "$P" in *DUAL*) DEFS="-DDUAL_FETCH" ;; esac   # phat doi: them cong imem_data2
+  $YOSYS -q -l syn.log -p "read_verilog $DEFS $SRC; chparam $P rv32imc_top; synth -flatten -top rv32imc_top; \
     dfflibmap -liberty $LIB; \
     abc -liberty $LIB -D 15000 -script abc.script -dont_use sg13g2_sighold -dont_use sg13g2_lgcp_1 -dont_use sg13g2_slgcp_1; \
     opt_clean; hilomap -singleton -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO; \
