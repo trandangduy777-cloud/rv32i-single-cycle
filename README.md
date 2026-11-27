@@ -59,7 +59,7 @@ Chi tiết từng phần nằm ở các mục bên dưới; giới hạn và cá
 | `irq/` | Kiểm chứng ngắt và WFI: chương trình `irq_test.S`, testbench `tb_irq.v`, mutation test `mutate_irq.py` (xem mục Ngắt) |
 | `config_pipeline.json` | Cấu hình LibreLane cho pipeline RV32I thuần (`CLOCK_PERIOD` = 14 ns, đã chạy đạt timing) |
 | `config_pipeline_full.json` | Cấu hình LibreLane cho pipeline đầy đủ (`CLOCK_PERIOD` = 15 ns, đã chạy đạt timing) |
-| `config_pipeline_c.json`, `config_cached.json`, `flow/` | Cấu hình LibreLane và module đỉnh cho bản RV32IMC (đạt 15 ns) và bản có cache (không đạt), script `flow/run_flow.sh` |
+| `config_pipeline_c.json`, `config_su_mmu.json`, `config_zb.json`, `config_cached.json`, `flow/` | Cấu hình LibreLane và module đỉnh cho bản RV32IMC (mặc định, S/U + MMU, Zb* đầy đủ; bản cũ đạt 15 ns) và bản có cache (không đạt), script `flow/run_flow.sh` |
 | `prog_base.hex` | Chương trình test chỉ gồm RV32I thuần (229 lệnh), dùng cho pipeline |
 | `asm.py` | Assembler mini sinh `prog.hex` (823 lệnh tự kiểm tra, gồm CSR/trap và M) |
 | `verify/` | Mô hình tham chiếu (ISS), bộ sinh chương trình ngẫu nhiên, so vết từng lệnh, mutation test (xem `verify/README.md`) |
@@ -655,6 +655,28 @@ Số liệu dưới đây đo trên bản RV32I thuần, trước khi thêm CSR,
 Ở clock 20 ns thiết kế không đạt setup ở góc chậm (slack -1,813 ns), nên chu kỳ được nới lên 24 ns.
 
 ## Flow cho bản RV32IMC và bản có cache
+
+### Chạy lại flow cho RTL hiện tại (chuẩn bị 27/11/2026, chưa chạy)
+
+Ba cấu hình trên cùng module đỉnh `flow/rv32imc_top.v`. Module đỉnh nay nhận tham số `SU`, `MMU`, `TAGE`, `MISALIGNED`, `ZBA` / `ZBB` / `ZBS` / `ZBC` / `ZICOND` và chuyển xuống pipeline; LibreLane đặt chúng qua `SYNTH_PARAMETERS` (chparam trên module đỉnh):
+
+| File | Cấu hình | STA trước P&R (mục STA theo cấu hình) |
+|---|---|---|
+| `config_pipeline_c.json` | mặc định (có PMP 8 mục, bộ đếm, BTB + RAS) | 499.445 µm², +0,008 ns |
+| `config_su_mmu.json` | `SU = 1`, `MMU = 1` | 629.100 µm², +0,141 ns |
+| `config_zb.json` | Zba + Zbb + Zbs + Zbc + Zicond | 544.746 µm², +0,220 ns |
+
+Lệnh (trong container có LibreLane và PDK IHP SG13G2, ví dụ image `isaiassh/unic-cass-tools`, từ thư mục gốc repo):
+
+```
+bash flow/run_flow.sh --check                 # vài giây: kiểm JSON và danh sách file Verilog
+bash flow/run_flow.sh                         # cả 3 cấu hình, lần lượt
+bash flow/run_flow.sh config_su_mmu.json      # một cấu hình
+```
+
+- Thanh tiến độ của LibreLane (bước hiện tại / tổng số bước) in thẳng ra terminal, không bị chuyển vào file; script thêm dòng `[cấu hình k/n]`, giờ bắt đầu, số phút đã chạy và mã thoát của từng cấu hình.
+- Cuối cùng in bảng tóm tắt (số cell, diện tích cell, WNS setup / hold, số vi phạm, DRC, LVS) và ghi vào `results/flow_summary.md`; `metrics.json` của từng cấu hình chép vào `results/flow_<tên>/`. Cấu hình lỗi thì 40 dòng cuối của log nằm ở `results/flow_<tên>/log_tail.txt` và script vẫn chạy tiếp cấu hình sau.
+- Đã kiểm ở đây: `--check` đạt, yosys dựng phân cấp đúng cho cả 3 bộ tham số (bản S/U + MMU có `rv32_mmu`), và chạy toàn bộ script với một `librelane` giả (một cấu hình cố ý lỗi) để kiểm bảng tóm tắt; chưa chạy LibreLane thật trên RTL hiện tại.
 
 Chạy bằng `flow/run_flow.sh` (LibreLane, IHP SG13G2, SDC mặc định, clock 15 ns), số liệu trong `results/metrics_rv32imc_15ns.json` và `results/metrics_rv32imc_cached_15ns.json`. Module đỉnh: `flow/rv32imc_top.v` (lõi với `ENABLE_C = 1`, bộ nhớ ngoài như các lần flow trước) và `flow/rv32imc_cached_top.v` (lõi + cache lệnh + cache dữ liệu 16 dòng × 4 từ + bộ phân xử, ra ngoài một bus bộ nhớ).
 
