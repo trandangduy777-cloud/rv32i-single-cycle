@@ -7,7 +7,10 @@ module soc_top #(
     parameter [15:0] UART_DIV    = 16'd434,               // 50 MHz / 115200
     parameter        MTIME_PRESC = 1,
     parameter        GPIO_N      = 16,
-    parameter        UART_RX_DEPTH = 8                    // FIFO nhan cua UART
+    parameter        UART_RX_DEPTH = 8,                   // FIFO nhan cua UART
+    parameter        SU = 0, parameter MMU = 0,           // 1: che do S / U (+ MMU Sv32); can bien dich loi voi -DSEIP_PIN de noi SEIP phan cung
+    parameter        CLINT_STD = 0,                       // 1: CLINT bo cuc chuan 64 KB (OpenSBI / Linux)
+    parameter        PLIC_S = 0                           // 1: PLIC co context S (dau ra eip_s -> mip.SEIP)
 ) (
     input  wire              clk,
     input  wire              rst_n,
@@ -26,23 +29,28 @@ module soc_top #(
     wire [31:0] imem_addr, imem_data, dmem_addr, dmem_wdata, dmem_rdata;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we, dmem_re;
+    wire        irq_sext;
     wire        irq_timer, irq_soft, irq_ext, irq_uart, irq_uart_rx, irq_uart_tx, irq_gpio, sel_plic;
     wire [31:0] plic_rd;
 
-    rv32im_pipeline #(.ENABLE_C(1)) u_core (
+    rv32im_pipeline #(.ENABLE_C(1), .SU(SU), .MMU(MMU)) u_core (
         .clk(clk), .rst_n(rst_n),
         .imem_addr(imem_addr), .imem_data(imem_data), .imem_ready(1'b1),
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata), .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
         .dmem_re(dmem_re), .dmem_fence(), .icache_flush(), .dmem_rdata(dmem_rdata), .dmem_ready(1'b1),
         .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
+`ifdef SEIP_PIN
+        , .irq_sext(irq_sext)
+`endif
     );
 
     wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err;
     wire [31:0] rom_rd, ram_rd, clint_rd, uart_rd, gpio_rd, sys_rd, rom_idata, ram_idata;
 
-    soc_bus #(.ROM_AW(ROM_AW), .RAM_AW(RAM_AW)) u_bus (
+    wire clint_hit; wire [4:2] clint_ra;
+    soc_bus #(.ROM_AW(ROM_AW), .RAM_AW(RAM_AW), .CLINT_STD(CLINT_STD)) u_bus (
         .daddr(dmem_addr), .dwe(dmem_we), .dre(dmem_re),
-        .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys), .sel_plic(sel_plic),
+        .sel_rom(sel_rom), .sel_ram(sel_ram), .sel_clint(sel_clint), .clint_hit(clint_hit), .clint_ra(clint_ra), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys), .sel_plic(sel_plic),
         .rom_rd(rom_rd), .ram_rd(ram_rd), .clint_rd(clint_rd), .uart_rd(uart_rd), .gpio_rd(gpio_rd), .sys_rd(sys_rd), .plic_rd(plic_rd),
         .rdata(dmem_rdata), .bus_err(bus_err), .iaddr(imem_addr), .i_sel_rom(i_sel_rom), .i_sel_ram(i_sel_ram)
     );
@@ -58,7 +66,7 @@ module soc_top #(
     );
 
     rv32_mtimer #(.PRESCALE(MTIME_PRESC)) u_clint (
-        .clk(clk), .rst_n(rst_n), .sel(sel_clint), .addr(dmem_addr[4:2]), .we(dmem_we), .wstrb(dmem_wstrb),
+        .clk(clk), .rst_n(rst_n), .sel(clint_hit), .addr(clint_ra), .we(dmem_we), .wstrb(dmem_wstrb),
         .wdata(dmem_wdata), .rdata(clint_rd), .irq(irq_timer), .msip(irq_soft)
     );
 
@@ -78,8 +86,8 @@ module soc_top #(
     );
 
     // PLIC: nguon 1 = UART RX, 2 = UART TX san sang, 3 = GPIO, 4..7 = ext_irq[0..3]; dau ra la irq_ext (mip.MEIP) cua loi
-    soc_plic #(.NSRC(7), .PRIO_W(3)) u_plic (
+    soc_plic #(.NSRC(7), .PRIO_W(3), .S_CTX(PLIC_S)) u_plic (
         .clk(clk), .rst_n(rst_n), .sel(sel_plic), .addr(dmem_addr[21:2]), .we(dmem_we), .re(dmem_re), .wstrb(dmem_wstrb),
-        .wdata(dmem_wdata), .rdata(plic_rd), .src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx}), .eip(irq_ext)
+        .wdata(dmem_wdata), .rdata(plic_rd), .src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx}), .eip(irq_ext), .eip_s(irq_sext)
     );
 endmodule

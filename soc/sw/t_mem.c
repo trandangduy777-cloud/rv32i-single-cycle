@@ -46,7 +46,11 @@ int main(void) {
     *(volatile u32 *)0x10004000u = 5;                        /* sau het RAM: bo qua + dem */
     chk("be3", SYS_BUSERR, 3);
     chk("ram_alias", *(volatile u32 *)0x10004000u, 0);
+#ifdef CLINT_STD
+    *(volatile u32 *)0x02010000u = 5;                        /* sau 64 KB CLINT: khong anh xa lai */
+#else
     *(volatile u32 *)0x02000040u = 5;                        /* sau 32 byte CLINT: khong anh xa lai */
+#endif
     chk("be5", SYS_BUSERR, 5);
     chk("uart_win", *(volatile u32 *)0x20000FF0u, 0);        /* cuoi cua so UART: doc 0 va khong dem */
     chk("gap", *(volatile u32 *)0x20003000u, 0);

@@ -19,11 +19,19 @@ typedef unsigned char u8;
 #define REG16(a)     (*(volatile unsigned short *)(a))
 
 #define CLINT_BASE   0x02000000u
+#ifdef CLINT_STD   /* SoC cau hinh Linux (CLINT_STD = 1): bo cuc CLINT chuan 64 KB cua OpenSBI / Linux */
+#define MTIME_LO     REG(CLINT_BASE + 0xBFF8)
+#define MTIME_HI     REG(CLINT_BASE + 0xBFFC)
+#define MTIMECMP_LO  REG(CLINT_BASE + 0x4000)
+#define MTIMECMP_HI  REG(CLINT_BASE + 0x4004)
+#define MSIP         REG(CLINT_BASE + 0x0)
+#else
 #define MTIME_LO     REG(CLINT_BASE + 0x0)
 #define MTIME_HI     REG(CLINT_BASE + 0x4)
 #define MTIMECMP_LO  REG(CLINT_BASE + 0x8)
 #define MTIMECMP_HI  REG(CLINT_BASE + 0xC)
 #define MSIP         REG(CLINT_BASE + 0x10)
+#endif
 
 #define UART_BASE    0x20000000u
 #define UART_TXDATA  REG(UART_BASE + 0x00)

@@ -9,7 +9,7 @@ import run_soc
 ROOT = run_soc.ROOT
 # (id, file, old, new, mo ta). old phai xuat hien dung 1 lan trong file.
 M = []
-def m(i, f, old, new, d): M.append((i, f, old, new, d))
+def m(i, f, old, new, d, su=False): M.append((i, f, old, new, d, su))
 
 # ---- ROM / RAM ----
 m("ROM1", "soc_rom.v", "assign i_data = i_addr[1] ?", "assign i_data = !i_addr[1] ?", "ROM: chon nua tu theo bit 1 bi dao")
@@ -25,12 +25,12 @@ m("RAM6", "soc_ram.v", "if (wstrb[3]) mem[w][31:24] <= wdata[31:24];", "if (wstr
 # ---- BUS ----
 m("BUS1", "soc_bus.v", "assign sel_rom   = (daddr[31:ROM_AW] == {(32-ROM_AW){1'b0}});", "assign sel_rom   = (daddr[31:ROM_AW+1] == {(31-ROM_AW){1'b0}});", "bus: ROM rong gap doi")
 m("BUS2", "soc_bus.v", "assign sel_ram   = (daddr[31:RAM_AW] == RAM_BASE[31:RAM_AW]);", "assign sel_ram   = (daddr[31:RAM_AW+1] == RAM_BASE[31:RAM_AW+1]);", "bus: RAM rong gap doi")
-m("BUS3", "soc_bus.v", "(daddr[31:5]  == 27'h0100000)", "(daddr[31:6]  == 26'h0080000)", "bus: CLINT rong 64 byte")
+m("BUS3", "soc_bus.v", "(daddr[31:5] == 27'h0100000)", "(daddr[31:6] == 26'h0080000)", "bus: CLINT rong 64 byte")
 m("BUS4", "soc_bus.v", "(daddr[31:12] == 20'h20000)", "(daddr[31:13] == 19'h10000)", "bus: UART chiem ca cua so GPIO")
 m("BUS5", "soc_bus.v", "20'h20001", "20'h20003", "bus: GPIO sai dia chi")
 m("BUS6", "soc_bus.v", "20'h20002", "20'h20012", "bus: SYSCON sai dia chi")
 m("BUS7", "soc_bus.v", "({32{sel_gpio}} & gpio_rd)", "(gpio_rd)", "bus: du lieu GPIO khong bi che theo sel")
-m("BUS8", "soc_bus.v", "({32{sel_clint}} & clint_rd)", "32'd0", "bus: khong doc duoc CLINT")
+m("BUS8", "soc_bus.v", "({32{clint_hit}} & clint_rd)", "32'd0", "bus: khong doc duoc CLINT")
 m("BUS9", "soc_bus.v", "((dre | dwe) & ~any_sel) | (dwe & sel_rom)", "((dre | dwe) & ~any_sel)", "bus: ghi ROM khong bao loi")
 m("BUS10", "soc_bus.v", "((dre | dwe) & ~any_sel) | (dwe & sel_rom)", "(dwe & ~any_sel) | (dwe & sel_rom)", "bus: doc ngoai vung khong bao loi")
 m("BUS11", "soc_bus.v", "| sel_gpio | sel_sys | sel_plic;", "| sel_gpio | sel_plic;", "bus: SYSCON bi coi la ngoai vung")
@@ -43,12 +43,12 @@ m("PL1", P, "(prio[j] > best_pr)", "(prio[j] >= best_pr)", "PLIC: hoa chon ID lo
 m("PL2", P, "(prio[j] > thr)", "(prio[j] >= thr)", "PLIC: threshold dung >= thay vi >")
 m("PL3", P, "if (pend[j] & en[j] &", "if (pend[j] &", "PLIC: bo qua enable khi chon nguon")
 m("PL4", P, "if (pend[j] & en[j] &", "if (en[j] &", "PLIC: chon ca nguon khong pending")
-m("PL5", P, "& (cid <= NSRC) & en[cid[4:0]] & infl[cid[4:0]];", "& (cid <= NSRC) & infl[cid[4:0]];", "PLIC: complete khong can enable")
-m("PL6", P, "(cid <= NSRC) & en", "(cid < NSRC) & en", "PLIC: complete bo qua nguon cuoi")
-m("PL7", P, "begin pend[i] <= 1'b0; infl[i] <= 1'b1; end", "begin pend[i] <= 1'b0; end", "PLIC: claim khong danh dau dang xu ly")
-m("PL8", P, "begin pend[i] <= 1'b0; infl[i] <= 1'b1; end", "begin infl[i] <= 1'b1; end", "PLIC: claim khong xoa pending")
+m("PL5", P, "& (cid <= NSRC) & en[cid[4:0]]   & infl[cid[4:0]];", "& (cid <= NSRC) & infl[cid[4:0]];", "PLIC: complete khong can enable")
+m("PL6", P, "(cid <= NSRC) & en[cid", "(cid < NSRC) & en[cid", "PLIC: complete bo qua nguon cuoi")
+m("PL7", P, "claim && best_id == i) begin pend[i] <= 1'b0; infl[i] <= 1'b1; end", "claim && best_id == i) begin pend[i] <= 1'b0; end", "PLIC: claim khong danh dau dang xu ly")
+m("PL8", P, "claim && best_id == i) begin pend[i] <= 1'b0; infl[i] <= 1'b1; end", "claim && best_id == i) begin infl[i] <= 1'b1; end", "PLIC: claim khong xoa pending")
 m("PL9", P, "if (src[i] & ~infl[i] & ~pend[i]) pend[i] <= 1'b1;", "if (src[i] & ~pend[i]) pend[i] <= 1'b1;", "PLIC: cong khong chan nguon dang xu ly")
-m("PL10", P, "wr & a_cc & wstrb[0] &", "wr & a_cc &", "PLIC: complete bo qua wstrb")
+m("PL10", P, "wr & a_cc   & wstrb[0] &", "wr & a_cc   &", "PLIC: complete bo qua wstrb")
 m("PL11", P, "prio[pidx] <= wdata[PRIO_W-1:0];", "prio[pidx] <= {1'b0, wdata[PRIO_W-2:0]};", "PLIC: uu tien mat bit cao")
 m("PL12", P, "(w[9:0] <= NSRC);", "(w[9:0] < NSRC);", "PLIC: nguon cuoi khong co thanh ghi uu tien")
 m("PL13", P, "(w[9:0] >= 10'd1)", "(w[9:0] >= 10'd0)", "PLIC: co thanh ghi uu tien cho nguon 0")
@@ -57,7 +57,7 @@ m("PL15", P, "wire a_en   = (w == 20'h00800);", "wire a_en   = (w == 20'h00801);
 m("PL16", P, "wire a_thr  = (w == 20'h80000);", "wire a_thr  = (w == 20'h80002);", "PLIC: dia chi threshold sai")
 m("PL17", P, "wire a_cc   = (w == 20'h80001);", "wire a_cc   = (w == 20'h80003);", "PLIC: dia chi claim sai")
 m("PL18", P, "wire claim = sel & re & a_cc;", "wire claim = sel & a_cc;", "PLIC: doc khong re cung claim")
-m("PL19", P, "if (wstrb[0]) for (i = 1; i <= 7;", "if (wstrb[1]) for (i = 1; i <= 7;", "PLIC: byte 0 cua enable theo wstrb sai")
+m("PL19", P, "if (wstrb[0]) for (i = 1; i <= 7;  i = i + 1) if (i <= NSRC) en[i]", "if (wstrb[1]) for (i = 1; i <= 7;  i = i + 1) if (i <= NSRC) en[i]", "PLIC: byte 0 cua enable theo wstrb sai")
 m("PL20", P, "for (i = 1; i <= 7;  i = i + 1) if (i <= NSRC) en[i] <= wdata[i];", "for (i = 2; i <= 7;  i = i + 1) if (i <= NSRC) en[i] <= wdata[i];", "PLIC: nguon 1 khong enable duoc")
 m("PL21", P, "if (wr & a_thr & wstrb[0])", "if (wr & a_thr)", "PLIC: threshold bo qua wstrb")
 m("PL22", P, "else if (a_pend) rdata = {{(31-NSRC){1'b0}}, pend, 1'b0};", "else if (a_pend) rdata = {{(31-NSRC){1'b0}}, infl, 1'b0};", "PLIC: doc pending ra infl")
@@ -160,14 +160,14 @@ m("S8", "soc_syscon.v", "if (wr && addr == 3'd3) berr <= 32'd0;\n            els
 m("T1", "soc_top.v", ".src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx})", ".src({ext_irq, 1'b0, irq_uart_tx, irq_uart_rx})", "top: ngat GPIO khong toi loi")
 m("T2", "soc_top.v", ".src({ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx})", ".src({ext_irq, irq_gpio, 1'b0, 1'b0})", "top: ngat UART khong toi loi")
 m("T3", "soc_top.v", ".irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)", ".irq_timer(irq_soft), .irq_soft(irq_timer), .irq_ext(irq_ext)", "top: ngat timer va phan mem dao")
-m("T4", "soc_top.v", "rv32im_pipeline #(.ENABLE_C(1))", "rv32im_pipeline #(.ENABLE_C(0))", "top: tat lenh nen C")
+m("T4", "soc_top.v", "rv32im_pipeline #(.ENABLE_C(1), .SU(SU)", "rv32im_pipeline #(.ENABLE_C(0), .SU(SU)", "top: tat lenh nen C")
 m("T5", "soc_top.v", ".sel(sel_uart), .addr(dmem_addr[4:2]), .we(dmem_we), .re(dmem_re)", ".sel(sel_uart), .addr(dmem_addr[4:2]), .we(dmem_we), .re(1'b1)", "top: UART re luon bat")
 m("T6", "soc_top.v", "assign imem_data = i_sel_rom ? rom_idata : i_sel_ram ? ram_idata : 32'd0;", "assign imem_data = i_sel_rom ? rom_idata : ram_idata;", "top: fetch ngoai ROM")
 m("T7", "soc_top.v", ".sel(sel_gpio), .addr(dmem_addr[5:2]), .we(dmem_we), .wstrb(dmem_wstrb),", ".sel(sel_gpio), .addr(dmem_addr[5:2]), .we(dmem_we), .wstrb(4'b0001),", "top: GPIO chi nhan byte 0")
 m("T8", "soc_top.v", ".DEFAULT_DIV(UART_DIV)", ".DEFAULT_DIV(16'd20)", "top: DIV mac dinh khong theo tham so")
 m("T9", "soc_top.v", ".sel(sel_ram), .addr(dmem_addr)", ".sel(1'b1), .addr(dmem_addr)", "top: RAM luon duoc chon")
 m("T10", "soc_top.v", ".bus_err(bus_err), .exit_valid(exit_valid)", ".bus_err(1'b0), .exit_valid(exit_valid)", "top: BUSERR khong noi")
-m("T11", "soc_top.v", ".sel(sel_clint), .addr(dmem_addr[4:2])", ".sel(sel_clint), .addr(dmem_addr[5:3])", "top: CLINT sai bit dia chi")
+m("T11", "soc_top.v", ".sel(clint_hit), .addr(clint_ra), .we(dmem_we)", ".sel(clint_hit), .addr(dmem_addr[5:3]), .we(dmem_we)", "top: CLINT sai bit dia chi")
 m("T12", "soc_top.v", "wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err;", "wire sel_rom, sel_ram, sel_clint, sel_uart, sel_gpio, sel_sys, i_sel_rom, i_sel_ram, bus_err; wire dummy_m = 1'b0;", "(kiem tra nguoc: dot bien vo hai, KHONG duoc tinh)")
 # ---- LOI: sua mepc (bit 1 cua mepc voi lenh nen) ----
 m("C1", "../rv32im_pipeline.v", "tepc_q       <= idex_pc[31:1];", "tepc_q       <= {idex_pc[31:2], 1'b0};", "loi: mepc bo bit 1 khi trap")
@@ -175,11 +175,49 @@ m("C2", "../rv32im_pipeline.v", "mret_ex ? mepc_v           :\n                 
 m("C3", "../rv32im_pipeline.v", "12'h341: csr_rdata = mepc_v;", "12'h341: csr_rdata = {mepc_r[31:2], 2'b00};", "loi: doc mepc bo bit 1")
 m("C4", "../rv32im_pipeline.v", "12'h341: mepc_r   <= csr_new[31:1];", "12'h341: mepc_r   <= {csr_new[31:2], 1'b0};", "loi: ghi mepc bo bit 1")
 
+# ---- cau hinh Linux (SU = MMU = 1, CLINT_STD, PLIC context S): chay voi --su, can soc/sw/build_su (SU=1 sh soc/sw/build.sh) ----
+S = lambda i, f, old, new, d: m(i, f, old, new, d, su=True)
+S("PS1", "soc_plic.v", "(w == 20'h00820);       // 0x002080", "(w == 20'h00821);", "PLIC S: ENABLE sai dia chi")
+S("PS2", "soc_plic.v", "(w == 20'h80400);       // 0x201000", "(w == 20'h80402);", "PLIC S: THRESHOLD sai dia chi")
+S("PS3", "soc_plic.v", "(w == 20'h80401);       // 0x201004", "(w == 20'h80402);", "PLIC S: CLAIM sai dia chi")
+S("PS4", "soc_plic.v", "(prio[j] > thr_s)", "1'b1", "PLIC S: nguong bi bo qua")
+S("PS5", "soc_plic.v", "pend[j] & en_s[j]", "pend[j] & en[j]", "PLIC S: dung ENABLE cua context M")
+S("PS6", "soc_plic.v", "claim_s && best_id_s == i", "claim_s && best_id == i", "PLIC S: claim S lay nguon cua context M")
+S("PS7", "soc_plic.v", "wire complete_ok_s = wr & a_cc_s & wstrb[0] & (cid >= 8'd1) & (cid <= NSRC) & en_s[cid[4:0]] & infl[cid[4:0]];", "wire complete_ok_s = wr & a_cc_s & wstrb[0] & (cid >= 8'd1) & (cid <= NSRC) & infl[cid[4:0]];", "PLIC S: complete khong can nguon duoc enable o S")
+S("PS8", "soc_plic.v", "if ((complete_ok | complete_ok_s) && cid[4:0] == i)", "if (complete_ok && cid[4:0] == i)", "PLIC S: complete tu S khong giai phong nguon")
+S("PS9", "soc_plic.v", "else if (a_cc_s)  rdata = {27'd0, best_id_s};", "else if (a_cc_s)  rdata = {27'd0, best_id};", "PLIC S: doc CLAIM tra ID cua context M")
+S("PS10", "soc_plic.v", "assign eip_s = (best_id_s != 5'd0);", "assign eip_s = (best_id_s != 5'd0) | eip;", "PLIC S: SEIP lan theo MEIP")
+S("PS11", "soc_top.v", ".S_CTX(PLIC_S)", ".S_CTX(0)", "top: PLIC khong co context S")
+S("PS12", "soc_top.v", ".eip_s(irq_sext)", ".eip_s()", "top: eip_s khong noi vao loi")
+S("CS1", "soc_bus.v", "wire std_msip = (c_off == 14'h0000)", "wire std_msip = (c_off == 14'h0001)", "CLINT chuan: msip sai dia chi")
+S("CS2", "soc_bus.v", "std_cl = (c_off == 14'h1000)", "std_cl = (c_off == 14'h1002)", "CLINT chuan: mtimecmp lo sai dia chi")
+S("CS3", "soc_bus.v", "std_th = (c_off == 14'h2FFF)", "std_th = (c_off == 14'h2FFE)", "CLINT chuan: mtime hi trung mtime lo")
+S("CS4", "soc_bus.v", "std_msip ? 3'd4 : std_cl ? 3'd2 : std_ch ? 3'd3 : std_tl ? 3'd0 : 3'd1", "std_msip ? 3'd4 : std_cl ? 3'd3 : std_ch ? 3'd2 : std_tl ? 3'd0 : 3'd1", "CLINT chuan: mtimecmp lo / hi bi doi cho")
+S("CS5", "soc_bus.v", "(std_msip | std_cl | std_ch | std_tl | std_th)", "(std_msip | std_cl | std_tl | std_th)", "CLINT chuan: thieu mtimecmp hi")
+S("CS6", "soc_bus.v", "(CLINT_STD != 0) ? (daddr[31:16] == 16'h0200)", "(CLINT_STD != 0) ? (daddr[31:17] == 15'h0100)", "CLINT chuan: cua so 128 KB (0x0201_0000 khong con bao loi)")
+S("CS7", "soc_top.v", ".CLINT_STD(CLINT_STD)", ".CLINT_STD(0)", "top: bus khong dung bo cuc CLINT chuan")
+S("CS8", "soc_top.v", ".sel(clint_hit), .addr(clint_ra), .we(dmem_we)", ".sel(sel_clint), .addr(clint_ra), .we(dmem_we)", "top: ghi vao dia chi CLINT khong phai thanh ghi van ghi")
+S("SE1", "../rv32im_pipeline.v", "wire        seip_eff = mip_seip | seip_hw;", "wire        seip_eff = mip_seip;", "loi: SEIP phan cung bi bo qua")
+S("SE2", "../rv32im_pipeline.v", "seip_hw <= irq_sext;", "seip_hw <= 1'b0;", "loi: chan irq_sext bi cat")
+S("SE3", "../rv32im_pipeline.v", "(SU != 0) & seip_eff & mie_seie", "(SU != 0) & seip_eff", "loi: SEIP bo qua mie.SEIE")
+
+# ---- rv32_ram: bo boc RAM doc dong bo (mo phong + macro IHP qua stub) ----
+m("RM1", "mem/rv32_ram.v", "if (be[b]) mem[addr][b*BW +: BW] <= din[b*BW +: BW];", "if (be[0]) mem[addr][b*BW +: BW] <= din[b*BW +: BW];", "RAM: byte enable chi theo be[0]")
+m("RM2", "mem/rv32_ram.v", "end else dout <= mem[addr];", "end dout <= mem[addr];", "RAM: ghi cung cap nhat dout (khong giu)")
+m("RM3", "mem/rv32_ram.v", "always @(posedge clk) if (en) begin\n        if (we) begin", "always @(posedge clk) begin\n        if (we) begin", "RAM: ghi khong can en")
+m("RM4", "mem/rv32_ram.v", "mem[addr][b*BW +: BW] <= din[b*BW +: BW];", "mem[addr][b*BW +: BW] <= din[(NB-1-b)*BW +: BW];", "RAM: thu tu byte bi dao")
+m("RM5", "mem/rv32_ram.v", "assign m_bm[gj]      = ~addr[0] & be[gj / BW];", "assign m_bm[gj]      = addr[0] & be[gj / BW];", "macro: nua thap duoc chon bang addr[0] sai")
+m("RM6", "mem/rv32_ram.v", "assign m_addr = addr[AW-1:1];", "assign m_addr = addr[AW-2:0];", "macro: chi so hang lay sai bit")
+m("RM7", "mem/rv32_ram.v", "if (en & ~we) half_q <= addr[0];", "if (en) half_q <= addr[0];", "macro: nua tu doc bi doi khi ghi")
+m("RM8", "mem/rv32_ram.v", "assign m_bm[gi] = be[gi / BW];", "assign m_bm[gi] = be[0];", "macro 64 bit: mat na chi theo be[0]")
+m("RM9", "mem/rv32_ram.v", ".A_WEN(we), .A_REN(~we), .A_ADDR(m_addr), .A_DIN(m_din), .A_DLY(1'b1), .A_BM(m_bm), .A_DOUT(m_dout),\n                                .A_BIST_CLK(1'b0), .A_BIST_EN(1'b0), .A_BIST_MEN(1'b0), .A_BIST_WEN(1'b0), .A_BIST_REN(1'b0), .A_BIST_ADDR({RAW{1'b0}}), .A_BIST_DIN(64'd0), .A_BIST_BM(64'd0)); end\n            512:", ".A_WEN(we), .A_REN(~we), .A_ADDR(m_addr), .A_DIN(m_din), .A_DLY(1'b1), .A_BM(~m_bm), .A_DOUT(m_dout),\n                                .A_BIST_CLK(1'b0), .A_BIST_EN(1'b0), .A_BIST_MEN(1'b0), .A_BIST_WEN(1'b0), .A_BIST_REN(1'b0), .A_BIST_ADDR({RAW{1'b0}}), .A_BIST_DIN(64'd0), .A_BIST_BM(64'd0)); end\n            512:", "macro 256 hang: mat na bi dao")
+m("RM10", "mem/rv32_ram.v", "assign m_din  = {din, din};", "assign m_din  = {din, 32'd0};", "macro: du lieu ghi chi vao nua cao")
+
 EQUIV_CHECK = {"T12"}   # dot bien vo hai co y: phai LOT (de kiem tra bo kiem chung khong bao dong gia)
 
 
 def apply(tmp, mut):
-    i, f, old, new, d = mut
+    i, f, old, new, d, _ = mut
     path = os.path.join(tmp, "soc", f) if not f.startswith("..") else os.path.join(tmp, f[3:])
     s = open(path).read()
     if s.count(old) != 1:
@@ -188,7 +226,7 @@ def apply(tmp, mut):
     return None
 
 
-def run_one(mut, sw):
+def run_one(mut, sw, sw_su=None):
     tmp = tempfile.mkdtemp(prefix="mut_")
     try:
         shutil.copytree(os.path.join(ROOT, "soc"), os.path.join(tmp, "soc"), ignore=shutil.ignore_patterns("sw", "__pycache__"))
@@ -197,7 +235,7 @@ def run_one(mut, sw):
         err = apply(tmp, mut)
         if err:
             return (mut, "LOI", err)
-        res = run_soc.run_suite(tmp, sw, tmp, stop_first=True, verbose=False)
+        res = run_soc.run_suite(tmp, sw_su if mut[5] else sw, tmp, stop_first=True, verbose=False, su=mut[5])
         bad = [r for r in res if not r[1]]
         if not bad:
             return (mut, "LOT", "")
@@ -214,12 +252,13 @@ def main():
     ap.add_argument("--only", default="")
     a = ap.parse_args()
     sw = os.path.join(run_soc.HERE, "sw", "build")
+    sw_su = os.path.join(run_soc.HERE, "sw", "build_su")
     muts = [x for x in M if a.only in x[0] or a.only in x[4]]
     print("[mutate-soc] %d dot bien, %d luong" % (len(muts), a.jobs), flush=True)
     caught, missed, errors, by = 0, [], [], {}
     with cf.ThreadPoolExecutor(a.jobs) as ex:
-        for k, (mut, st, info) in enumerate(ex.map(lambda x: run_one(x, sw), muts), 1):
-            i, f, old, new, d = mut
+        for k, (mut, st, info) in enumerate(ex.map(lambda x: run_one(x, sw, sw_su), muts), 1):
+            i, f, old, new, d, _ = mut
             if i in EQUIV_CHECK:
                 ok = (st == "LOT")
                 print("[%3d/%d] %-5s %s: %s -> %s %s" % (k, len(muts), i, "dot bien vo hai", d, "lot (dung)" if ok else st, info), flush=True)

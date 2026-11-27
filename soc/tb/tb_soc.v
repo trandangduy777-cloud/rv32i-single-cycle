@@ -19,10 +19,15 @@ module tb_soc;
     wire [31:0] exit_code;
 
     reg [3:0] ext_irq = 4'd0;
-`ifdef AXI
-    soc_axi_top #(.UART_DIV(DIV), .MTIME_PRESC(1)) dut (
+`ifdef SUCFG                    // cau hinh Linux-capable: S / U + MMU Sv32, CLINT bo cuc chuan, PLIC co context S (loi bien dich voi -DSEIP_PIN)
+    localparam SUP = 1;
 `else
-    soc_top #(.UART_DIV(DIV), .MTIME_PRESC(1)) dut (
+    localparam SUP = 0;
+`endif
+`ifdef AXI
+    soc_axi_top #(.UART_DIV(DIV), .MTIME_PRESC(1), .SU(SUP), .MMU(SUP), .CLINT_STD(SUP), .PLIC_S(SUP)) dut (
+`else
+    soc_top #(.UART_DIV(DIV), .MTIME_PRESC(1), .SU(SUP), .MMU(SUP), .CLINT_STD(SUP), .PLIC_S(SUP)) dut (
 `endif
         .clk(clk), .rst_n(rst_n), .uart_rx(uart_rx), .uart_tx(uart_tx), .ext_irq(ext_irq),
         .gpio_in(pad), .gpio_out(gpio_out), .gpio_oe(gpio_oe), .exit_valid(exit_valid), .exit_code(exit_code)

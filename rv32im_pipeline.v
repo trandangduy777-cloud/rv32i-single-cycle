@@ -79,6 +79,14 @@ module rv32im_pipeline #(
     input  wire        irq_timer,      // MTIP, tu bo dem mtime/mtimecmp ben ngoai (rv32_mtimer.v)
     input  wire        irq_soft,       // MSIP, thanh ghi msip cua rv32_mtimer.v
     input  wire        irq_ext         // MEIP
+`ifdef SEIP_PIN
+    , input  wire        irq_sext        // SEIP phan cung (ngat ngoai den che do S, tu context S cua PLIC); chi co khi bien dich voi -DSEIP_PIN
+`endif
+`ifdef DBG
+    // Debug (debug/rv32_dbg_hart.v, RISC-V Debug 0.13.2): yeu cau halt tu DM, trang thai D-mode (de bo giai ma vung ROM debug)
+    , input  wire        dbg_halt_req
+    , output wire        dbg_mode
+`endif
 `ifdef RISCV_FORMAL
     // Cong RVFI (riscv-formal, 1 kenh): chi co khi bien dich voi -DRISCV_FORMAL, khong doi gi o ban thuong.
     , output wire        fv_wfi_wait     // chi cho kiem chung: WFI dang cho ngat (cho cong bang cua liveness)
@@ -222,6 +230,17 @@ module rv32im_pipeline #(
     reg         ifr_v, ifr_af;                       // lan duyet cho fetch da loi
     reg  [31:0] ifr_va;
     wire [1:0]  priv;
+    // Debug (-DDBG): D-mode, vao D-mode (lenh o EX khong thuc thi), trigger exception, ra D-mode; khong co DBG thi toan hang so 0
+    wire        dbg_mode_w, dbg_take, dbg_trig_exc, dbg_step_mask, dbg_wake, dbg_csr_ill;
+    wire [31:0] dbg_dret_pc, dbg_rdata;
+`ifdef DBG
+    localparam [31:0] DBG_ENTRY = 32'hFFFF_F800;            // ROM debug: +0 vao D-mode, +4 EBREAK trong D-mode, +8 exception trong D-mode
+    assign dbg_mode = dbg_mode_w;
+    assign dbg_wake = dbg_halt_req;
+`else
+    assign dbg_mode_w = 1'b0; assign dbg_take = 1'b0; assign dbg_trig_exc = 1'b0; assign dbg_step_mask = 1'b0;
+    assign dbg_wake = 1'b0; assign dbg_csr_ill = 1'b0; assign dbg_dret_pc = 32'd0; assign dbg_rdata = 32'd0;
+`endif
     wire        i_rec  = ifr_v & (ifr_va == i_va);
     wire        i_bad  = ~i_fl[2] | ~i_fl[4] | ((priv == 2'd1) ? i_fl[3] : ~i_fl[3]);   // X, A, U (S khong chay trang U)
     wire        if_tfault = xi & ((i_hit & (i_bad | (i_pa[33:32] != 2'b00))) | i_rec);
@@ -410,6 +429,11 @@ module rv32im_pipeline #(
     wire is_ecall  = (instr == 32'h0000_0073);
     wire is_ebreak = (instr == 32'h0010_0073);
     wire is_mret   = (instr == 32'h3020_0073);
+`ifdef DBG
+    wire is_dret   = (instr == 32'h7B20_0073);              // chi hop le trong D-mode (kiem tra o EX)
+`else
+    wire is_dret   = 1'b0;
+`endif
     wire is_wfi    = (instr == 32'h1050_0073);
     wire is_sret   = (instr == 32'h1020_0073) & (SU != 0);
     wire is_sfence = (opcode == 7'b1110011) & (funct3 == 3'b000) & (instr[31:25] == 7'b0001001) & (rd == 5'd0) &
@@ -433,6 +457,11 @@ module rv32im_pipeline #(
             id_csr_exists = 1'b1;
         // PMP: pmpcfg0-15 (0x3A0-0x3AF), pmpaddr0-63 (0x3B0-0x3EF); muc ngoai PMP_N doc 0 (WARL)
         if (id_csr_addr >= 12'h3A0 && id_csr_addr <= 12'h3EF) id_csr_exists = 1'b1;
+`ifdef DBG
+        // trigger (tselect tdata1 tdata2 tinfo) va CSR debug dcsr dpc dscratch0 dscratch1
+        if (id_csr_addr == 12'h7A0 || id_csr_addr == 12'h7A1 || id_csr_addr == 12'h7A2 || id_csr_addr == 12'h7A4 ||
+            id_csr_addr[11:2] == 10'h1EC) id_csr_exists = 1'b1;
+`endif
         // che do S / U: sstatus sie stvec scounteren sscratch sepc scause stval sip satp, medeleg mideleg mcounteren
         if (SU != 0)
             case (id_csr_addr)
@@ -447,7 +476,7 @@ module rv32im_pipeline #(
 
     wire illegal = ~(is_lui | is_auipc | is_jal | legal_jalr | legal_branch | legal_load |
                      legal_store | legal_imm | legal_reg | legal_fence |
-                     is_ecall | is_ebreak | is_mret | is_wfi | is_sret | is_sfence | legal_csr);
+                     is_ecall | is_ebreak | is_mret | is_dret | is_wfi | is_sret | is_sfence | legal_csr);
 
     wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]};
     wire [31:0] imm_s = {{20{instr[31]}}, instr[31:25], instr[11:7]};
@@ -922,6 +951,14 @@ module rv32im_pipeline #(
     reg         mideleg_ssi, mideleg_sti, mideleg_sei;
     reg         mie_ssie, mie_stie, mie_seie;
     reg         mip_ssip, mip_stip, mip_seip;              // chi phan mem ghi
+    // SEIP: bit phan mem (mip.SEIP ghi duoc) HOAC chan phan cung irq_sext (qua 1 flip-flop nhu cac chan ngat khac); khong co chan thi chi phan mem
+`ifdef SEIP_PIN
+    reg         seip_hw;
+    always @(posedge clk or negedge rst_n) if (!rst_n) seip_hw <= 1'b0; else seip_hw <= irq_sext;
+`else
+    wire        seip_hw = 1'b0;
+`endif
+    wire        seip_eff = mip_seip | seip_hw;
     wire        st_sd = (st_fs == 2'b11);
     wire [31:0] mstatus_v = (SU != 0) ?
         {st_sd, 8'b0, st_tsr, st_tw, tvm_v, mxr_v, sum_v, st_mprv, 2'b00, st_fs, st_mpp, 2'b00, st_spp, mstatus_mpie,
@@ -930,7 +967,7 @@ module rv32im_pipeline #(
     wire [31:0] sstatus_v = {st_sd, 11'b0, mxr_v, sum_v, 3'b0, st_fs, 4'b0, st_spp, 2'b0, st_spie, 3'b0, st_sie, 1'b0};
     wire [31:0] mie_v  = {20'b0, mie_meie, 1'b0, mie_seie & (SU != 0), 1'b0, mie_mtie, 1'b0, mie_stie & (SU != 0), 1'b0,
                           mie_msie, 1'b0, mie_ssie & (SU != 0), 1'b0};
-    wire [31:0] mip_v  = {20'b0, mip_meip, 1'b0, mip_seip & (SU != 0), 1'b0, mip_mtip, 1'b0, mip_stip & (SU != 0), 1'b0,
+    wire [31:0] mip_v  = {20'b0, mip_meip, 1'b0, seip_eff & (SU != 0), 1'b0, mip_mtip, 1'b0, mip_stip & (SU != 0), 1'b0,
                           mip_msip, 1'b0, mip_ssip & (SU != 0), 1'b0};
     wire [31:0] mideleg_v = {22'b0, mideleg_sei, 3'b0, mideleg_sti, 3'b0, mideleg_ssi, 1'b0} & {32{SU != 0}};
     reg  [2:0]  medeleg_pf;                                // bit 12, 13, 15 (loi trang, chi khi MMU = 1)
@@ -951,7 +988,7 @@ module rv32im_pipeline #(
             12'h342: csr_rdata = mcause_r;
             12'h343: csr_rdata = mtval_r;
             12'h344: csr_rdata = mip_v;
-            default: csr_rdata = cnt_rdata | pmp_rdata | su_rdata;   // bo dem / PMP / CSR S (0 neu khong phai);
+            default: csr_rdata = cnt_rdata | pmp_rdata | su_rdata | dbg_rdata;   // bo dem / PMP / CSR S (0 neu khong phai);
         endcase                                                      // 0xF14 mhartid, satp = 0
     end
     // CSR cua che do S / U: SU = 0 thi bang 0 de tong hop bo luon cac thanh ghi (CSR nay khong ton tai, trap o ID)
@@ -996,13 +1033,19 @@ module rv32im_pipeline #(
     // MRET ngoai che do M, SRET o U (hoac S khi TSR), WFI o U (hoac S khi TW) -> lenh bat hop le
     wire        cnt_user  = (csr_addr[11:8] == 4'hC) & (csr_addr[6:5] == 2'b00);
     wire        cnt_en    = (priv == 2'd3) | (mcounteren[csr_addr[4:0]] & ((priv == 2'd1) | scounteren[csr_addr[4:0]]));
-    wire        ex_priv_ill = (SU != 0) & (
+    wire        ex_priv_ill_su = (SU != 0) & (
                     (idex_csr & ((csr_addr[9:8] > priv) | (cnt_user & ~cnt_en) |
                                  ((csr_addr == 12'h180) & (priv == 2'd1) & tvm_v))) |
                     (idex_sfence & ((priv == 2'd0) | ((priv == 2'd1) & tvm_v))) |
                     (idex_mret & (priv != 2'd3)) |
                     (idex_sret & ((priv == 2'd0) | ((priv == 2'd1) & st_tsr))) |
                     (idex_wfi & ((priv == 2'd0) | ((priv != 2'd3) & st_tw))));
+`ifdef DBG
+    wire        idex_dret    = idex_valid & (idex_instr == 32'h7B20_0073);
+    wire        ex_priv_ill  = ex_priv_ill_su | dbg_csr_ill | (idex_dret & ~dbg_mode_w);   // DRET ngoai D-mode: bat hop le
+`else
+    wire        ex_priv_ill  = ex_priv_ill_su;
+`endif
     wire        ex_illegal = idex_illegal | ex_priv_ill;
     // ---- ngat ----
     // Chi xet tren thanh ghi (mstatus, mie, mip, mideleg, priv) va idex_valid nen la tin hieu som. Lenh M dang chay
@@ -1012,7 +1055,7 @@ module rv32im_pipeline #(
     wire pe_mei = mip_meip & mie_meie;
     wire pe_msi = mip_msip & mie_msie;
     wire pe_mti = mip_mtip & mie_mtie;
-    wire pe_sei = (SU != 0) & mip_seip & mie_seie;
+    wire pe_sei = (SU != 0) & seip_eff & mie_seie;
     wire pe_ssi = (SU != 0) & mip_ssip & mie_ssie;
     wire pe_sti = (SU != 0) & mip_stip & mie_stie;
     wire m_en   = (priv != 2'd3) | mstatus_mie;
@@ -1026,11 +1069,25 @@ module rv32im_pipeline #(
                                 : (cs_sei ? 4'd9 : cs_ssi ? 4'd1 : 4'd5);
     wire irq_pend  = pe_mei | pe_msi | pe_mti | pe_sei | pe_ssi | pe_sti;
     wire irq_any   = irq_m | irq_s;
+`ifdef DBG
+    wire ex_can    = idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz & ~dwait;       // lenh o EX co the bi chan o chu ky nay
+    // irq_take = lenh o EX bi chan (khong thuc thi): ngat that su (irq_take_p), vao D-mode, hoac trigger exception
+    wire irq_take_p = irq_any & ex_can & ~dbg_mode_w & ~dbg_step_mask & ~dbg_take;
+    wire irq_take   = irq_take_p | dbg_take | dbg_trig_exc;
+    // irq_nm: nhu irq_take nhung bo ~dwait (chi load / store bi dwait): dung cho CSR, xRET, SFENCE.VMA, FENCE.I
+    wire irq_nm     = (irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz & ~dbg_mode_w & ~dbg_step_mask & ~dbg_take) | dbg_take | dbg_trig_exc;
+`else
     wire irq_take  = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz & ~dwait;
     // irq_nm = irq_take cho lenh khong phai load / store (dwait chi bat voi load / store): CSR, xRET, SFENCE.VMA,
     // FENCE.I dung ban nay de khong noi vao duong forwarding -> dia chi -> TLB (dwait) roi toi xoa TLB / cong bo nho.
     wire irq_nm    = irq_any & idex_valid & ~idex_mext_r & ~idex_wfi_r & ~frz;
+    wire irq_take_p = irq_take;
+`endif
+`ifdef DBG
+    assign wfi_wait = idex_wfi & ~irq_pend & ~dbg_wake & ~ex_priv_ill;
+`else
     assign wfi_wait = idex_wfi & ~irq_pend & ~ex_priv_ill;
+`endif
 `ifdef RISCV_FORMAL
     assign fv_wfi_wait = wfi_wait;
 `endif
@@ -1156,7 +1213,8 @@ module rv32im_pipeline #(
 
     reg [31:0] trap_cause, trap_tval;
     always @* begin
-        if (irq_take)           begin trap_cause = {1'b1, 27'd0, irq_code};             trap_tval = 32'd0; end
+        if (irq_take_p)         begin trap_cause = {1'b1, 27'd0, irq_code};             trap_tval = 32'd0; end
+        else if (dbg_trig_exc)  begin trap_cause = 32'd3;  trap_tval = (idex_load | idex_store) ? ea : idex_pc; end   // trigger
         else if (idex_ipf)      begin trap_cause = idex_iaf ? 32'd1 : 32'd12;            // loi dich dia chi fetch
                                       trap_tval = idex_ipf2 ? idex_pc + 32'd2 : idex_pc; end
         else if (pmp_ifault)    begin trap_cause = 32'd1;  trap_tval = pmp_itval;   end   // fetch bi PMP cam
@@ -1186,9 +1244,18 @@ module rv32im_pipeline #(
         if (!rst_n)    rt_trap <= 1'b0;
         else if (!frz) rt_trap <= trap_ex;
     end
+`ifdef DBG
+    // debug: rt_dtake = vao D-mode (-> ROM +0), rt_dmtr = trap trong D-mode (-> ROM +4 EBREAK / +8 exception)
+    reg         rt_dtake, rt_dmtr, rt_ebrk;
+    always @(posedge clk) if (!frz) begin
+        rt_int <= irq_take_p; rt_irqm <= irq_m; rt_cause <= trap_cause[4:0]; rt_priv <= priv;
+        rt_dtake <= dbg_take; rt_dmtr <= dbg_mode_w; rt_ebrk <= idex_ebreak;
+    end
+`else
     always @(posedge clk) if (!frz) begin
         rt_int <= irq_take; rt_irqm <= irq_m; rt_cause <= trap_cause[4:0]; rt_priv <= priv;
     end
+`endif
     wire exc_deleg = (rt_priv != 2'd3) & medeleg_v[rt_cause];
     wire rt_s      = (SU != 0) & (rt_int ? ~rt_irqm : exc_deleg);
 
@@ -1203,7 +1270,16 @@ module rv32im_pipeline #(
     wire fencei_ex     = idex_fencei_r & idex_valid & ~irq_nm & ~frz;
     assign icache_flush = fencei_ex;
     // dong bang: lenh o EX se duoc xet lai khi pipeline chay tiep, nen chua redirect
+`ifdef DBG
+    wire dret_ex       = idex_dret & dbg_mode_w & ~frz;
+`else
+    wire dret_ex       = 1'b0;
+`endif
+`ifdef DBG
+    assign redirect    = (trap_ex | mret_ex | sret_ex | dret_ex | jalr_miss | mispredict | fencei_ex | sfence_ex | satp_wr) & ~frz;
+`else
     assign redirect    = (trap_ex | mret_ex | sret_ex | jalr_miss | mispredict | fencei_ex | sfence_ex | satp_wr) & ~frz;
+`endif
     // Dich cua trap tinh o chu ky SAU (tu thanh ghi rt_*): trap_ex / trap_cause nam cuoi duong forwarding -> dia chi
     // load / store -> TLB / PMP, nen uy quyen (medeleg theo ma nguyen nhan), chon xtvec va cong ma ngat khong con noi
     // tiep sau no trong cung chu ky. rt_* chi doi khi khong dong bang, giong redirect_q, nen van dung khi pc duoc ap tre;
@@ -1212,8 +1288,15 @@ module rv32im_pipeline #(
     wire [31:2] tvec_b     = rt_s ? stvec_r : mtvec_r;
     wire        tvec_v     = rt_s ? stvec_vec : mtvec_vec;
     wire [31:2] trap_base  = (rt_int & tvec_v) ? tvec_b + {26'd0, rt_cause[3:0]} : tvec_b;
+`ifdef DBG
+    wire [31:0] trap_pc    = rt_dtake ? DBG_ENTRY :
+                             rt_dmtr  ? (DBG_ENTRY + (rt_ebrk ? 32'd4 : 32'd8)) : {trap_base, 2'b00};
+    assign redirect_pc = dret_ex ? dbg_dret_pc :
+`else
     wire [31:0] trap_pc    = {trap_base, 2'b00};
-    assign redirect_pc = mret_ex ? mepc_v           :
+    assign redirect_pc =
+`endif
+                         mret_ex ? mepc_v           :
                          sret_ex ? sepc_v           :
                          (fencei_ex | sfence_ex | satp_wr) ? pc_next :
                          idex_jalr ? jalr_target : (idex_pred_taken ? pc_next : pc_imm);
@@ -1235,7 +1318,11 @@ module rv32im_pipeline #(
     reg  [31:0] ttval_q;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) trap_q <= 1'b0;
+`ifdef DBG
+        else        trap_q <= trap_ex & ~frz & ~dbg_take & ~dbg_mode_w;     // D-mode: exception khong ghi mepc / mcause / mtval
+`else
         else        trap_q <= trap_ex & ~frz;
+`endif
     end
     always @(posedge clk) begin
         tepc_q       <= idex_pc[31:1];
@@ -1826,7 +1913,7 @@ module rv32im_pipeline #(
     assign hpm_evt[8]  = ex_upd & idex_branch & mispredict;
     assign hpm_evt[9]  = ex_upd & idex_jalr;
     assign hpm_evt[10] = ex_upd & idex_jalr & jalr_miss;
-    assign hpm_evt[11] = irq_take;
+    assign hpm_evt[11] = irq_take_p;
     assign hpm_evt[12] = trap_ex & ~irq_take & ~frz;
     assign hpm_evt[13] = rt_inc & memwb_icnt;
     // su kien duoc chot 1 chu ky truoc khi dem: vai su kien (loai chu ky, exception, nhanh doan sai) xuat phat tu cuoi
@@ -2015,4 +2102,13 @@ module rv32im_pipeline #(
             end
         end
     end
+`ifdef DBG
+    rv32_dbg_hart #(.ENABLE_C(ENABLE_C)) u_dbg (
+        .clk(clk), .rst_n(rst_n), .halt_req(dbg_halt_req), .dbg_mode(dbg_mode_w),
+        .ex_can(ex_can), .ex_done(idex_valid & ~frz & ~ex_stall), .ex_pc(idex_pc), .ex_ebreak(idex_ebreak),
+        .ex_load(idex_load), .ex_store(idex_store), .ex_ea(ea), .ex_dret(idex_dret & ~frz),
+        .take(dbg_take), .trig_exc(dbg_trig_exc), .step_mask(dbg_step_mask), .dret_pc(dbg_dret_pc),
+        .csr_addr(csr_addr), .csr_acc(idex_csr), .csr_wr(csr_write), .csr_wdata(csr_new),
+        .csr_rdata(dbg_rdata), .csr_ill(dbg_csr_ill));
+`endif
 endmodule

@@ -119,6 +119,15 @@ jobs:
           AXI=1 sh soc/freertos/build.sh
           python3 soc/run_soc.py --axi
 
+      - name: SoC cau hinh Linux (S / U + MMU Sv32, CLINT chuan, PLIC context S; M -> S -> U, page fault, STIP / SSIP / SEIP; thuong va AXI4)
+        run: |
+          SU=1 sh soc/sw/build.sh
+          SU=1 sh soc/freertos/build.sh
+          python3 soc/run_soc.py --su
+          AXI=1 SU=1 sh soc/sw/build.sh
+          AXI=1 SU=1 sh soc/freertos/build.sh
+          python3 soc/run_soc.py --axi --su
+
       - name: Benchmark (CPI, so checksum giua cac loi)
         run: sh bench/run_bench.sh
 
@@ -276,6 +285,46 @@ jobs:
       - name: So vet voi Spike khi co ngat (Spike dang thu vien, irq_storm + bench duoi bao ngat, 2 cau hinh loi)
         run: python3 cosim/irq/run_irq_cosim.py --spike $HOME/spike/bin/spike --quick
 
+  debug:
+    # Debug Module (RISC-V Debug 0.13.2) qua JTAG that: Verilator + OpenOCD + gdb, so vet single-step voi Spike.
+    # Spike dung cache cua job cosim (cung khoa); neu chua co thi build lai.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SPIKE_SHA: 7d1ee24bcc3308557e1c6a45c579db9ca5e97dd9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cai Verilator, OpenOCD, gdb, trinh bien dich RISC-V
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator g++ make openocd gdb-multiarch gcc-riscv64-unknown-elf device-tree-compiler
+      - name: Cache Spike
+        id: cache-spike
+        uses: actions/cache@v4
+        with:
+          path: ~/spike
+          key: spike-${{ env.SPIKE_SHA }}-ubuntu-24.04
+      - name: Build Spike
+        if: steps.cache-spike.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
+          cd /tmp/spike-src
+          git checkout $SPIKE_SHA
+          git submodule update --init --depth 1
+          mkdir build && cd build
+          ../configure --prefix=$HOME/spike
+          make -j$(nproc)
+          make install
+      - name: ROM debug khop debug/dbg_rom.S
+        run: python3 debug/gen_rom.py --check
+      - name: Debug Module qua JTAG that (19 test - DMI, thanh ghi, bo nho, step vs Spike, halt/resume, trigger, ebreak, gdb, riscv-tests)
+        run: |
+          git clone --depth 1 https://github.com/riscv-software-src/riscv-tests.git /tmp/riscv-tests
+          SPIKE=$HOME/spike/bin/spike python3 debug/run_dbg_test.py --build
+      - name: Dot bien Debug Module (khi bam Run workflow va hang tuan)
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+        run: SPIKE=$HOME/spike/bin/spike python3 debug/mutate_dbg.py --jobs 2
+
   mutation:
     # Mutation 3 loi (so vet voi ISS). Truoc day vuot 60 phut (24/11/2026) roi 120 phut (25/11/2026) vi moi dot bien chay
     # het 21 chuong trinh, chuong trinh treo chay toi gioi han chu ky; nay --mutate dung o chuong trinh lech dau tien
@@ -354,6 +403,7 @@ jobs:
             zb)     python3 zb/mutate_zb.py ;;
             soc)
               sh soc/sw/build.sh
+              SU=1 sh soc/sw/build.sh
               python3 soc/mutate_soc.py --jobs 4 ;;
             axi)
               AXI=1 sh soc/sw/build.sh

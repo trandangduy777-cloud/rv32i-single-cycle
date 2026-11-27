@@ -14,7 +14,10 @@ module soc_axi_top #(
     parameter        UART_RX_DEPTH = 8,
     parameter        IC_LINES = 128, parameter IC_WORDS = 4, parameter IC_WAYS = 2,
     parameter        DC_LINES = 64, parameter DC_WORDS = 4, parameter DC_WAYS = 2, parameter DC_WBUF = 4,
-    parameter        RAM_STALL = 0, parameter ROM_RLAT = 0, parameter ROM_BDLY = 12        // tham so kiem thu: lam cham bo nho de thu core chiu tre
+    parameter        RAM_STALL = 0, parameter ROM_RLAT = 0, parameter ROM_BDLY = 12,       // tham so kiem thu: lam cham bo nho de thu core chiu tre
+    parameter        SU = 0, parameter MMU = 0,           // 1: che do S / U (+ MMU Sv32); can bien dich loi voi -DSEIP_PIN de noi SEIP phan cung
+    parameter        CLINT_STD = 0,                       // 1: CLINT bo cuc chuan 64 KB (OpenSBI / Linux)
+    parameter        PLIC_S = 0                           // 1: PLIC co context S (dau ra eip_s -> mip.SEIP)
 ) (
     input  wire              clk,
     input  wire              rst_n,
@@ -33,14 +36,17 @@ module soc_axi_top #(
     wire [31:0] imem_addr, imem_data, dmem_addr, dmem_wdata, dmem_rdata;
     wire [3:0]  dmem_wstrb;
     wire        dmem_we, dmem_re, dmem_fence, icache_flush, imem_ready, dmem_ready;
-    wire        irq_timer, irq_soft, irq_ext;
+    wire        irq_timer, irq_soft, irq_ext, irq_sext;
 
-    rv32im_pipeline #(.ENABLE_C(1)) u_core (
+    rv32im_pipeline #(.ENABLE_C(1), .SU(SU), .MMU(MMU)) u_core (
         .clk(clk), .rst_n(rst_n),
         .imem_addr(imem_addr), .imem_data(imem_data), .imem_ready(imem_ready),
         .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata), .dmem_wstrb(dmem_wstrb), .dmem_we(dmem_we),
         .dmem_re(dmem_re), .dmem_fence(dmem_fence), .icache_flush(icache_flush), .dmem_rdata(dmem_rdata), .dmem_ready(dmem_ready),
         .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext)
+`ifdef SEIP_PIN
+        , .irq_sext(irq_sext)
+`endif
     );
 
     wire ic_req, ic_ack; wire [31:0] ic_addr, ic_rdata;
@@ -127,7 +133,7 @@ module soc_axi_top #(
 
     // vung: 0 ROM, 1 RAM, 2 RAM bi danh, 3 CLINT, 4 PLIC, 5 ngoai vi 0x2000_0000..0x2001_FFFF (cau ngoai vi)
     localparam [6*32-1:0] RB = {32'h2000_0000, 32'h0C00_0000, 32'h0200_0000, 32'h4000_0000, 32'h1000_0000, 32'h0000_0000};
-    localparam [6*32-1:0] RM = {32'hFFFE_0000, 32'hFFC0_0000, 32'hFFFF_F000, 32'hFFFF_C000, 32'hFFFF_C000, 32'hFFFF_C000};
+    localparam [6*32-1:0] RM = {32'hFFFE_0000, 32'hFFC0_0000, (CLINT_STD != 0) ? 32'hFFFF_0000 : 32'hFFFF_F000, 32'hFFFF_C000, 32'hFFFF_C000, 32'hFFFF_C000};
     localparam [6*8-1:0]  RS = {8'd2, 8'd2, 8'd2, 8'd1, 8'd1, 8'd0};
     axi_xbar #(.NM(NM), .NS(NS), .IDW(IDW), .NR(6), .R_BASE(RB), .R_MASK(RM), .R_SLV(RS), .MAXOUT(4)) u_xbar (
         .clk(clk), .rst_n(rst_n),
@@ -165,9 +171,10 @@ module soc_axi_top #(
     wire sel_rom_x, sel_ram_x, sel_clint, sel_uart, sel_gpio, sel_sys, sel_plic, bus_err_x, i_rom_x, i_ram_x;
     wire [31:0] clint_rd, uart_rd, gpio_rd, sys_rd, plic_rd, leg_rd;
     wire irq_uart, irq_uart_rx, irq_uart_tx, irq_gpio;
-    soc_bus #(.ROM_AW(14), .RAM_AW(14)) u_bus (
+    wire clint_hit; wire [4:2] clint_ra;
+    soc_bus #(.ROM_AW(14), .RAM_AW(14), .CLINT_STD(CLINT_STD)) u_bus (
         .daddr(l_addr), .dwe(l_we), .dre(l_re),
-        .sel_rom(sel_rom_x), .sel_ram(sel_ram_x), .sel_clint(sel_clint), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys), .sel_plic(sel_plic),
+        .sel_rom(sel_rom_x), .sel_ram(sel_ram_x), .sel_clint(sel_clint), .clint_hit(clint_hit), .clint_ra(clint_ra), .sel_uart(sel_uart), .sel_gpio(sel_gpio), .sel_sys(sel_sys), .sel_plic(sel_plic),
         .rom_rd(32'd0), .ram_rd(32'd0), .clint_rd(clint_rd), .uart_rd(uart_rd), .gpio_rd(gpio_rd), .sys_rd(sys_rd), .plic_rd(plic_rd),
         .rdata(leg_rd), .bus_err(bus_err_x), .iaddr(32'd0), .i_sel_rom(i_rom_x), .i_sel_ram(i_ram_x));
     assign sel_dma = (l_addr[31:12] == 20'h20010);
@@ -175,7 +182,7 @@ module soc_axi_top #(
     assign l_err   = (l_re | l_we) & ~(sel_clint | sel_uart | sel_gpio | sel_sys | sel_plic | sel_dma);
 
     rv32_mtimer #(.PRESCALE(MTIME_PRESC)) u_clint (
-        .clk(clk), .rst_n(rst_n), .sel(sel_clint), .addr(l_addr[4:2]), .we(l_we), .wstrb(l_wstrb),
+        .clk(clk), .rst_n(rst_n), .sel(clint_hit), .addr(clint_ra), .we(l_we), .wstrb(l_wstrb),
         .wdata(l_wdata), .rdata(clint_rd), .irq(irq_timer), .msip(irq_soft));
     soc_uart #(.DEFAULT_DIV(UART_DIV), .RX_DEPTH(UART_RX_DEPTH)) u_uart (
         .clk(clk), .rst_n(rst_n), .sel(sel_uart), .addr(l_addr[4:2]), .we(l_we), .re(l_re), .wstrb(l_wstrb),
@@ -186,7 +193,7 @@ module soc_axi_top #(
     soc_syscon u_sys (
         .clk(clk), .rst_n(rst_n), .sel(sel_sys), .addr(l_addr[4:2]), .we(l_we), .wstrb(l_wstrb),
         .wdata(l_wdata), .rdata(sys_rd), .bus_err(dc_err), .exit_valid(exit_valid), .exit_code(exit_code));
-    soc_plic #(.NSRC(9), .PRIO_W(3)) u_plic (
+    soc_plic #(.NSRC(9), .PRIO_W(3), .S_CTX(PLIC_S)) u_plic (
         .clk(clk), .rst_n(rst_n), .sel(sel_plic), .addr(l_addr[21:2]), .we(l_we), .re(l_re), .wstrb(l_wstrb),
-        .wdata(l_wdata), .rdata(plic_rd), .src({dma_irq, ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx}), .eip(irq_ext));
+        .wdata(l_wdata), .rdata(plic_rd), .src({dma_irq, ext_irq, irq_gpio, irq_uart_tx, irq_uart_rx}), .eip(irq_ext), .eip_s(irq_sext));
 endmodule
