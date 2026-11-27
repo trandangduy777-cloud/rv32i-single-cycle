@@ -4,7 +4,7 @@
 
 // tin hieu debug (-DDBG): khi khong co DBG la hang so 0 va khong dung (dbg_*, dret_ex); ban DBG duoc kiem bang debug/run_dbg_test.py
 lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 234-235
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1276
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1284
 
 // addr[0]: nhan dia chi byte, lenh 16 bit khong can bit 0 (dia chi lenh luon chan)
 lint_off -rule UNUSEDSIGNAL -file "*rv32_icache.v" -lines 22
@@ -72,25 +72,25 @@ lint_off -rule WIDTHTRUNC -file "*rv32i_core.v" -lines 425
 // ifid_bhit, if_dec_ill, idex_rs2, idex_imm_op, z_rot[63:32], trap_cause[30:4], acc_strb8[3:0]: tin hieu trung gian hoac bit cao khong dung (trap_cause chi co 4 bit thap + bit ngat)
 lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 209
 lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 254
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 624
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 646
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 839
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1214
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1588
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 625
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 647
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 840
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1222
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1599
 
 // memwb_pc / instr / tst / taddr / tdata / tstrb / tirq: duoc testbench doc qua phan cap (vet RVFI-like), khong co tai trong thiet ke tong hop
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1649-1655
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1660-1666
 
 // GHR_BITS = 0 thi ghr rong 1 bit (GB), so sanh chi so voi bien vong lap / bien dem hpm; hang so 12'h323 + hj: hj <= 3; mat na HPM_N bit
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 550
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1528
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1970
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1973
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1977
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 551
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1539
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1981
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1984
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 1988
 
 // ghr <= {ghr, take_branch} la thanh ghi dich (cat bit cao la chu y); z_rot lay 32 bit thap cua phep quay 64 bit
-lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1504
-lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1623
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1515
+lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 1634
 
 // daddr[4:0] / iaddr[13:0]: bus chi giai ma bit cao, bit thap di thang toi ngoai vi / bo nho
 lint_off -rule UNUSEDSIGNAL -file "*soc/soc_bus.v" -lines 14
@@ -142,27 +142,27 @@ lint_off -rule WIDTHTRUNC -file "*rv32im_pipeline.v" -lines 258
 
 // ---- PMP (rv32im_pipeline.v): so sanh dia chi CSR 12 bit voi (hang so + chi so vong lap kieu integer) ----
 // chi so pk / pw < PMP_N <= 16 nen tong luon nam trong 12 bit; pmp_wcfg la bien tam cua vong lap, gan bang '=' roi doc ngay trong cung nhanh
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2081
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2082
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2092
 lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2093
-lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2098
-lint_off -rule BLKSEQ -file "*rv32im_pipeline.v" -lines 2094-2095
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2104
+lint_off -rule WIDTHEXPAND -file "*rv32im_pipeline.v" -lines 2109
+lint_off -rule BLKSEQ -file "*rv32im_pipeline.v" -lines 2105-2106
 // ls_end: khi MISALIGNED = 0 chi dung ea, phan cong them bi bo; bit thap khong tham gia truy cap PMP (so sanh tren ea[31:2])
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 2009
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 2020
 
 // ---- S/U mode (rv32im_pipeline.v): so sanh quyen CSR csr_addr[9:8] > priv; khi SU = 0 priv co dinh nen Verilator thay so sanh bang hang so ----
-lint_off -rule CMPCONST -file "*rv32im_pipeline.v" -lines 1037
+lint_off -rule CMPCONST -file "*rv32im_pipeline.v" -lines 1045
 
 // ---- Sv32 MMU (rv32im_pipeline.v): cac tin hieu chi dung khi MMU != 0 hoac chi dung mot phan bit ----
 // i_fl: cac bit co co (D/A/U/...) khong deu duoc doc; idex_ppa / idex_ppa2 chi dung khi MMU != 0; mmu_* la cong ra cua khoi MMU,
 // phan bit cao cua mmu_maddr (34 bit) va mem_busy chi dung o cau hinh co MMU; ppa2 / ls_end khi MMU = 0 hoac MISALIGNED = 0 chi dung mot nua
 lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 229
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 634
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1156-1158
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 2014
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 635
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1164-1166
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 2025
 
 // ---- TAGE (rv32im_pipeline.v): thanh ghi pipeline cua bo du doan TAGE chi duoc doc khi bo du doan nay bat; o cau hinh tat chung la tin hieu khong dung ----
-lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1446-1447
+lint_off -rule UNUSEDSIGNAL -file "*rv32im_pipeline.v" -lines 1457-1458
 
 // context S cua PLIC (soc_plic.v): best_id_s = j (j < NSRC <= 31) va claim_s && best_id_s == i so sanh voi bien vong lap i (integer), giong context M
 lint_off -rule WIDTHTRUNC -file "*soc/soc_plic.v" -lines 56
