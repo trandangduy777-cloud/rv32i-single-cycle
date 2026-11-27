@@ -784,7 +784,9 @@ module rv32im_pipeline #(
     // DUAL: o 1 cung khong duoc doc ket qua cua load dang o EX (lan 1 khong co load nen chi xet lan 0)
     wire        lu1     = idex_valid & idex_load & (idex_rd != 5'd0) &
                           ((u1_1 & (idex_rd == rs1_1)) | (u2_1 & (idex_rd == rs2_1)));
-    assign      id_pair = D & ifid_valid & ifid_v1 & s1_alu & s0_ok & ~raw01 & ~lu1 & ~stall & ~ifid_bp;
+    // ~ifid_bp1: IF da doan lenh o 1 nhay (BTB trung nham, tag ngan) va nap theo dich: khong ghep, de no don len o 0 cho ID
+    // sua (id_fix_seq); neu ghep thi lan 1 chay lenh ALU con dong lenh tiep theo da lech sang dich doan sai
+    assign      id_pair = D & ifid_valid & ifid_v1 & s1_alu & s0_ok & ~raw01 & ~lu1 & ~stall & ~ifid_bp & ~ifid_bp1;
 
 
     always @(posedge clk or negedge rst_n) begin

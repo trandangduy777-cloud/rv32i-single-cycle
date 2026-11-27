@@ -379,6 +379,7 @@ DUAL_MUTATIONS = [
      "                         1'b0 ? memwb1_val :"),
     ("D: pc + 8 ca khi con lenh o o 1", "(D & ~r1) ? (if_pred1 ? if_ptgt1 : pc + 32'd8)", "D ? (if_pred1 ? if_ptgt1 : pc + 32'd8)"),
     ("D: o 1 van hop le khi lenh truoc doan nhay", "ifid_v1 <= r1 | ~if_pred;", "ifid_v1 <= 1'b1;"),
+    ("D: ghep ca khi IF doan o 1 nhay", "& ~ifid_bp & ~ifid_bp1;", "& ~ifid_bp;"),
     ("D: SRA lan 1 thanh dich logic", "3'b101: alu1 = idex1_f7_5 ? sra1 : (op_a1 >> sh1);", "3'b101: alu1 = op_a1 >> sh1;"),
 ]
 
